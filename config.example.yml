@@ -1,11 +1,11 @@
-# digital-tokens — committed-defaults example (kb.yml)
+# digital-twins — committed-defaults example (kb.yml)
 # Precedence: env (incl. .env) > kb.local.yml > kb.yml > built-in defaults.
 # Env vars: KB_ prefix, `__` = nesting (e.g. KB_QDRANT__URL) — see .env.example.
 # Every source is disabled by default (BR-11.2.7).
 
 # --- Global ---
-# state_dir: ~/.digital-tokens          # env: KB_STATE_DIR
-# config_dir: ~/.config/digital-tokens  # env: KB_CONFIG_DIR
+# state_dir: ~/.digital-twins          # env: KB_STATE_DIR
+# config_dir: ~/.config/digital-twins  # env: KB_CONFIG_DIR
 
 # --- Endpoints (user-supplied; init prompts for these) ---
 qdrant:

@@ -11,7 +11,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 
 # Host home paths (any user) and the baseline host runtime directories.
-# Our own documented defaults (~/.digital-tokens, ~/.config/digital-tokens)
+# Our own documented defaults (~/.digital-twins, ~/.config/digital-twins)
 # are host-neutral and intentionally NOT matched.
 HOST_PATTERNS = [
     re.compile(r"/home/[^/\s\"'`]+/"),      # any Linux host home path

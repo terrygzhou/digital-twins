@@ -1,4 +1,4 @@
-"""digital-tokens command-line interface."""
+"""digital-twins command-line interface."""
 
 import click
 

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "digital-tokens"
+name = "digital-twins"
 dynamic = ["version"]
 description = "Environment-portable KB ingestion: layered config, fail-fast named sources, deterministic dedup-safe ingest into user-supplied Qdrant/Neo4j."
 readme = "README.md"
@@ -24,7 +24,7 @@ dependencies = [
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-digital-tokens = "digital_twins.cli:main"
+digital-twins = "digital_twins.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["digital_twins"]

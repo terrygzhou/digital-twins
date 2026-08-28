@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `digital-tokens` are documented here.
+All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
 ## [0.1.0] - 2026-08-29
@@ -8,4 +8,4 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 ### Added
 
 - Initial package scaffold: manifest (`pyproject.toml`), MIT license, CLI entry
-  point (`digital-tokens --version`), shipped config examples, test scaffold.
+  point (`digital-twins --version`), shipped config examples, test scaffold.

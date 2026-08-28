@@ -1,4 +1,4 @@
-# digital-tokens
+# digital-twins
 
 Environment-portable KB ingestion: layered config, fail-fast named sources, and
  deterministic dedup-safe ingestion into user-supplied Qdrant + Neo4j.
@@ -20,10 +20,10 @@ them, `--system-site-packages` avoids re-downloading.
 
 | Command | Status |
 |---|---|
-| `digital-tokens --version` | ✅ |
-| `digital-tokens init` | in progress (US1) |
-| `digital-tokens validate` | in progress (US1) |
-| `digital-tokens run` | in progress (US2) |
+| `digital-twins --version` | ✅ |
+| `digital-twins init` | in progress (US1) |
+| `digital-twins validate` | in progress (US1) |
+| `digital-twins run` | in progress (US2) |
 
 ## Configuration
 
