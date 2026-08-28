@@ -23,11 +23,11 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 **Purpose**: Project initialization and basic structure
 
-- [ ] T001 Create package scaffold: `pyproject.toml` (hatchling; deps click, PyYAML, python-dotenv, qdrant-client, neo4j, sentence-transformers, torch; `requires-python = ">=3.11"`; console script `digital-twins` → `digital_twins.cli:main`; MIT `LICENSE`) in `pyproject.toml`
-- [ ] T002 [P] Create package skeleton: `__version__` single-sourced in `digital_twins/__init__.py`, `python -m` entry in `digital_twins/__main__.py`, click group with `--version` in `digital_twins/cli.py`
-- [ ] T003 [P] Create shipped config examples — every knob documented, grouped, all sources `enabled: false` — in `config.example.yml` and `.env.example`
-- [ ] T004 [P] Create test scaffold: shared fixtures (in-memory/local Qdrant, stubbed Neo4j + LLM transports) in `tests/conftest.py`; empty `tests/unit/` and `tests/integration/`
-- [ ] T005 [P] Create initial `CHANGELOG.md` (0.1.0) and `README.md` skeleton (title, install, command list, config-reference placeholder)
+- [x] T001 Create package scaffold: `pyproject.toml` (hatchling; deps click, PyYAML, python-dotenv, qdrant-client, neo4j, sentence-transformers, torch; `requires-python = ">=3.11"`; console script `digital-twins` → `digital_twins.cli:main`; MIT `LICENSE`) in `pyproject.toml`
+- [x] T002 [P] Create package skeleton: `__version__` single-sourced in `digital_twins/__init__.py`, `python -m` entry in `digital_twins/__main__.py`, click group with `--version` in `digital_twins/cli.py`
+- [x] T003 [P] Create shipped config examples — every knob documented, grouped, all sources `enabled: false` — in `config.example.yml` and `.env.example`
+- [x] T004 [P] Create test scaffold: shared fixtures (in-memory/local Qdrant, stubbed Neo4j + LLM transports) in `tests/conftest.py`; empty `tests/unit/` and `tests/integration/`
+- [x] T005 [P] Create initial `CHANGELOG.md` (0.1.0) and `README.md` skeleton (title, install, command list, config-reference placeholder)
 
 ---
 

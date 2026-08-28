@@ -1,0 +1,76 @@
+# digital-tokens — committed-defaults example (kb.yml)
+# Precedence: env (incl. .env) > kb.local.yml > kb.yml > built-in defaults.
+# Env vars: KB_ prefix, `__` = nesting (e.g. KB_QDRANT__URL) — see .env.example.
+# Every source is disabled by default (BR-11.2.7).
+
+# --- Global ---
+# state_dir: ~/.digital-tokens          # env: KB_STATE_DIR
+# config_dir: ~/.config/digital-tokens  # env: KB_CONFIG_DIR
+
+# --- Endpoints (user-supplied; init prompts for these) ---
+qdrant:
+  url: ""          # env: KB_QDRANT__URL
+  # api_key: ""    # env: KB_QDRANT__API_KEY
+neo4j:
+  url: ""          # env: KB_NEO4J__URL
+  user: ""         # env: KB_NEO4J__USER
+  password: ""     # env: KB_NEO4J__PASSWORD
+llm:
+  endpoint: ""     # env: KB_LLM__ENDPOINT
+  model: ""        # env: KB_LLM__MODEL
+  # api_key: ""    # env: KB_LLM__API_KEY
+
+# --- Embedding ---
+embedding:
+  model: "BAAI/bge-small-en-v1.5"  # 384-dim; model version pinned by the package
+  device: "auto"                  # auto | cpu | cuda (env: KB_EMBEDDING__DEVICE)
+
+# --- Chunking ---
+chunking:
+  max_chars: 800                  # env: KB_CHUNKING__MAX_CHARS
+  overlap: 100                    # env: KB_CHUNKING__OVERLAP
+
+# --- Sources (all disabled by default) ---
+sources:
+  hermes:
+    enabled: false
+    max_items: 200
+    timeout_s: 1500
+    # extra: { state_db: "" }   # readable hermes session store (prerequisite)
+  pi:
+    enabled: false
+    max_items: 200
+    timeout_s: 1500
+    # extra: { sessions_dir: "" }   # readable pi sessions dir (prerequisite)
+  dsh:
+    enabled: false
+    max_items: 200
+    timeout_s: 1500
+    # extra: { sessions_dir: "" }   # readable dsh sessions dir (prerequisite)
+  paperclip:
+    enabled: false
+    max_items: 200
+    timeout_s: 1500
+    # extra: { pg_dsn: "" }        # paperclip Postgres DSN (prerequisite)
+  yahoo:
+    enabled: false
+    max_items: 200
+    timeout_s: 1500
+    # extra: { imap_host: "imap.mail.yahoo.com" }  credential env: YMAIL_APP_PASSWORD
+  gmail:
+    enabled: false
+    max_items: 200
+    timeout_s: 1500
+    # extra: { imap_host: "imap.gmail.com" }       credential env: GMAIL_APP_PASSWORD
+  fs:
+    enabled: false
+    max_items: 200
+    timeout_s: 1500
+    # extra: { dir: "" }            # directory of files (demo/test source)
+
+# --- Custom (user-defined) sources — no package update needed ---
+# mytool:
+#   enabled: false
+#   entrypoint: "mytool_kb:make_source"  # importable module:factory
+#   credential: "MYTOOL_TOKEN"           # env-var name the source requires
+#   prefix: "mytool:"
