@@ -1,0 +1,117 @@
+{
+  "format": 1,
+  "entries": {
+    "topology/peer-seq": {
+      "key": "topology/peer-seq",
+      "value": {
+        "format": 1,
+        "next": 1
+      },
+      "version": 1,
+      "updatedAt": 1787956058256,
+      "updatedBy": {
+        "id": "session:01a04a7b-b258-747f-8db7-481ab56a171e",
+        "name": "main",
+        "kind": "main",
+        "sessionId": "01a04a7b-b258-747f-8db7-481ab56a171e"
+      }
+    },
+    "topology/hosts/0ea9e067d287b6549ab8ab1d484389e37206e5226eb22caaef9deb86057054d9": {
+      "key": "topology/hosts/0ea9e067d287b6549ab8ab1d484389e37206e5226eb22caaef9deb86057054d9",
+      "value": {
+        "format": 1,
+        "id": "session:01a04a7b-b258-747f-8db7-481ab56a171e",
+        "rootId": "session:01a04a7b-b258-747f-8db7-481ab56a171e",
+        "identity": {
+          "id": "session:01a04a7b-b258-747f-8db7-481ab56a171e",
+          "name": "main",
+          "kind": "main",
+          "sessionId": "01a04a7b-b258-747f-8db7-481ab56a171e"
+        },
+        "startedAt": 1787956058249,
+        "updatedAt": 1787956493284,
+        "expiresAt": 1787956508284
+      },
+      "version": 97,
+      "updatedAt": 1787956493284,
+      "updatedBy": {
+        "id": "session:01a04a7b-b258-747f-8db7-481ab56a171e",
+        "name": "main",
+        "kind": "main",
+        "sessionId": "01a04a7b-b258-747f-8db7-481ab56a171e"
+      }
+    },
+    "sessions/01a04a7b-b258-747f-8db7-481ab56a171e": {
+      "key": "sessions/01a04a7b-b258-747f-8db7-481ab56a171e",
+      "value": {
+        "id": "session:01a04a7b-b258-747f-8db7-481ab56a171e",
+        "name": "DT-1",
+        "label": "DT-1",
+        "kind": "peer",
+        "status": "idle",
+        "runner": "pi",
+        "transport": "host",
+        "cwd": "/home/terry/projects/digital-twins",
+        "sessionId": "01a04a7b-b258-747f-8db7-481ab56a171e",
+        "model": "sglang/Qwen3.8-27B-NVFP4",
+        "thinking": "medium",
+        "startedAt": 1787956058249,
+        "updatedAt": 1787956493284,
+        "pendingMessages": false,
+        "local": false
+      },
+      "version": 97,
+      "updatedAt": 1787956493284,
+      "updatedBy": {
+        "id": "session:01a04a7b-b258-747f-8db7-481ab56a171e",
+        "name": "main",
+        "kind": "main",
+        "sessionId": "01a04a7b-b258-747f-8db7-481ab56a171e"
+      }
+    },
+    "topology/participants/0ea9e067d287b6549ab8ab1d484389e37206e5226eb22caaef9deb86057054d9": {
+      "key": "topology/participants/0ea9e067d287b6549ab8ab1d484389e37206e5226eb22caaef9deb86057054d9",
+      "value": {
+        "format": 1,
+        "id": "session:01a04a7b-b258-747f-8db7-481ab56a171e",
+        "kind": "root",
+        "rootId": "session:01a04a7b-b258-747f-8db7-481ab56a171e",
+        "ownerHostId": "session:01a04a7b-b258-747f-8db7-481ab56a171e",
+        "ownerIdentityId": "session:01a04a7b-b258-747f-8db7-481ab56a171e",
+        "name": "main",
+        "status": "idle",
+        "runner": "pi",
+        "transport": "host",
+        "capabilities": [
+          "steer",
+          "followUp",
+          "fabric"
+        ],
+        "cwd": "/home/terry/projects/digital-twins",
+        "sessionId": "01a04a7b-b258-747f-8db7-481ab56a171e",
+        "model": "sglang/Qwen3.8-27B-NVFP4",
+        "thinking": "medium",
+        "startedAt": 1787956058249,
+        "updatedAt": 1787956493284,
+        "pendingMessages": false,
+        "controlProtocol": "v1",
+        "label": "DT-1"
+      },
+      "version": 97,
+      "updatedAt": 1787956493285,
+      "updatedBy": {
+        "id": "session:01a04a7b-b258-747f-8db7-481ab56a171e",
+        "name": "main",
+        "kind": "main",
+        "sessionId": "01a04a7b-b258-747f-8db7-481ab56a171e"
+      }
+    }
+  },
+  "versions": {
+    "topology/peer-seq": 1,
+    "topology/hosts/0ea9e067d287b6549ab8ab1d484389e37206e5226eb22caaef9deb86057054d9": 97,
+    "sessions/01a04a7b-b258-747f-8db7-481ab56a171e": 97,
+    "topology/participants/0ea9e067d287b6549ab8ab1d484389e37206e5226eb22caaef9deb86057054d9": 97
+  },
+  "tombstoneOrder": []
+}
