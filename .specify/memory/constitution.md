@@ -1,50 +1,92 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+SYNC IMPACT REPORT
+- Version change: unversioned template -> 1.0.0 (initial ratification; MINOR baseline)
+- Modified principles: none (first ratification; 5 template slots expanded to 6 concrete principles)
+- Added sections: Additional Constraints, Development Workflow, Governance (filled)
+- Removed sections: none
+- Templates requiring updates:
+  - .specify/templates/plan-template.md (reviewed: generic Constitution Check gate, no project refs; no update needed)
+  - .specify/templates/spec-template.md (reviewed: generic; no update needed)
+  - .specify/templates/tasks-template.md (reviewed: test-first ordering already present; no update needed)
+  - .specify/templates/checklist-template.md (reviewed: generic; no update needed)
+  - .specify/templates/commands/ (not present; n/a)
+- Follow-up TODOs: none
+-->
+
+# Digital Twins Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Portability & Environment Neutrality
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+Every host-specific value — paths, usernames, install locations, runtime pins — MUST be
+resolved through the config layer at runtime and MUST NOT appear in shipped code, config
+defaults, or documentation. A fresh install starts with every ingestion source disabled.
+Rationale: the package must work on any host unmodified (BR-11.2, NFR-13).
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### II. Deterministic, Idempotent Ingestion
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+Ingestion MUST be idempotent across all trigger paths (schedule, one-shot CLI, API, MCP,
+web UI): the same content ingested via any combination of triggers yields exactly one
+record (deterministic IDs, deduplication, shared state store). Duplicate records are a
+defect, not an edge case (NFR-1, NFR-14).
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### III. Test-First (NON-NEGOTIABLE)
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+Tests MUST be written before the implementation they govern and MUST fail before the
+implementation makes them pass (Red-Green-Refactor). The one-record-not-N invariant MUST
+have an automated check covering every trigger path (NFR-1, NFR-14).
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### IV. Config-First, Fail-Fast
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+Every behavior-affecting knob MUST exist on the documented config surface (process env /
+env file -> machine-local -> committed defaults -> built-in defaults); no knob may exist
+that is not documented in the shipped example files. Enabling a source whose prerequisite
+is missing MUST fail fast with an error naming the missing prerequisite — never silently
+ingest zero items (BR-11.2.2, BR-11.2.4, BR-11.2.7).
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+### V. Auditability & Observability
+
+Every ingestion run MUST produce an audit record attributable to a user or `system`
+regardless of trigger (schedule, manual, api, mcp, ui). Records MUST be queryable by
+their originating user; admins may query all. Structured logging is required on scheduler
+and ingestion paths (BR-5.3, NFR-16).
+
+### VI. Upgrade Safety & Versioning
+
+In-place upgrades MUST preserve local state (state store, account database, config); any
+schema migration MUST complete before new code starts (NFR-15). Releases follow semantic
+versioning; a breaking config change requires a major bump plus a migration note
+(BR-11.6.3, BR-11.6.4).
+
+## Additional Constraints
+
+- The supported Python range is declared in the package manifest; a host's pinned
+  interpreter MUST NOT be an implicit assumption (BR-11.2.6).
+- The embedding model and backend versions are pinned. A mismatch between the configured
+  embedding model and the collection's existing vector dimension MUST surface as a hard
+  error with a remediation message — silent dimension drift is forbidden (NFR-2, BR-11.2.5).
+- The package ships under the MIT License (Q4, BR-11.6.2).
+- No runtime dependency on files outside the installed package; host scripts the baseline
+  pipeline relied on are absorbed into the package (BR-11.1.4).
+
+## Development Workflow
+
+- Work flows through the Spec-Kit pipeline: specify -> clarify -> plan -> tasks ->
+  implement. Code MUST NOT be written before a feature's spec and plan exist.
+- Every review verifies constitution compliance: portability scan (no host values),
+  idempotency check, audit-record shape.
+- Complexity requires justification: any deviation from this constitution MUST be recorded
+  in the feature's plan (Complexity Tracking) with the named simpler alternative and the
+  reason it was rejected.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+- This constitution supersedes all other development practices in this repository.
+- Amendments require a written rationale, a semantic version bump (MAJOR = principle
+  removal/redefinition, MINOR = addition/expansion, PATCH = clarification), and a Sync
+  Impact Report covering dependent templates.
+- Every PR/review verifies compliance with the principles above; violations MUST be
+  documented in the feature's plan before merge.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026-08-29 | **Last Amended**: 2026-08-29

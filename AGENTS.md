@@ -18,3 +18,9 @@
 ## When code exists (add as it lands)
 - Build/test commands, package layout, config precedence (`env → kb.local.yml → kb.yml → built-in defaults`).
 - Top acceptance check: the same content ingested via schedule, `run --once`, MCP, or web UI yields **one** point, not four (NFR-1, NFR-14).
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+at specs/001-package-foundation/plan.md
+<!-- SPECKIT END -->
