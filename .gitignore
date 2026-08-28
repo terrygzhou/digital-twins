@@ -1,0 +1,66 @@
+# --- Host / environment specific (BR-11.2, NFR-13: no host paths in shipped code) ---
+# Local machine-specific config (overrides kb.yml; never committed)
+kb.local.yml
+kb.local.yaml
+.env
+.env.*
+!.env.example
+
+# Local runtime state (created by `digital-twins init` / first run)
+.kbstate/
+*.db
+*.sqlite
+*.sqlite3
+__pycache__/
+
+# Host-side agent session dirs that the baseline pipeline reads (outside this repo,
+# but never importable into the package — see AGENTS.md "Baseline pipeline")
+~/.hermes/
+~/.pi/
+~/.dsh/
+.pi-cache/
+
+# pi runtime state (mesh / fabric caches) — regenerated on each run, not source
+.pi/fabric/
+.pi/mesh/
+
+# --- Python / build / test ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+wheels/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# --- Docker ---
+docker-compose.override.yml
+*.tar
+*.tar.gz
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Logs / scratch ---
+*.log
+logs/
+*.tmp
+*.bak
