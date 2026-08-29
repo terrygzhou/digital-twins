@@ -77,19 +77,20 @@ def _merge(base: dict, override: dict) -> dict:
     return merged
 
 
-def load(cwd=None, env=None, config_dir=None):
-    """Load and validate the effective configuration.
+def _build_layers(cwd, env, config_dir):
+    """Build the four config layers in ascending precedence.
 
-    Args:
-        cwd: current working directory (defaults to os.getcwd()).
-        env: explicit environment mapping; when given, `.env` files are
-            ignored (the caller controls the environment). Defaults to
-            os.environ.
-        config_dir: override the config directory directly.
+    Returns a list of four (layer_name, nested_dict) tuples:
+        1. "defaults"     — built-in defaults (schema.DEFAULTS)
+        2. "kb.yml"       — merged cwd/kb.yml + config_dir/kb.yml
+        3. "kb.local.yml" — machine-local overrides
+        4. "env"          — projected KB_* environment variables
 
-    Returns a validated, normalized config dict (see schema.validate).
+    When ``env`` is None, the ``.env`` files are read into the process
+    environment (CWD first, then the user config dir) exactly as
+    :func:`load` does; when an explicit mapping is given, it is used
+    verbatim and no ``.env`` files are touched.
     """
-    cwd = Path(cwd) if cwd is not None else Path.cwd()
     if env is None:
         # .env layer: CWD first, then the user config dir as derived from
         # real env / the built-in default. override=False: real environment
@@ -105,17 +106,66 @@ def load(cwd=None, env=None, config_dir=None):
         config_dir = env.get("KB_CONFIG_DIR") or _schema.DEFAULTS["config_dir"]
     config_dir = Path(config_dir).expanduser()
 
-    layers = [_nested(_schema.DEFAULTS), {}, {}, {}, {}]
-    layers[1] = _yaml(cwd / "kb.yml")
-    layers[2] = _merge(layers[2], _yaml(config_dir / "kb.yml"))
-    layers[3] = _yaml(config_dir / "kb.local.yml")
-    layers[4] = _env_layer(env)
+    layers = [
+        ("defaults", _nested(_schema.DEFAULTS)),
+        ("kb.yml", _merge(_yaml(cwd / "kb.yml"), _yaml(config_dir / "kb.yml"))),
+        ("kb.local.yml", _yaml(config_dir / "kb.local.yml")),
+        ("env", _env_layer(env)),
+    ]
+    return layers, config_dir
 
-    merged = layers[0]
-    for layer in layers[1:]:
+
+def load(cwd=None, env=None, config_dir=None):
+    """Load and validate the effective configuration.
+
+    Args:
+        cwd: current working directory (defaults to os.getcwd()).
+        env: explicit environment mapping; when given, `.env` files are
+            ignored (the caller controls the environment). Defaults to
+            os.environ.
+        config_dir: override the config directory directly.
+
+    Returns a validated, normalized config dict (see schema.validate).
+    """
+    cwd = Path(cwd) if cwd is not None else Path.cwd()
+    layers, config_dir = _build_layers(cwd, env, config_dir)
+
+    merged = layers[0][1]
+    for _, layer in layers[1:]:
         merged = _merge(merged, layer)
 
     cfg = _schema.validate(merged)
     cfg["state_dir"] = str(Path(cfg["state_dir"]).expanduser())
     cfg["config_dir"] = str(config_dir)
     return cfg
+
+
+def load_debug(cwd=None, env=None, config_dir=None) -> dict[str, str]:
+    """Return a mapping of knob dotted-path -> winning layer name.
+
+    Layer names (exactly): "env", "kb.local.yml", "kb.yml", "defaults".
+    Only knobs that are actually set in at least one layer are included;
+    the highest-precedence layer that set a value wins. The same layer
+    inputs as :func:`load` are used — identical arguments yield identical
+    winners — but the values are not validated or normalized.
+    """
+    cwd = Path(cwd) if cwd is not None else Path.cwd()
+    layers, _config_dir = _build_layers(cwd, env, config_dir)
+
+    winner: dict[str, str] = {}
+    for name, layer in layers:
+        for dotted, _value in _flatten(layer):
+            winner[dotted] = name
+    return winner
+
+
+def _flatten(nested: dict, prefix: str = "") -> list[tuple[str, object]]:
+    """Flatten a nested dict to (dotted.path, value) pairs."""
+    out: list[tuple[str, object]] = []
+    for key, value in nested.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, dict):
+            out.extend(_flatten(value, path))
+        else:
+            out.append((path, value))
+    return out

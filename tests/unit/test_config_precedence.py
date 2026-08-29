@@ -239,8 +239,6 @@ def test_all_four_layers_no_env_no_local(tmp_path):
 # Expected to FAIL until T028/T029 implements the capability.
 #
 
-@pytest.mark.xfail(reason="loader has no debug layer-wins API yet (T028/T029)",
-                  strict=True)
 def test_debug_layer_wins_report_exists(tmp_path):
     """A debug capability must exist on the loader."""
     from digital_twins.config import loader as _loader
@@ -248,8 +246,6 @@ def test_debug_layer_wins_report_exists(tmp_path):
         "loader must expose load_debug() or an equivalent debug API")
 
 
-@pytest.mark.xfail(reason="loader has no debug layer-wins API yet (T028/T029)",
-                  strict=True)
 def test_debug_reports_winner_per_knob(tmp_path):
     """load_debug() maps each set knob to its winning layer name."""
     from digital_twins.config import loader as _loader

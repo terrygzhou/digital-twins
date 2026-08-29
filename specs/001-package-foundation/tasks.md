@@ -88,7 +88,7 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 - [x] T020 [US2] Implement source contract — `Capability` (runtime, credential, prefix), `Source` (`prerequisites()`, `read(since)`, `close()`), built-in registry — in `digital_twins/sources/base.py` (per `contracts/source.md`)
 - [x] T021 [P] [US2] Implement `fs` directory-of-files source (demo/test double) in `digital_twins/sources/fs.py` (depends on T020)
 - [x] T022 [P] [US2] Implement session-store sources `hermes`, `pi`, `dsh` — reimplemented inside the package (baseline scripts are reference only), each `enabled: false` by default with declared prerequisites — in `digital_twins/sources/hermes.py`, `digital_twins/sources/pi.py`, `digital_twins/sources/dsh.py` (depends on T020)
-- [ ] T023 [P] [US2] Implement `paperclip` PG chat source in `digital_twins/sources/paperclip.py` and shared IMAP source with `yahoo`/`gmail` instances + credential capability — in `digital_twins/sources/imap_mail.py` (depends on T020)
+- [x] T023 [P] [US2] Implement `paperclip` PG chat source in `digital_twins/sources/paperclip.py` and shared IMAP source with `yahoo`/`gmail` instances + credential capability — in `digital_twins/sources/imap_mail.py` (depends on T020)
 - [x] T024 [US2] Implement ingestion pipeline — read → chunk → embed → upsert Qdrant (deterministic IDs) + Neo4j nodes/links → high-water marks → one audit row per run — in `digital_twins/ingest/pipeline.py` (depends on T011, T012, T020, T021)
 - [x] T025 [US2] Implement `run` command — enable-time + run-time prerequisite fail-fast (exit 2, names the prerequisite), `--source`, `--max-items`, `--dry-run`, per-source counts + `run_id` output, audit row written regardless of outcome — in `digital_twins/cli.py` (depends on T024)
 
@@ -104,8 +104,8 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T026 [P] [US3] Write precedence tests — env > `kb.local.yml` > `kb.yml` > built-in, deterministic, debug layer-wins report (edge: conflicting layers) — in `tests/unit/test_config_precedence.py`
-- [ ] T027 [P] [US3] Write knob-doc sync test — example files ↔ `knobs.py` registry, zero undocumented knobs (SC-002) — in `tests/unit/test_knob_docs.py`
+- [x] T026 [P] [US3] Write precedence tests — env > `kb.local.yml` > `kb.yml` > built-in, deterministic, debug layer-wins report (edge: conflicting layers) — in `tests/unit/test_config_precedence.py`
+- [x] T027 [P] [US3] Write knob-doc sync test — example files ↔ `knobs.py` registry, zero undocumented knobs (SC-002) — in `tests/unit/test_knob_docs.py`
 
 ### Implementation for User Story 3
 
