@@ -158,12 +158,13 @@ key; a run under bob is unaffected by alice's row (SC-003, both orderings).
 export DT_USER_PASSWORD="<alice-pw>"
 TOKEN_A=$(digital-twins token create --as "<alice>")
 # expect: the token printed once (the DB stores only its hash, R2)
+A_ID=$(digital-twins token list --as "<alice>" | head -1 | awk '{print $1}')
+unset DT_USER_PASSWORD
 
 # B) alice creates a second token; both authenticate independently
 TOKEN_B=$(digital-twins token create --as "<alice>")
 export DT_PERSONAL_TOKEN="$TOKEN_A"
-digital-tokens-checker 2>/dev/null || \
-  digital-twins account whoami            # authenticates via DT_PERSONAL_TOKEN
+digital-twins account whoami            # authenticates via DT_PERSONAL_TOKEN
 # expect: "authenticated as <alice>"
 export DT_PERSONAL_TOKEN="$TOKEN_B"
 digital-twins account whoami
@@ -171,13 +172,15 @@ digital-twins account whoami
 
 # C) revoke TOKEN_A; TOKEN_B still works (US3 S3: revoking one does not affect the other)
 export DT_USER_PASSWORD="<alice-pw>"
-digital-tokens-checker 2>/dev/null || digital-twins account whoami
-# (with TOKEN_A set) -> now 401/exit 2 "token revoked"
-export DT_PERSONAL_TOKEN="$TOKEN_B"
-digital-tokens-checker 2>/dev/null || digital-twins account whoami
-# (with TOKEN_B set) -> still "authenticated as <alice>"
-unset DT_PERSONAL_TOKEN
+digital-twins token revoke --id "$A_ID"
 unset DT_USER_PASSWORD
+export DT_PERSONAL_TOKEN="$TOKEN_A"
+digital-twins account whoami
+# expect: exit 2, "token revoked" (TOKEN_A no longer authenticates)
+export DT_PERSONAL_TOKEN="$TOKEN_B"
+digital-twins account whoami
+# expect: still "authenticated as <alice>" (TOKEN_B unaffected by TOKEN_A's revocation)
+unset DT_PERSONAL_TOKEN
 ```
 
 Automated form: `tests/unit/test_personal_tokens.py` — create two tokens; verify

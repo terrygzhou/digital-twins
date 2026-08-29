@@ -32,7 +32,7 @@ contract (004 owns the MCP surface), Docker/PyPI (005).
 | Auth | 001 `auth.authenticate` (password) + new `personal_tokens` / `sessions` lookups (R1/R2/R4) |
 | Role guard | thin middleware/guard at the HTTP/CLI route layer (C-2); `ROLE_CAPS` matrix (R3) |
 | State | 001 SQLite store + migration v3 (`personal_tokens`, `user_config`, `sessions` + 2 `accounts` columns); additive-only |
-| CLI | `click` (001 dependency); new `signup`/`account`/`token` groups; `run --as` + `schedule` gain role checks |
+| CLI | `click` (001 dependency); new `signup`/`account`/`token`/`config` groups; `run --as` + `schedule` gain role checks |
 | Web UI | minimal: `/signup` + `/signin` return session tokens (R4); no SPA framework decision (A2) |
 | Config | no new 001 config knob; per-user overrides are DB-backed (`user_config`, C-3/R5), merged at the caller |
 | Owner tag | `run_pipeline` gains optional `owner=` kwarg → Qdrant payload `owner` + `owner_tag` (R6) |
@@ -125,8 +125,8 @@ digital_twins/
 │                           #   user_config before run_pipeline; passes owner=
 │                           #   to run_pipeline (C-3/R5/R6)
 ├── cli.py                 # init: first-admin step (C-4/R7); run --as + schedule:
-│                           #   post-auth role check (C-2); + signup/account/token
-│                           #   groups; serve: passes auth_checker to StatusServer
+│                           #   post-auth role check (C-2); + signup/account/token/
+│                           #   config groups; serve: passes auth_checker to StatusServer
 └── auth.py                # (additive) token/session helpers alongside 001's
                            #   password API
 docs/
@@ -151,7 +151,7 @@ Phase 1 (Foundational — migration + accounts + roles)
 
 Phase 2 (Identity surfaces — sign-in everywhere)
   6. C-5 auth_checker + StatusServer hook    <- (4),(5)  [checker looks up tokens/sessions]
-  7. cli signup/account/token groups         <- (2),(3),(4)
+  7. cli signup/account/token/config groups  <- (2),(3),(4),(10)
   8. run --as + schedule post-auth role check <- (3)   [guard uses ROLE_CAPS]
   9. init first-admin step (C-4)             <- (2)
 
