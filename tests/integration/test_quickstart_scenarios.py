@@ -404,8 +404,9 @@ def _make_fs_dir(tmp_path):
 
 class TestScenario4_FailFastPrerequisite:
 
-    def test_hermes_missing_prerequisite_raises_named(self, qdrant, tmp_path):
+    def test_hermes_missing_prerequisite_raises_named(self, qdrant, tmp_path, monkeypatch):
         """hermes source with no hermes CLI -> PrerequisiteError names it."""
+        monkeypatch.setattr("digital_twins.sources.hermes.shutil.which", lambda _name: None)
         sources = {n: {"enabled": False, "max_items": 200, "timeout_s": 1500}
                    for n in BUILTIN_SOURCES}
         sources["hermes"] = {"enabled": True, "max_items": 200, "timeout_s": 1500}
@@ -447,10 +448,23 @@ class TestScenario4_FailFastPrerequisite:
         monkeypatch.setenv("KB_STATE_DIR", str(tmp_path / "state"))
         monkeypatch.chdir(tmp_path)
 
+        # 1. source prerequisite gate: missing hermes CLI -> exit 2, names the
+        #    source + prerequisite; qdrant.url intentionally NOT set (fail-fast
+        #    must fire before endpoint config is touched)
+        monkeypatch.setattr(
+            "digital_twins.sources.hermes.shutil.which", lambda _name: None)
         result = CliRunner().invoke(cli, ["run", "--source", "hermes"])
         assert result.exit_code == 2, result.output
         assert "hermes" in result.output
         assert "fail-fast" in result.output
+
+        # 2. prerequisites satisfied -> fail-fast clears, config error surfaces
+        monkeypatch.setattr(
+            "digital_twins.sources.hermes.shutil.which",
+            lambda _name: "/usr/bin/hermes")
+        result = CliRunner().invoke(cli, ["run", "--source", "hermes"])
+        assert result.exit_code != 2, result.output
+        assert "fail-fast" not in result.output
 
     def test_fs_missing_dir_exit_2(self, tmp_path, monkeypatch):
         """CLI run with fs pointing at a missing dir -> exit 2."""

@@ -1,6 +1,7 @@
 """digital-twins command-line interface."""
 
 from pathlib import Path
+import uuid
 
 import click
 import yaml
@@ -11,6 +12,7 @@ from digital_twins.config.loader import _merge
 from digital_twins.config.schema import BUILTIN_SOURCES, get
 from digital_twins.state.db import connect
 from digital_twins.state.migrations import migrate
+from digital_twins.state.models import finish_audit_run, start_audit_run
 
 # knobs init resolves: path, prompt label, hide input
 _ENDPOINT_PROMPTS = (
@@ -141,6 +143,39 @@ def run(source_names: tuple, max_items: int, dry_run: bool) -> None:
     db = connect(state_dir)
     try:
         migrate(db)
+
+        from digital_twins.ingest.pipeline import (
+            DimensionMismatchError,
+            PrerequisiteError,
+            run_pipeline,
+        )
+        from digital_twins.sources import (
+            CustomSourceError,
+            UnknownSourceError,
+            build as build_source,
+        )
+
+        # fail-fast: source prerequisite check BEFORE any endpoint config
+        names = list(source_names) if source_names else [
+            n for n, e in cfg["sources"].items() if e.get("enabled")
+        ]
+        for name in names:
+            entry = cfg["sources"].get(name)
+            if entry is None:
+                raise UnknownSourceError(name)
+            source = build_source(name, entry)
+            missing = source.prerequisites()
+            if missing:
+                run_id = str(uuid.uuid4())
+                start_audit_run(db, run_id)
+                finish_audit_run(db, run_id, "failed", {})
+                click.echo(
+                    f"fail-fast: source '{name}': "
+                    f"missing prerequisite(s): {'; '.join(missing)}",
+                    err=True)
+                raise SystemExit(2)
+            source.close()
+
         qdrant_url = get(cfg, "qdrant.url")
 
         def qdrant_factory():
@@ -155,12 +190,6 @@ def run(source_names: tuple, max_items: int, dry_run: bool) -> None:
         qdrant = None if dry_run else qdrant_factory
         embedder = None if dry_run else _make_embedder(cfg)
 
-        from digital_twins.ingest.pipeline import (
-            DimensionMismatchError,
-            PrerequisiteError,
-            run_pipeline,
-        )
-        from digital_twins.sources import CustomSourceError, UnknownSourceError
         try:
             summary = run_pipeline(
                 cfg, db, qdrant, embedder,
