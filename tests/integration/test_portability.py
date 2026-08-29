@@ -28,6 +28,7 @@ SHIPPED = [
     "config.example.yml",
     ".env.example",
     "LICENSE",
+    "docs/scheduling.md",     # 002 scheduling docs (added in T013, guarded here in T020)
 ]
 
 
