@@ -30,6 +30,25 @@ SHIPPED = [
     "LICENSE",
     "docs/scheduling.md",     # 002 scheduling docs (added in T013, guarded here in T020)
     "docs/multi-user.md",     # 003 multi-user docs (added in T020, guarded here in T020)
+    # 005 community/packaging artifacts
+    "docs/configuration.md",
+    "docs/semver-policy.md",
+    "docs/release-runbook.md",
+    "docs/references/agent-guides.md",
+    "docker-compose.yml",
+    "Dockerfile",
+    ".github/ISSUE_TEMPLATE",
+]
+
+# 005 artifacts that are not Python files — the SHIPPED list includes
+# directories and non-.py files that need the portability scan too.
+SHIPPED_NON_PY = [
+    "docs/configuration.md",
+    "docs/semver-policy.md",
+    "docs/release-runbook.md",
+    "docs/references/agent-guides.md",
+    "docker-compose.yml",
+    "Dockerfile",
 ]
 
 
@@ -40,6 +59,15 @@ def _shipped_files():
             yield from (f for f in p.rglob("*.py") if f.is_file())
         elif p.is_file():
             yield p
+    # 005: also scan non-Python shipped artifacts
+    for entry in SHIPPED_NON_PY:
+        p = REPO / entry
+        if p.is_file():
+            yield p
+    # 005: .github/ISSUE_TEMPLATE/ (YAML files)
+    tpl_dir = REPO / ".github" / "ISSUE_TEMPLATE"
+    if tpl_dir.is_dir():
+        yield from (f for f in tpl_dir.rglob("*.yml") if f.is_file())
 
 
 # Interpreter pins: a pinned CPython version (python3.12, python3.11, ...)

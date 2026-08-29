@@ -3,6 +3,48 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [0.5.0] - 2026-08-30
+
+### Added
+
+- **Community/packaging** (005 slice) — the package is now ready for
+  community use:
+  - **Config reference** (`docs/configuration.md`): single authoritative
+    human-readable config reference covering 100% of the `KNOBS` registry
+    (46 keys) in six sections, with precedence + env-var mapping +
+    deprecation mechanism. Guarded by
+    `TestKnobsDocumentedInConfigurationDoc` (new class in
+    `tests/unit/test_knob_docs.py`).
+  - **README rewrite** (`README.md`): 9-section host-neutral quick start
+    (install → init → validate → fs first run → roles → MCP → scheduling →
+    community → license → development).
+  - **SemVer policy** (`docs/semver-policy.md`): concise versioning policy —
+    what counts as major/minor/patch, the deprecation mechanism, and the
+    in-repo tracker cross-reference.
+  - **In-repo GitHub issue tracker** (`.github/ISSUE_TEMPLATE/`): four
+    forms — `config.yml` (index), `bug_report.yml`, `feature_request.yml`,
+    `config-breaking-change.yml` (with required `version_impact` +
+    `migration_note` fields). No live GitHub remote; the forms are the
+    machine-readable entry point.
+  - **Docker/Compose reference deployment** (`docker-compose.yml` +
+    `Dockerfile`): 5-service bundle (qdrant, neo4j, digital-twins, llm,
+    embedding-model), all images pinned, named volumes, healthchecks,
+    `depends_on: service_healthy`. SGLang + BGE-small-en-v1.5 bundled by
+    default (D-1). Guarded by `tests/integration/test_docker_compose.py`.
+  - **Release runbook** (`docs/release-runbook.md`): repeatable release
+    procedure (pre-release → build → automated check → TestPyPI manual →
+    PyPI manual → tag → record image tags). Guarded by
+    `tests/integration/test_pypi_build.py`.
+  - **Agent guides** (`docs/references/agent-guides.md`): canonical MCP
+    agent onboarding page — the six 004 scheduler tools with args, role
+    requirements, and error codes; the four BR-10 stubs; transport
+    (stdio + HTTP/SSE).
+  - **Deprecation warning mechanism**
+    (`digital_twins/config/deprecation.py`): one-run `DeprecationWarning`
+    naming the replacement; wired into the config loader via
+    `resolve(dotted, value)`. No shipped knob deprecated at 0.5.0.
+    Guarded by `tests/unit/test_deprecation_warning.py`.
+
 ## [0.4.0] - 2026-08-30
 
 ### Added
