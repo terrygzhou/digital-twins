@@ -40,12 +40,11 @@ SCHEDULER_CAPS = {
     "manage_own_tokens",
 }
 
-# reader: read-only + manage own personal config (T018/R5)
+# reader: read-only (R3: reader = pure query, no mutating capabilities)
 READER_CAPS = {
     "sign_in",
     "query_status",
     "view_own_history",
-    "manage_own_config",
 }
 
 # The full matrix: role -> set of allowed capabilities

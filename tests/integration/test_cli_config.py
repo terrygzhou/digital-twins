@@ -4,7 +4,7 @@ Contract (specs/003-multi-user/contracts/cli.md, "Per-user config command (R5)")
 
 - ``config set --as USER --source S --key K --value V``: set a per-user
   override. The role must permit **manage own personal config**
-  (admin/scheduler/reader for *their own* user; admin for another user's).
+  (admin/scheduler for *their own* user; admin for another user's).
   ``K`` is restricted to the overridable keys (``enabled``, ``max_items``,
   ``timeout_s``); other keys → exit 2 ("not a user-overridable knob").
   ``V`` is type-coerced via 001 ``schema.coerce`` at write time
@@ -153,10 +153,11 @@ def test_config_set_admin_own_success(env_dirs, monkeypatch):
     assert _count_user_config_rows(state_dir, "admin@example.com") == 1
 
 
-def test_config_set_reader_own_success(env_dirs, monkeypatch):
-    """A reader sets their own timeout_s=60 on hermes → success (exit 0).
+def test_config_set_reader_own_denied(env_dirs, monkeypatch):
+    """A reader cannot set their own config → exit 2.
 
-    R3: manage_own_config is available to all three roles for their own user.
+    R3: manage_own_config is available to admin and scheduler only,
+    not reader. Reader is pure query (no mutating capabilities).
     """
     state_dir = env_dirs["state_dir"]
 
@@ -169,11 +170,11 @@ def test_config_set_reader_own_success(env_dirs, monkeypatch):
         "--value", "60",
     ], env={"DT_PERSONAL_TOKEN": env_dirs["reader_token"],
             "DT_USER_PASSWORD": ""})
-    assert result.exit_code == 0, (
-        f"expected exit 0, got {result.exit_code}; "
+    assert result.exit_code == 2, (
+        f"expected exit 2, got {result.exit_code}; "
         f"output: {result.output}"
     )
-    assert _count_user_config_rows(state_dir, "reader@example.com") == 1
+    assert _count_user_config_rows(state_dir, "reader@example.com") == 0
 
 
 # ---------------------------------------------------------------------------

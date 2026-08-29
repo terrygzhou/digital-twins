@@ -45,7 +45,6 @@ ROLE_CAPS: dict[str, set[str]] = {
         "sign_in",
         "query_status",
         "view_own_history",
-        "manage_own_config",
     },
 }
 
