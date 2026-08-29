@@ -878,5 +878,209 @@ def token_revoke(token_id: int) -> None:
         db.close()
 
 
+# --- account group (T011, US2 — account management, admin-gated except whoami)
+#
+# All four subcommands authenticate first via DT_PERSONAL_TOKEN, then check
+# the caller's role against R3.
+#
+# Role checks (R3 / contracts/cli.md):
+# - account list: admin-only (manage_accounts).
+# - account set-role: admin-only (manage_accounts) + last-admin guard (SC-002).
+# - account delete: admin-only (manage_accounts) + last-admin guard (SC-002).
+# - account whoami: any authenticated role (the only non-admin-gated subcommand).
+
+
+@cli.group()
+def account() -> None:
+    """Manage accounts (list / set-role / delete / whoami).
+
+    All subcommands authenticate first via DT_PERSONAL_TOKEN.
+    ``whoami`` is the only subcommand available to non-admins.
+    """
+
+
+def _account_authenticate(db) -> tuple[str, str]:
+    """Authenticate the caller for account commands.
+
+    Returns ``(account_email, role)`` on success. Exits 2 with a named
+    reason on failure. Reuses the token-group's authentication helper.
+    """
+    return _token_authenticate(db)
+
+
+@account.command("list")
+def account_list() -> None:
+    """List all accounts: email, role, created_at, last_active (admin only)."""
+    from digital_twins.accounts import require_capability, RoleDenied
+
+    cfg = load()
+    state_dir = Path(cfg["state_dir"])
+    if not state_dir.is_dir():
+        click.echo(
+            "no state db — run 'digital-twins init' first", err=True)
+        raise SystemExit(2)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+        caller_email, caller_role = _account_authenticate(db)
+
+        try:
+            require_capability(
+                caller_role, "manage_accounts",
+                "list accounts")
+        except RoleDenied as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2)
+
+        rows = db.execute(
+            "SELECT email, role, created_at, last_active "
+            "FROM accounts ORDER BY email"
+        ).fetchall()
+        if not rows:
+            click.echo("no accounts")
+            return
+
+        header = ("email", "role", "created_at", "last_active")
+        widths = [
+            max(len(h), *(len(r[i] or "-") for r in rows))
+            for i, h in enumerate(header)
+        ]
+        click.echo("  ".join(h.ljust(w) for h, w in zip(header, widths)))
+        for r in rows:
+            cells = [(r[i] or "-") for i in range(len(header))]
+            click.echo("  ".join(c.ljust(w) for c, w in zip(cells, widths)))
+    finally:
+        db.close()
+
+
+@account.command("set-role")
+@click.option("--email", required=True,
+              help="Account email address.")
+@click.option("--role", type=click.Choice(["admin", "scheduler", "reader"]),
+              required=True, help="New role.")
+def account_set_role(email: str, role: str) -> None:
+    """Change an account's role (admin only; last-admin guard SC-002)."""
+    from digital_twins.accounts import (
+        LastAdminError, get_role, require_capability, RoleDenied, set_role)
+
+    cfg = load()
+    state_dir = Path(cfg["state_dir"])
+    if not state_dir.is_dir():
+        click.echo(
+            "no state db — run 'digital-twins init' first", err=True)
+        raise SystemExit(2)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+        caller_email, caller_role = _account_authenticate(db)
+
+        try:
+            require_capability(
+                caller_role, "manage_accounts",
+                "change a role")
+        except RoleDenied as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2)
+
+        # Verify the target account exists
+        target_role = get_role(db, email)
+        if target_role is None:
+            click.echo(f"account `{email}` not found", err=True)
+            raise SystemExit(2)
+
+        try:
+            set_role(db, email, role)
+        except LastAdminError as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(1)
+
+        # Record the change in the audit trail (constitution V)
+        from digital_twins.state.models import start_audit_run, finish_audit_run
+        import uuid
+        run_id = f"set-role-{email}-{uuid.uuid4()}"
+        start_audit_run(db, run_id, trigger="manual", scheduled_by=caller_email)
+        finish_audit_run(db, run_id, "ok",
+                         {"action": "set_role", "target": email,
+                          "new_role": role})
+        click.echo(f"set role for `{email}` to `{role}`")
+    finally:
+        db.close()
+
+
+@account.command("delete")
+@click.option("--email", required=True,
+              help="Account email address to delete.")
+def account_delete(email: str) -> None:
+    """Delete an account (admin only; last-admin guard SC-002).
+
+    Cascades to ``personal_tokens`` and ``sessions`` via FK
+    ``ON DELETE CASCADE``.
+    """
+    from digital_twins.accounts import (
+        LastAdminError, delete_account, get_role,
+        require_capability, RoleDenied)
+
+    cfg = load()
+    state_dir = Path(cfg["state_dir"])
+    if not state_dir.is_dir():
+        click.echo(
+            "no state db — run 'digital-twins init' first", err=True)
+        raise SystemExit(2)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+        caller_email, caller_role = _account_authenticate(db)
+
+        try:
+            require_capability(
+                caller_role, "manage_accounts",
+                "delete an account")
+        except RoleDenied as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2)
+
+        # Verify the target account exists
+        target_role = get_role(db, email)
+        if target_role is None:
+            click.echo(f"account `{email}` not found", err=True)
+            raise SystemExit(2)
+
+        try:
+            delete_account(db, email)
+        except LastAdminError as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(1)
+
+        # Record the deletion in the audit trail (constitution V)
+        from digital_twins.state.models import start_audit_run, finish_audit_run
+        import uuid
+        run_id = f"delete-{email}-{uuid.uuid4()}"
+        start_audit_run(db, run_id, trigger="manual", scheduled_by=caller_email)
+        finish_audit_run(db, run_id, "ok",
+                         {"action": "delete", "target": email})
+        click.echo(f"deleted account `{email}`")
+    finally:
+        db.close()
+
+
+@account.command("whoami")
+def account_whoami() -> None:
+    """Print the caller's identity + role (authenticated, any role)."""
+    cfg = load()
+    state_dir = Path(cfg["state_dir"])
+    if not state_dir.is_dir():
+        click.echo(
+            "no state db — run 'digital-twins init' first", err=True)
+        raise SystemExit(2)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+        caller_email, caller_role = _account_authenticate(db)
+        click.echo(f"account: {caller_email}")
+        click.echo(f"role: {caller_role}")
+    finally:
+        db.close()
+
+
 def main() -> None:
     cli()
