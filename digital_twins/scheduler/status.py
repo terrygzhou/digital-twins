@@ -1,7 +1,15 @@
-"""Status endpoint: status_payload + ThreadingHTTPServer handler (002).
+"""Status endpoint: status_payload + ThreadingHTTPServer handler.
 
 GET /status -> 200 JSON (the status_payload shape); 404 for any other path.
-Content-Type: application/json. No auth in 002 (A3).
+Content-Type: application/json.
+
+Auth (003, C-5 / R8): ``StatusServer`` accepts an optional ``auth_checker``
+kwarg. When provided, ``do_GET`` gates ``/status`` on it:
+  - ``True``  -> allow (200)
+  - ``str``   -> deny with that string as the 403 body error
+  - ``False`` -> deny with a generic "unauthorized" (401)
+When ``auth_checker`` is None (002's callers) the ``do_GET`` path is
+byte-for-byte the 002 behavior (no auth) — backward compatible (C-5).
 
 SC-004: the /status response must complete in < 500 ms wall-clock. The
 payload builder is a few sqlite queries (list_schedules + one audit_runs
@@ -147,6 +155,27 @@ class _StatusHandler(BaseHTTPRequestHandler):
         if path != "/status":
             self._send_json(404, {"error": "not found"})
             return
+        # 003 C-5 / R8: gate on the auth_checker when one is installed.
+        # ``None`` (002's callers) skips the check entirely — the 002
+        # no-auth behavior is preserved byte-for-byte.
+        checker = getattr(self.server, "auth_checker", None)
+        if checker is not None:
+            headers = {k: v for k, v in self.headers.items()}
+            try:
+                result = checker(headers)
+            except Exception:
+                # A checker that raises is treated as a deny (401) — fail
+                # closed: never serve a payload on an auth error.
+                self._send_json(401, {"error": "unauthorized"})
+                return
+            if result is True:
+                pass  # fall through to the 200 payload
+            elif isinstance(result, str):
+                self._send_json(403, {"error": result})
+                return
+            else:
+                self._send_json(401, {"error": "unauthorized"})
+                return
         with self.server._db_lock:
             payload = status_payload(
                 self.server.db, self.server.config,
@@ -182,6 +211,13 @@ class StatusServer(ThreadingHTTPServer):
     lock keeps concurrent /status requests from interleaving on the shared
     connection.
 
+    003 C-5 / R8: ``auth_checker`` is an optional callable
+    ``auth_checker(headers: dict[str, str]) -> bool | str``. ``True`` allows
+    the request (200); a ``str`` denies it with that string as the 403 body
+    error; ``False`` denies it with a generic "unauthorized" (401). When
+    ``None`` (the default — 002's callers), no auth check is performed and
+    ``/status`` behaves exactly as 002 (C-5 backward-compat).
+
     Usage (T008):
         server = StatusServer(("127.0.0.1", port), db, config)
         server.start()
@@ -192,9 +228,12 @@ class StatusServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, addr, db, config):
+    def __init__(self, addr, db, config, *, auth_checker=None):
         self.config = config
         self.start_time = time.time()
+        # 003 C-5 / R8: the optional auth hook. ``None`` (002's callers)
+        # means "no auth check" — the do_GET path is the 002 behavior.
+        self.auth_checker = auth_checker
         # The lock serializes concurrent /status requests on the shared
         # SQLite connection (each request runs in its own thread).
         self._db_lock = threading.Lock()

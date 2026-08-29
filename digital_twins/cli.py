@@ -1,5 +1,6 @@
 """digital-twins command-line interface."""
 
+import hmac
 import os
 from pathlib import Path
 import uuid
@@ -392,6 +393,46 @@ def init(yes: bool) -> None:
     raise SystemExit(_exit_code(results))
 
 
+def _auth_checker(db, service_token_env: str = "DT_SERVICE_TOKEN"):
+    """Build the StatusServer ``auth_checker`` for the serve ``/status`` gate.
+
+    003 C-5 / R8 (contracts/scheduler.md): accept, in order:
+      1. the shared service token (BR-10) — ``DT_SERVICE_TOKEN`` env var,
+         constant-time compare;
+      2. a valid personal token (``personal_tokens`` table, T005);
+      3. a valid session token (``sessions`` table, T006).
+    Missing / no Bearer prefix -> ``False`` (401). A Bearer that matches
+    none of the above -> ``False`` (401 — unknown credential; 003's
+    ``/status`` is read-only, so there is no 403 to mean here). A known
+    credential that is suspended would return a string (403) — reserved for
+    the future mutating routes (004/005); in 003 every known credential is
+    either accepted (200) or unknown (401).
+    """
+    def check(headers):
+        auth = headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return False  # 401: no credential
+        token = auth[len("Bearer "):].strip()
+        # 1) shared service token (BR-10, constant-time compare)
+        service = os.environ.get(service_token_env)
+        if service and hmac.compare_digest(token, service):
+            return True
+        # 2) personal token (personal_tokens table, T005)
+        from digital_twins.auth import verify_personal_token
+        if verify_personal_token(db, token):
+            return True
+        # 3) session token (sessions table, T006, TTL + revoked)
+        from digital_twins.auth import verify_session
+        if verify_session(db, token):
+            return True
+        # 4) a Bearer that matches none of the above: 401 (unknown) — not
+        #    403, because there is no mutating /status route for a 403 to
+        #    mean (contracts/scheduler.md).
+        return False
+
+    return check
+
+
 @cli.command()
 @click.option("--port", type=int, default=None,
               help="Override the status port. Defaults to the "
@@ -441,8 +482,12 @@ def serve(port: int, tick_seconds: float) -> None:
         if status_port > 0:
             try:
                 from digital_twins.scheduler.status import StatusServer
+                # 003 C-5 / R8: gate /status on the auth_checker (service
+                # token -> personal token -> session token; else 401).
+                checker = _auth_checker(db)
                 status_server = StatusServer(
-                    ("127.0.0.1", status_port), db, cfg)
+                    ("127.0.0.1", status_port), db, cfg,
+                    auth_checker=checker)
             except ImportError:
                 click.echo(
                     f"serve: status server not yet available (port "
