@@ -250,3 +250,87 @@ def test_http_handler_unknown_path_404(tmp_path):
         server.shutdown()
         server.server_close()
         db.close()
+
+
+# 6 — run_serve integration: REAL StatusServer start/stop (no stub) ----------
+
+
+def test_run_serve_real_status_server(tmp_path, monkeypatch):
+    """Integration guard for the T017 review Critical finding: the REAL
+    ``run_serve`` (loop.py) must be able to drive a REAL ``StatusServer`` via
+    its ``start()``/``stop()`` methods — not a stub.
+
+    Before the fix, ``StatusServer`` (a ``ThreadingHTTPServer``) only offered
+    ``serve_forever``/``shutdown``, so ``hasattr(StatusServer, 'start')`` and
+    ``hasattr(StatusServer, 'stop')`` were both False, and ``run_serve``
+    raised ``AttributeError`` at loop.py:255 in the real ``cli serve`` path.
+    That gap was invisible to the suite because ``test_serve_cli.py`` stubs
+    ``run_serve`` (monkeypatch), so the real start/stop call never ran.
+
+    This test exercises the real start/stop:
+      - monkeypatch ``serve_once_tick`` to a recording no-op (the tick's
+        pipeline is out of scope here; we only care that the loop runs a tick
+        and that the status server is started/stopped around it);
+      - monkeypatch ``load_config`` to return the test config each tick (the
+        real loader would read from the env/config dir, which we don't want
+        coupling into this unit test);
+      - build a real ``StatusServer`` on an ephemeral port;
+      - call the REAL ``run_serve(..., status_server=server, max_ticks=1)``;
+      - assert it returns cleanly (no AttributeError), that the server was
+        started and stopped, and that the pidfile is gone.
+    """
+    db = _make_db(tmp_path)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    config = {"state_dir": str(state_dir), "sources": {}}
+
+    # Recording no-op for the tick: proves the loop ran a tick without
+    # actually running the 001 pipeline (heavy, out of scope here).
+    ticks = []
+
+    def _stub_tick(db_arg, fresh_config):
+        ticks.append(fresh_config)
+        return {"fired": [], "skipped": [], "queue_depth": 0}
+
+    monkeypatch.setattr(
+        "digital_twins.scheduler.loop.serve_once_tick", _stub_tick)
+    # The real loader reads from the env/config dir; return our test config
+    # each tick so the loop's fresh-config load is a no-op.
+    monkeypatch.setattr(
+        "digital_twins.scheduler.loop.load_config", lambda: config)
+
+    from digital_twins.scheduler.loop import run_serve
+    from digital_twins.scheduler.status import StatusServer
+
+    server = StatusServer(("127.0.0.1", 0), db, config)
+    lock = state_dir / "serve.lock"
+
+    try:
+        # The real run_serve: it calls status_server.start() before the first
+        # tick and status_server.stop() on the shutdown path. Before the fix,
+        # this raised AttributeError at loop.py:255 (start did not exist).
+        run_serve(db, config, 0, status_server=server,
+                  tick_seconds=0.01, max_ticks=1)
+    finally:
+        # Belt-and-suspenders: if run_serve raised, make sure the daemon
+        # thread (if any) is not left serving, and the socket is closed.
+        try:
+            server.stop()
+        except Exception:
+            pass
+        server.server_close()
+        db.close()
+
+    # Returned cleanly: exactly one tick ran.
+    assert len(ticks) == 1, f"expected 1 tick, got {len(ticks)}"
+    # The pidfile was removed on clean shutdown.
+    assert not lock.exists(), "serve.lock not removed after clean shutdown"
+    # The server was actually started and stopped by run_serve (not a stub):
+    # start() spawns the daemon thread, stop() shuts it down and clears it.
+    assert server._thread is None, (
+        "stop() did not join/clear the daemon thread")
+    # After stop(), the socket is closed: a new connection should fail.
+    host, port = server.server_address[:2]
+    with pytest.raises(Exception):
+        urllib.request.urlopen(
+            f"http://{host}:{port}/status", timeout=1.0)

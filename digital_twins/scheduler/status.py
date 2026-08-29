@@ -180,10 +180,9 @@ class StatusServer(ThreadingHTTPServer):
 
     Usage (T008):
         server = StatusServer(("127.0.0.1", port), db, config)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
+        server.start()
         ...
-        server.shutdown()   # clean stop on serve shutdown (T007's stop path)
+        server.stop()   # clean stop on serve shutdown (T007's stop path)
     """
 
     daemon_threads = True
@@ -195,6 +194,9 @@ class StatusServer(ThreadingHTTPServer):
         # The lock serializes concurrent /status requests on the shared
         # SQLite connection (each request runs in its own thread).
         self._db_lock = threading.Lock()
+        # The daemon thread that runs serve_forever. Set by start(), read by
+        # stop(). None until start() is called.
+        self._thread = None
         # Keep the module-level default in sync so a stray status_payload
         # call without an explicit start_time still reports this server's
         # start (and so a second server doesn't clobber the first one's
@@ -209,6 +211,46 @@ class StatusServer(ThreadingHTTPServer):
         # threads use this connection.
         self.db = _open_same_db(db, check_same_thread=False)
         super().__init__(addr, _StatusHandler)
+
+    def start(self) -> None:
+        """Launch serve_forever on a daemon thread and return immediately.
+
+        Called by ``run_serve`` (loop.py) before the first tick. The
+        daemon thread keeps the event loop (serve_forever) running without
+        blocking the caller; the caller can proceed to the tick loop and
+        will later call :meth:`stop` to shut down.
+        """
+        if self._thread is not None and self._thread.is_alive():
+            # Already serving — don't double-start.
+            return
+        self._thread = threading.Thread(
+            target=self.serve_forever, daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Shut down the serve loop and join the thread.
+
+        Called by ``run_serve`` (loop.py) on the shutdown path. shutdown()
+        is a ThreadingHTTPServer method that stops serve_forever; we then
+        join the thread so the daemon has fully exited before the caller
+        moves on. Idempotent: safe to call even if start() was never called
+        or the thread already exited.
+        """
+        # shutdown() blocks until serve_forever returns; only call it if the
+        # thread is actually running (a fresh/never-started server has no
+        # serve_forever loop to stop, and calling shutdown() on a server that
+        # never served would just return immediately — but we guard anyway
+        # to keep the contract obvious).
+        try:
+            self.shutdown()
+        except Exception:
+            # shutdown() can raise if the server was never started or already
+            # stopped; treat that as a clean no-op.
+            pass
+        if self._thread is not None:
+            self._thread.join()
+            self._thread = None
 
 
 def _open_same_db(db, check_same_thread: bool = False):
