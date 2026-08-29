@@ -247,8 +247,20 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
                 raise SystemExit(2)
         finally:
             db.close()
+        # 003 C-3: merge the caller's per-user config overrides into a COPY of
+        # the global config (never mutate the global). The merge happens at
+        # the caller (CLI `run --as`), not in run_pipeline (constitution II).
+        # The auth connection is closed; reopen a fresh one for the merge read.
+        from digital_twins.user_config import merge_user_config
+        db2 = connect(state_dir)
+        try:
+            cfg = merge_user_config(cfg, db2, as_user)
+        finally:
+            db2.close()
+        run_owner = as_user
         scheduled_by = as_user
     else:
+        run_owner = None
         scheduled_by = "system"
 
     # --once: one-shot host-cron run. trigger='manual', scheduled_by per
@@ -256,7 +268,10 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
     # the 001 behavior is unchanged. (T008's `serve` will use
     # trigger='schedule'.)
     trigger = "manual"
-    cfg = load()
+    if run_owner is None:
+        # No --as: read global config fresh (001 behavior unchanged).
+        cfg = load()
+    # else: cfg is already the merged user-config copy from the --as branch above.
     state_dir = Path(cfg["state_dir"])
     state_dir.mkdir(parents=True, exist_ok=True)
     db = connect(state_dir)
@@ -314,7 +329,8 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
                 cfg, db, qdrant, embedder,
                 source_names=list(source_names) or None,
                 max_items=max_items, dry_run=dry_run,
-                trigger=trigger, scheduled_by=scheduled_by)
+                trigger=trigger, scheduled_by=scheduled_by,
+                owner=run_owner)
         except PrerequisiteError as exc:
             click.echo(f"fail-fast: {exc}", err=True)
             raise SystemExit(2)
@@ -1007,6 +1023,77 @@ def token_revoke(token_id: int, as_user: str) -> None:
         db.close()
 
 
+# --- session group (003 US3 S3: revocable web sessions)
+#
+# The sessions table (T002/T006) stores pbkdf2 hashes of 32-byte web session
+# tokens with an 8-hour TTL and a revoked flag. US3 S3 requires revocation
+# isolation: "revoking one does not affect the other."  A leaked session
+# token must be revocable; otherwise its only mitigation is the 8-hour TTL.
+#
+# `session revoke` takes the plaintext session token and flips revoked=1.
+# It authenticates the caller (DT_PERSONAL_TOKEN or DT_USER_PASSWORD + --as)
+# and requires the manage_sessions capability would be ideal, but R3 has no
+# such cap — v1 treats session revocation as an admin action (a user's
+# session tokens belong to their account; only admin can revoke another
+# user's session).  For own-session revocation, the caller authenticates as
+# the session owner.
+
+
+@cli.group()
+def session() -> None:
+    """Manage web sign-in sessions (revoke).
+
+    A web session token is a 32-byte value issued at /signin, stored as a
+    pbkdf2 hash with an 8-hour TTL. ``session revoke`` flips the
+    ``revoked`` flag so the token stops authenticating immediately.
+    """
+
+
+@session.command("revoke")
+@click.argument("token", envvar="DT_SESSION_TOKEN")
+@click.option("--as", "as_user", default=None,
+              help="Account to authenticate as. Defaults to the session owner.")
+def session_revoke(token: str, as_user: str) -> None:
+    """Revoke a web session token so it stops authenticating immediately.
+
+    The token is the plaintext 32-byte value returned by /signin. It is read
+    from the DT_SESSION_TOKEN env var (not argv, to avoid shell history).
+    The caller must authenticate (DT_PERSONAL_TOKEN or DT_USER_PASSWORD +
+    --as). Revoke succeeds for the session's own owner or an admin.
+    """
+    from digital_twins.auth import revoke_session
+    from digital_twins.accounts import get_role, require_capability, RoleDenied
+
+    db = _open_schedules_db()
+    try:
+        # Authenticate the caller first.
+        caller_email, caller_role = _token_authenticate(db, as_user)
+
+        # Resolve the session owner (the account the session belongs to).
+        from digital_twins.auth import verify_session
+        session_owner = verify_session(db, token)
+        if session_owner is None:
+            # No live, un-revoked, un-expired session matches this token.
+            # Could be already revoked / expired / never created.
+            click.echo(
+                "no live session found for this token "
+                "(expired, revoked, or unknown)", err=True)
+            raise SystemExit(2)
+
+        # Gate: the caller must be the session owner or an admin.
+        if caller_email != session_owner:
+            require_capability(caller_role, "manage_accounts",
+                               "revoke another user's session")
+
+        revoke_session(db, token)
+        click.echo(f"revoked session for {session_owner}")
+    except RoleDenied as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(2)
+    finally:
+        db.close()
+
+
 # --- account group (T011, US2 — account management, admin-gated except whoami)
 #
 # All four subcommands authenticate first via DT_PERSONAL_TOKEN, then check
@@ -1390,6 +1477,61 @@ def config_unset(as_user: str, source: str, key: str) -> None:
         unset_override(db, as_user, source, key)
 
         click.echo(f"removed {source}.{key} for `{as_user}`")
+    finally:
+        db.close()
+
+
+@cli.command("run-history")
+@click.option("--as", "as_user", required=True,
+              help="Account to view run history for. Own history: any "
+                   "authenticated role. All users' history: admin-only.")
+@click.option("--all", "all_users", is_flag=True,
+              help="View all users' run history (admin-only).")
+def run_history(as_user: str, all_users: bool) -> None:
+    """View run history (audit records filtered to the caller's account).
+
+    003 post-auth role check: the caller must have the ``view_own_history``
+    capability (R3: all roles) to see their own runs, or
+    ``view_all_history`` (R3: admin only) to see every user's runs with
+    ``--all``.  ``system``-attributed runs are excluded from the "mine"
+    view.
+
+    Auth: DT_PERSONAL_TOKEN or DT_USER_PASSWORD + --as (shared 003 helper).
+    """
+    db = _open_schedules_db()
+    try:
+        from digital_twins.accounts import require_capability, RoleDenied
+        caller_email, caller_role = _token_authenticate(db, as_user)
+        from digital_twins.state.models import list_runs
+
+        if all_users:
+            require_capability(caller_role, "view_all_history",
+                               "view all users' run history")
+            runs = list_runs(db, user=caller_email, all_users=True)
+        else:
+            require_capability(caller_role, "view_own_history",
+                               "view own run history")
+            # "mine" = runs attributed to the authenticated caller, not
+            # necessarily the --as target (you can only view your own).
+            runs = list_runs(db, user=caller_email)
+
+        if not runs:
+            click.echo("no runs")
+            return
+
+        header = ("run_id", "started_at", "completed_at", "status",
+                  "trigger", "scheduled_by")
+        rows = [r[:6] for r in runs]
+        widths = [max(len(h), *(len(str(r[i]) if r[i] is not None else "-")
+                                 for r in rows))
+                  for i, h in enumerate(header)]
+        click.echo("  ".join(h.ljust(w) for h, w in zip(header, widths)))
+        for r in rows:
+            cells = [str(c) if c is not None else "-" for c in r]
+            click.echo("  ".join(c.ljust(w) for c, w in zip(cells, widths)))
+    except RoleDenied as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(2)
     finally:
         db.close()
 

@@ -317,4 +317,8 @@ def _open_same_db(db, check_same_thread: bool = False):
         # check_same_thread=False (the test helper does this).
         return db
 
-    return sqlite3.connect(str(path), check_same_thread=check_same_thread)
+    conn = sqlite3.connect(str(path), check_same_thread=check_same_thread)
+    # Enforce FKs on the secondary connection too (sqlite3.connect defaults
+    # foreign_keys=OFF).
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn

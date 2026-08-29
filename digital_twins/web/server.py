@@ -271,4 +271,10 @@ def _open_same_db(db, check_same_thread: bool = False):
     if path is None or path == ":memory:":
         return db
 
-    return sqlite3.connect(str(path), check_same_thread=check_same_thread)
+    conn = sqlite3.connect(str(path), check_same_thread=check_same_thread)
+    # Enforce FKs on the secondary connection too (sqlite3.connect defaults
+    # foreign_keys=OFF). Without this, ON DELETE CASCADE on
+    # personal_tokens.account_email / sessions.account_email would not fire
+    # on rows deleted via a server-connection.
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
