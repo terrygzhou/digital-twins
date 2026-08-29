@@ -54,6 +54,8 @@ SHIPPED_NON_PY = [
     # the "digital_twins" directory entry above).
     "digital_twins/web/static/index.html",
     "digital_twins/web/static/style.css",
+    # 006 quickstart (shipped user-facing docs; NFR-13)
+    "specs/006-web-app/quickstart.md",
 ]
 
 
