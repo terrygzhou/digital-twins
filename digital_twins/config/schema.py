@@ -258,6 +258,13 @@ def validate(cfg: dict) -> dict:
                     )
                 section[sub] = coerce(f"{key}.{sub}", sub_value)
             out[key] = section
+    # embedding.device must be one of the documented values
+    device = get(out, "embedding.device")
+    if device is not None and device not in EMBEDDING_DEVICES:
+        raise SchemaError(
+            f"embedding.device {device!r} must be one of "
+            f"{'|'.join(EMBEDDING_DEVICES)}"
+        )
     # every built-in source is present (disabled by default, BR-11.2.7)
     out.setdefault("sources", {})
     for builtin in BUILTIN_SOURCES:
