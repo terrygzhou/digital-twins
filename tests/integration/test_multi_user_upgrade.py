@@ -41,7 +41,22 @@ def _pin_v2(conn):
 
     A plain ``migrate()`` now lands on v3 (T002), so to exercise a v2 -> v3
     upgrade we apply v1 + v2 explicitly, then rewind user_version to 2.
+
+    T004 made ``connect()`` auto-migrate to v3, so on first entry the
+    connection already has the v3 schema.  We tear it down explicitly:
+    drop the v3-only tables, drop the two v3-only accounts columns, then
+    apply v1 + v2 to rebuild the v2 schema.
     """
+    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    existing = {r[0] for r in cur}
+    for tbl in ("personal_tokens", "user_config", "sessions"):
+        if tbl in existing:
+            conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+    acct_cols = {r[1] for r in conn.execute("PRAGMA table_info(accounts)")}
+    for col in ("created_at", "last_active"):
+        if col in acct_cols:
+            conn.execute(f"ALTER TABLE accounts DROP COLUMN {col}")
+    conn.commit()
     models.apply_v1(conn)
     models.apply_v2(conn)
     conn.execute("PRAGMA user_version=2")
