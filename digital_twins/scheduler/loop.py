@@ -12,11 +12,10 @@ T007) re-loads config each tick, so cap changes are honored without restart
 Error handling (002 ruling R-07, "reported, never silent"):
     A source prerequisite failure (001 ``PrerequisiteError``) or any other
     unexpected pipeline exception for a due schedule writes a ``failed``
-    audit row for that run (run_id = fresh uuid4 hex, trigger='schedule',
-    scheduled_by=owner, per_source_counts {source: 0}) and STILL advances the
-    schedule via claim_and_advance, so it is not re-fired on the next tick.
-    The schedule id lands in ``fired``: the fire WAS processed; the run
-    failed but was audited.
+    audit row for that run and STILL advances the schedule via
+    claim_and_advance, so it is not re-fired on the next tick. The schedule
+    id lands in ``fired``: the fire WAS processed; the run failed but was
+    audited.
 
 ``run_serve`` (T007) is still red; the import pin in
 ``tests/unit/test_scheduler_imports.py`` expects both names.
@@ -26,21 +25,22 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+from digital_twins.config.schema import get
 from digital_twins.ingest.pipeline import run_pipeline
 from digital_twins.scheduler.schedules import claim_and_advance, due_schedules
 from digital_twins.state.models import finish_audit_run, start_audit_run
 
 
-def serve_once_tick(db, config, qdrant=None, embedder=None,
-                    neo4j=None) -> dict:
+def serve_once_tick(db, config) -> dict:
     """One serve tick: fire the due schedules, audit, and advance.
 
     Args:
         db: 001 state connection (schedules + audit_runs tables, v2).
         config: the 001 config dict, read fresh on every call (no caching).
-        qdrant: client or zero-arg factory, passed through to run_pipeline.
-        embedder: list[str] -> list of vectors, passed through.
-        neo4j: driver-shaped object (or None), passed through.
+            The tick resolves its own qdrant client, embedder, and (optional)
+            neo4j driver from config — the same wiring the CLI's ``run``
+            command uses — so callers hand it exactly what they hand
+            ``run_pipeline``: the resolved config.
 
     Returns:
         ``{"fired": [schedule id...], "skipped": [schedule id...],
@@ -48,6 +48,14 @@ def serve_once_tick(db, config, qdrant=None, embedder=None,
     """
     now = datetime.now(timezone.utc)
     due = due_schedules(db, now)
+
+    # Resolve the pipeline's dependencies from config, once per tick.
+    # (The QdrantClient is a factory — run_pipeline calls it lazily after
+    # the prerequisite check, mirroring 001's fail-fast ordering.)
+    qdrant = _qdrant_factory(config)
+    embedder = _embedder(config)
+    neo4j = None  # 002 v1: serve fires use the shared 001 state store;
+    # graph writes are a 001 concern (T007 wires the driver if needed).
 
     fired: list[int] = []
     skipped: list[int] = []
@@ -90,6 +98,42 @@ def serve_once_tick(db, config, qdrant=None, embedder=None,
     queue_depth = len(due) - len(fired) - len(skipped)
 
     return {"fired": fired, "skipped": skipped, "queue_depth": queue_depth}
+
+
+def _qdrant_factory(config) -> callable:
+    """Zero-arg factory returning the configured Qdrant client (lazy).
+
+    Mirrors the CLI's ``run`` command: the client is only constructed after
+    the prerequisite check passes, so a missing prerequisite never pays the
+    cost of a network connection.
+    """
+    url = get(config, "qdrant.url")
+
+    def factory():
+        if not url:
+            from digital_twins.config.schema import ConfigError
+            raise ConfigError(
+                "qdrant.url is not set — run init or set KB_QDRANT__URL")
+        from qdrant_client import QdrantClient
+        return QdrantClient(
+            url=url, api_key=get(config, "qdrant.api_key") or None)
+
+    return factory
+
+
+def _embedder(config):
+    """Lazy embedder: the heavy model loads on first call, not at tick start."""
+    state = {}
+
+    def embed(texts):
+        if "model" not in state:
+            from digital_twins.ingest.embedding import load_embedder
+            state["model"] = load_embedder(
+                get(config, "embedding.model"),
+                get(config, "embedding.device") or "auto")
+        return state["model"].encode(list(texts)).tolist()
+
+    return embed
 
 
 def _audit_count(db) -> int:

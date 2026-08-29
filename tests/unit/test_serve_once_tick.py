@@ -17,9 +17,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from qdrant_client import QdrantClient
 
-from digital_twins.health import QDRANT_COLLECTION
-from digital_twins.ingest.pipeline import PrerequisiteError
 from digital_twins.scheduler import loop, schedules
 from digital_twins.state.db import connect
 from digital_twins.state.migrations import migrate
@@ -42,10 +41,6 @@ def _cfg(tmp_path, fs_dir):
         "chunking": {"max_chars": 200, "overlap": 20},
         "sources": sources,
     }
-
-
-def _embedder(texts):
-    return [[0.5] * 384 for _ in texts]
 
 
 def _now() -> datetime:
@@ -77,6 +72,34 @@ def db(tmp_path):
     conn.close()
 
 
+@pytest.fixture
+def stub_pipeline(monkeypatch):
+    """Replace the tick's qdrant factory + embedder with in-memory stubs.
+
+    serve_once_tick(db, config) resolves its own qdrant client and embedder
+    from config (like the CLI's `run` command). To keep unit tests hermetic
+    (no network, no model load), monkeypatch QdrantClient and load_embedder
+    so the tick's factories return in-memory doubles.
+    """
+    in_memory = QdrantClient(":memory:")
+
+    monkeypatch.setattr(
+        "qdrant_client.QdrantClient",
+        lambda *a, **kw: in_memory,
+    )
+
+    class _StubModel:
+        def encode(self, texts):
+            return [[0.5] * 384 for _ in texts]
+
+    monkeypatch.setattr(
+        "digital_twins.ingest.embedding.load_embedder",
+        lambda model, device: _StubModel(),
+    )
+
+    return in_memory
+
+
 def _create_due_schedule(db, now: datetime, *, owner="system", source="fs",
                          preset="every-N-hours", param=1, fire_time="03:00"):
     """Create a schedule and force next_fire_at into the past (due NOW)."""
@@ -93,7 +116,7 @@ def _create_due_schedule(db, now: datetime, *, owner="system", source="fs",
 
 # 1 — happy path -------------------------------------------------------------
 
-def test_one_tick_fires_due_schedule(qdrant, tmp_path, fs_dir, db):
+def test_one_tick_fires_due_schedule(stub_pipeline, tmp_path, fs_dir, db):
     """US1 scenario 1: one tick over a due schedule -> one audit row, advance."""
     cfg = _cfg(tmp_path, fs_dir)
     now = _now()
@@ -103,7 +126,7 @@ def test_one_tick_fires_due_schedule(qdrant, tmp_path, fs_dir, db):
     due = schedules.due_schedules(db, _now())
     assert [s["id"] for s in due] == [sid]
 
-    result = loop.serve_once_tick(db, cfg, qdrant=qdrant, embedder=_embedder)
+    result = loop.serve_once_tick(db, cfg)
 
     assert sid in result["fired"]
     assert result["skipped"] == []
@@ -129,11 +152,11 @@ def test_one_tick_fires_due_schedule(qdrant, tmp_path, fs_dir, db):
 
 # 2 — idle tick (no schedules) -------------------------------------------------
 
-def test_idle_tick_no_schedules(qdrant, tmp_path, fs_dir, db):
+def test_idle_tick_no_schedules(stub_pipeline, tmp_path, fs_dir, db):
     """US1 scenario 3: empty schedules table -> empty result, zero audit rows."""
     cfg = _cfg(tmp_path, fs_dir)
 
-    result = loop.serve_once_tick(db, cfg, qdrant=qdrant, embedder=_embedder)
+    result = loop.serve_once_tick(db, cfg)
 
     assert result == {"fired": [], "skipped": [], "queue_depth": 0}
     assert _audit_rows(db) == []
@@ -141,7 +164,7 @@ def test_idle_tick_no_schedules(qdrant, tmp_path, fs_dir, db):
 
 # 3 — paused source is not fired ------------------------------------------------
 
-def test_paused_source_not_fired(qdrant, tmp_path, fs_dir, db):
+def test_paused_source_not_fired(stub_pipeline, tmp_path, fs_dir, db):
     """Ruling R-07 companion: a due schedule whose source is `enabled: false`
     in config is SKIPPED — no audit row, next_fire_at NOT advanced. The
     schedule stays due and fires when the source is re-enabled."""
@@ -151,7 +174,7 @@ def test_paused_source_not_fired(qdrant, tmp_path, fs_dir, db):
     sid = _create_due_schedule(db, now)
     old_fire = (now - timedelta(minutes=5)).isoformat(timespec="seconds")
 
-    result = loop.serve_once_tick(db, cfg, qdrant=qdrant, embedder=_embedder)
+    result = loop.serve_once_tick(db, cfg)
 
     assert sid in result["skipped"]
     assert result["fired"] == []
@@ -168,8 +191,8 @@ def test_paused_source_not_fired(qdrant, tmp_path, fs_dir, db):
 
 # 4 — prerequisite failure is audited + advanced --------------------------------
 
-def test_prerequisite_failure_audits_and_advances(qdrant, tmp_path, fs_dir, db,
-                                                  monkeypatch):
+def test_prerequisite_failure_audits_and_advances(stub_pipeline, tmp_path,
+                                                  fs_dir, db, monkeypatch):
     """R-07: a source prerequisite failure writes a `failed` audit row for the
     run and STILL advances the schedule (not re-fired next tick); the id is in
     `fired` (the fire WAS processed — 'reported, never silent')."""
@@ -185,7 +208,7 @@ def test_prerequisite_failure_audits_and_advances(qdrant, tmp_path, fs_dir, db,
     sid = _create_due_schedule(db, now)
     old_fire = (now - timedelta(minutes=5)).isoformat(timespec="seconds")
 
-    result = loop.serve_once_tick(db, cfg, qdrant=qdrant, embedder=_embedder)
+    result = loop.serve_once_tick(db, cfg)
 
     assert sid in result["fired"]
     assert result["skipped"] == []
@@ -200,8 +223,8 @@ def test_prerequisite_failure_audits_and_advances(qdrant, tmp_path, fs_dir, db,
     import json
     # Counts are {} here: the PrerequisiteError fires during the fail-fast
     # source check, before any item is read, so run_pipeline's counts dict
-    # is still empty at finish time. The brief's {source: 0} shape applies
-    # to the backstop path (a run that dies before start_audit_run).
+    # is still empty at finish time. The backstop path (a run that dies
+    # before start_audit_run) writes {source: 0} instead.
     assert json.loads(counts) in ({}, {"fs": 0})
 
     # advanced past the old due time
