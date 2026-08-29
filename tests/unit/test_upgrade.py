@@ -317,6 +317,7 @@ def test_failed_migration_step_rolls_back(tmp_path, monkeypatch):
     reverted, and a subsequent migrate() re-runs the step."""
     conn = connect(tmp_path)
     migrations.migrate(conn)  # apply v1
+    _seed_v1(conn)
 
     def apply_v2_failing(conn_):
         conn_.execute("CREATE TABLE IF NOT EXISTS v2_partial (id INTEGER PRIMARY KEY)")
@@ -343,7 +344,7 @@ def test_failed_migration_step_rolls_back(tmp_path, monkeypatch):
     assert tables == [], "failed migration step must be fully rolled back"
 
     # v1 data is intact
-    assert len(conn.execute("SELECT * FROM accounts").fetchall()) == 0
+    assert len(conn.execute("SELECT * FROM accounts").fetchall()) == 2
 
     # Now replace with a working v2: it should apply cleanly
     monkeypatch.setattr(migrations, "MIGRATIONS", [
