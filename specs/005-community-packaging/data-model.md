@@ -82,7 +82,7 @@ __version__ = "0.3.0"
 (001/002/003 precedent). 005 codifies the *contract* (research R2/R3):
 
 - **Every release** since 0.1.0 has an entry (SC-004). The existing changelog
-  already has `0.3.0`, `0.2.0`, `0.1.1`, `0.1.0` — 005's slice adds a `0.4.0`
+  already has `0.3.0`, `0.2.0`, `0.1.1`, `0.1.0` — 005's slice adds a `0.5.0`
   entry (the packaging slice is a **minor** bump: it adds docs/packaging, no
   config-breaking change, no schema change).
 - **Section vocabulary:** `Added` / `Changed` / `Deprecated` / `Migrated` (the
@@ -98,7 +98,7 @@ __version__ = "0.3.0"
   | Deprecation (old knob still works) | `minor` | `Deprecated` |
 
 The 004/005 slices are `minor` bumps (new docs/tools, no config-breaking
-change). 005's own release is `0.4.0` (minor over 0.3.0).
+change). 005's own release is `0.5.0` (minor over 0.3.0).
 
 ## 5. Entities (packaging, not state)
 
@@ -118,4 +118,4 @@ change). 005's own release is `0.4.0` (minor over 0.3.0).
   NFR-15 is trivially met (no migration runs).
 - **Config:** no knob added/removed/renamed, so no migration note is required;
   `docs/configuration.md` is *additive* documentation of the existing surface.
-- **Version:** 005 ships as `0.4.0` (minor). No 0.3.0 user sees a config change.
+- **Version:** 005 ships as `0.5.0` (minor). No 0.3.0 user sees a config change.

@@ -295,7 +295,7 @@ NEW files (005):
   .github/ISSUE_TEMPLATE/config-breaking-change.yml # C-5
 MODIFIED files (005):
   README.md                        # C-1 (5-min quick start + docs index + Docker)
-  CHANGELOG.md                     # +0.4.0 entry (the 005 slice)
+  CHANGELOG.md                     # +0.5.0 entry (the 005 slice)
   pyproject.toml                   # NO change needed (LICENSE + license already
                                    #   declared); C-3 verifies, C-8 notes the
                                    #   deferred SPDX cleanup
