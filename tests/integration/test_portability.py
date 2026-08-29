@@ -16,7 +16,7 @@ REPO = Path(__file__).resolve().parents[2]
 HOST_PATTERNS = [
     re.compile(r"/home/[^/\s\"'`]+/"),      # any Linux host home path
     re.compile(r"/Users/[^/\s\"'`]+/"),      # any macOS host home path
-    re.compile(r"~/\.\w*hermes\b|~/\.dsh\b"),  # baseline host runtimes
+    re.compile(r"~/\.\w*hermes\b|~/\.dsh\b|~/\.pi\b"),  # baseline host runtimes
 ]
 
 # Everything the package ships or publishes with.

@@ -43,7 +43,7 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 - [x] T009 Implement state layer: sqlite (WAL) connect + state-dir resolution in `digital_twins/state/db.py`; tables `accounts`, `highwater(source, item_key, last_key, updated_at)`, `audit_runs` in `digital_twins/state/models.py`
 - [x] T010 Implement `PRAGMA user_version` migration runner that completes before any command in `digital_twins/state/migrations.py`; wire into the CLI entry path in `digital_twins/cli.py`
 - [x] T011 Implement deterministic point-ID scheme (prefix + item key + content hash) in `digital_twins/ingest/ids.py` and config-driven chunking in `digital_twins/ingest/chunking.py`
-- [ ] T012 [P] Implement pinned `BAAI/bge-small-en-v1.5` embedding loader with `embedding.device` knob (`auto|cpu|cuda`) and model-dimension accessor in `digital_twins/ingest/embedding.py`
+- [x] T012 [P] Implement pinned `BAAI/bge-small-en-v1.5` embedding loader with `embedding.device` knob (`auto|cpu|cuda`) and model-dimension accessor in `digital_twins/ingest/embedding.py`
 
 **Checkpoint**: Foundation ready — config resolves, state migrates, pipeline primitives exist. User story implementation can now begin.
 
