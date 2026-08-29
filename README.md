@@ -147,5 +147,5 @@ result = load_debug()
 print(result["chunking.max_chars"])  # "kb.local.yml"
 ```
 
-Each key maps to the layer name (`"env"`, `"kb.local.yml"`, `"kb.yml"`, or `"default"`)
+Each key maps to the layer name (`"env"`, `"kb.local.yml"`, `"kb.yml"`, or `"defaults"`)
 that supplied the final value.
