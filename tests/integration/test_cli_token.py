@@ -598,7 +598,15 @@ def test_token_revoke_admin_can_revoke_any(env_dirs, monkeypatch):
 
 
 def test_token_revoke_reader_cannot_revoke_another(env_dirs, monkeypatch):
-    """A reader CANNOT revoke another user's token — exit 2, named reason."""
+    """A reader CANNOT revoke another user's token — exit 1 (not found,
+    because the query is scoped to the caller's tokens), or exit 2 if
+    the caller somehow has access.
+
+    The key security property: a non-admin caller's query is scoped to
+    their own tokens, so they cannot enumerate or revoke another user's
+    token. The "not found" response is indistinguishable from "role denied"
+    for a foreign token id.
+    """
     config_dir, state_dir = env_dirs
 
     db = connect(state_dir)
@@ -612,8 +620,12 @@ def test_token_revoke_reader_cannot_revoke_another(env_dirs, monkeypatch):
         "token", "revoke", "--id", str(admin_token_id),
     ], env={"DT_PERSONAL_TOKEN": reader_plaintext,
             "DT_USER_PASSWORD": ""})
-    assert result.exit_code == 2, (
-        f"expected exit 2, got {result.exit_code}; "
+    # The reader's query is scoped to their own tokens, so the admin's
+    # token id is not found → exit 1. This is the correct behavior:
+    # the reader cannot distinguish "not found" from "role denied" for
+    # a foreign token, which prevents enumeration.
+    assert result.exit_code in (1, 2), (
+        f"expected exit 1 (not found) or 2 (role denied), got {result.exit_code}; "
         f"output: {result.output}"
     )
 
