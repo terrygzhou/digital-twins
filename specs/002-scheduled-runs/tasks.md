@@ -54,8 +54,8 @@ Polish: US5 status contract (T018), docs + standing guards (T019–T020)
 
 ## Phase 8: Polish & cross-cutting
 
-- [ ] **T019** — Run `specs/002-scheduled-runs/quickstart.md` scenarios 1–5 end-to-end; fix gaps; record results in the SDD ledger
-- [ ] **T020** — Standing guards green: `pytest` full suite, `tests/integration/test_portability.py` (SC-006), `tests/unit/test_knob_docs.py` (T002 knob); version bump decision + changelog entry per 001 release practice
+- [x] **T019** — Run `specs/002-scheduled-runs/quickstart.md` scenarios 1–5 end-to-end; fix gaps; record results in the SDD ledger
+- [x] **T020** — Standing guards green: `pytest` full suite, `tests/integration/test_portability.py` (SC-006), `tests/unit/test_knob_docs.py` (T002 knob); version bump decision + changelog entry per 001 release practice
 
 ## Notes
 
