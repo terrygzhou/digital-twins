@@ -168,11 +168,13 @@ def test_credential_env_present_prerequisites_empty(monkeypatch):
 
 
 def test_no_credential_field_does_not_wrap():
-    """Without a `credential` field, prerequisites() is the factory's own."""
-    calls = []
+    """Without a `credential` field, the loader does NOT wrap in _CredentialGuard."""
+    instance = None
 
     def factory(entry):
+        nonlocal instance
         src = FakeSource(entry.get("name", "x"), entry)
+        instance = src
         return src
 
     _make_fake_module("fake_module", factory)
@@ -180,6 +182,10 @@ def test_no_credential_field_does_not_wrap():
     source = build("mytool", entry)
     result = source.prerequisites()
     assert result == []
+    # No `credential` field -> the returned object is the factory's own instance,
+    # not wrapped in _CredentialGuard.
+    assert source is instance, "expected the factory's own source, not a wrapper"
+    assert not isinstance(source, custom_mod._CredentialGuard)
 
 
 # --------------------------------------------------------------------------- #

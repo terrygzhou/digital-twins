@@ -29,6 +29,16 @@ _KNOB_LINE = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
 # Uses the brief's exact regex. Header lines like `# Precedence: ...` are
 # matched but excluded by the is_section check (they have a value that is
 # not a config value). The `# mytool:` block (no value) is also excluded.
+#
+# LIMITATION (deferred-minor, documented not fixed): when a commented-out
+# knob line carries an *inline* comment — e.g. `# key: value  # note  # env: KB_FOO`
+# — the value is truncated at the first `#` during parsing, and no test
+# asserts that truncated value. The parser's value-stripping regex
+# (`^([^#]*)`) cuts off everything from the first `#`, so the recorded value
+# for such a knob is unreliable. This is intentional: the guard only needs
+# the knob *path* and the env annotation (both captured before the strip),
+# not the commented-out value. Do not "fix" the parser without re-evaluating
+# whether any guard actually depends on the value of a commented-out knob.
 _KNOB_LINE_COMMENTED = re.compile(r"^#\s*(\s*)([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
 # .env.example: lines like `#KB_FOO=`, `#YMAIL_APP_PASSWORD=`, `MYTOOL_TOKEN=`
 # — matches any UPPER_CASE var, not just KB_-prefixed (catches credentials)

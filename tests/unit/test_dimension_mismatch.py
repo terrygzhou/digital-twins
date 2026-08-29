@@ -75,14 +75,15 @@ def test_dimension_mismatch_is_hard_error(monkeypatch):
 
 
 def test_dimension_mismatch_remediation_is_actionable(monkeypatch):
-    """Remediation tells the operator what to do (recreate or re-embed)."""
+    """Remediation names BOTH recovery paths: recreate AND re-embed."""
     _install_module(monkeypatch, "qdrant_client", QdrantClient=_dim_client(1536))
     r = health.check_qdrant(
         _cfg(qdrant={"url": "http://localhost:6333"},
              embedding={"model": PINNED}))
     assert not r.ok
     assert r.remediation
-    assert "recreate" in r.remediation or "re-embed" in r.remediation
+    assert "recreate" in r.remediation, "remediation must name the recreate option"
+    assert "re-embed" in r.remediation, "remediation must name the re-embed option"
 
 
 def test_matching_dimension_passes(monkeypatch):

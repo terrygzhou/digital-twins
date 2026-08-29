@@ -103,7 +103,7 @@ def _cli_callback(ctx, version_json: bool) -> None:
 
 @click.group(invoke_without_command=True)
 @click.version_option(version=__version__)
-@click.option("--version-json", is_flag=True, default=False, hidden=True,
+@click.option("--version-json", is_flag=True, default=False,
               help="Print machine-readable version (JSON) and exit.")
 @click.pass_context
 def cli(ctx: click.Context, version_json: bool) -> None:

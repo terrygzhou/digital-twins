@@ -233,10 +233,8 @@ def test_all_four_layers_no_env_no_local(tmp_path):
 
 # --- debug layer-wins report (brief item 8) ---------------------------------
 #
-# The loader does not yet expose a debug/layer-wins API. These tests
-# define the expected interface: a `load_debug()` function (or
-# `load(debug=True)`) that returns a mapping of knob → winning layer name.
-# Expected to FAIL until T028/T029 implements the capability.
+# `load_debug()` (T028/T029) is implemented: it returns a mapping of
+# knob → winning layer name. These tests pin that behaviour.
 #
 
 def test_debug_layer_wins_report_exists(tmp_path):

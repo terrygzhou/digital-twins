@@ -772,3 +772,17 @@ class TestScenario7_UpgradePreservation:
         assert v1 == v2 == v3 == 1
         assert migrations.user_version(conn) == 1
         conn.close()
+
+
+# --------------------------------------------------------------------------- #
+# CLI surface: --version-json is documented in --help
+# --------------------------------------------------------------------------- #
+
+class TestVersionJsonSurface:
+    """`--version-json` must be visible in `digital-twins --help`."""
+
+    def test_version_json_appears_in_help(self):
+        """The flag is surfaced in the group's help output."""
+        result = CliRunner().invoke(cli, ["--help"])
+        assert result.exit_code == 0
+        assert "--version-json" in result.output
