@@ -155,3 +155,200 @@ def test_role_denied_is_exception() -> None:
     # Attributes exposed for the caller
     assert exc.role == "reader"
     assert exc.capability == "trigger_run"
+
+
+# ---------------------------------------------------------------------------
+# T007: require_capability helper + same-transaction last-admin guard (SC-002)
+# ---------------------------------------------------------------------------
+
+import pytest
+
+from digital_twins.state.db import connect
+from digital_twins.state.migrations import migrate
+from digital_twins.accounts import (
+    RoleDenied,
+    LastAdminError,
+    create_account,
+    set_role,
+    delete_account,
+    count_admins,
+)
+
+
+@pytest.fixture()
+def db(tmp_path):
+    """A migrated (v3) state DB with an accounts table."""
+    conn = connect(tmp_path)
+    migrate(conn)
+    yield conn
+    conn.close()
+
+
+# --- require_capability: thin wrapper over guard() with action_label ---------
+
+def test_require_capability_raises_named_role_denied():
+    """require_capability raises RoleDenied with a named reason that
+    includes the action_label, not just the capability id."""
+    from digital_twins.accounts import require_capability
+    with pytest.raises(RoleDenied) as exc_info:
+        require_capability("reader", "trigger_run", "trigger a run")
+    exc = exc_info.value
+    # The named reason must mention the action, not just the capability
+    assert "trigger a run" in str(exc)
+    # The role and capability are still exposed as attributes
+    assert exc.role == "reader"
+    assert exc.capability == "trigger_run"
+
+
+def test_require_capability_allows_valid_combination():
+    """require_capability does not raise when the role has the capability."""
+    from digital_twins.accounts import require_capability
+    # admin has trigger_run
+    require_capability("admin", "trigger_run", "trigger a run")
+    # scheduler has trigger_run
+    require_capability("scheduler", "trigger_run", "trigger a run")
+    # reader has query_status
+    require_capability("reader", "query_status", "check status")
+
+
+def test_require_capability_unknown_role_denied():
+    """Unknown roles are treated as reader-equivalent (deny mutating)."""
+    from digital_twins.accounts import require_capability
+    with pytest.raises(RoleDenied):
+        require_capability("owner", "trigger_run", "trigger a run")
+    # But read capabilities are allowed
+    require_capability("owner", "query_status", "check status")
+
+
+def test_require_capability_denied_includes_action_label():
+    """The RoleDenied message must include the action_label so the CLI/HTTP
+    caller can display a human-readable reason without leaking the matrix."""
+    from digital_twins.accounts import require_capability
+    with pytest.raises(RoleDenied) as exc_info:
+        require_capability("reader", "manage_accounts", "manage accounts")
+    msg = str(exc_info.value)
+    assert "manage accounts" in msg
+    assert "reader" in msg
+    assert "manage_accounts" in msg
+
+
+# --- same-transaction last-admin guard (SC-002) ------------------------------
+
+def test_demote_last_admin_refused_with_named_error(db):
+    """Demoting the last admin is refused with LastAdminError.
+    The guard must be enforced within the same transaction as the mutation
+    (BEGIN → count → apply → COMMIT)."""
+    create_account(db, "first@example.com", "pw1")
+    db.commit()
+    with pytest.raises(LastAdminError) as exc_info:
+        set_role(db, "first@example.com", "reader")
+    # Named error
+    assert "demote" in str(exc_info.value).lower()
+    assert "first@example.com" in str(exc_info.value)
+    # Role unchanged
+    assert db.execute(
+        "SELECT role FROM accounts WHERE email=?",
+        ("first@example.com",)
+    ).fetchone()[0] == "admin"
+    # count_admins still 1
+    assert count_admins(db) == 1
+
+
+def test_delete_last_admin_refused_with_named_error(db):
+    """Deleting the last admin is refused with LastAdminError.
+    The guard must be enforced within the same transaction as the mutation."""
+    create_account(db, "first@example.com", "pw1")
+    db.commit()
+    with pytest.raises(LastAdminError) as exc_info:
+        delete_account(db, "first@example.com")
+    # Named error
+    assert "delete" in str(exc_info.value).lower()
+    assert "first@example.com" in str(exc_info.value)
+    # Account still exists
+    assert db.execute(
+        "SELECT COUNT(*) FROM accounts WHERE email=?",
+        ("first@example.com",)
+    ).fetchone()[0] == 1
+    # count_admins still 1
+    assert count_admins(db) == 1
+
+
+def test_demote_with_second_admin_present_succeeds(db):
+    """With a second admin present, demoting the first admin succeeds.
+    The same-transaction guard counts surviving admins correctly."""
+    create_account(db, "first@example.com", "pw1")   # admin
+    create_account(db, "second@example.com", "pw2")  # reader
+    db.commit()
+    # Promote second to admin
+    set_role(db, "second@example.com", "admin")
+    db.commit()
+    assert count_admins(db) == 2
+    # Now demote first — should succeed (second admin survives)
+    set_role(db, "first@example.com", "reader")
+    db.commit()
+    assert db.execute(
+        "SELECT role FROM accounts WHERE email=?",
+        ("first@example.com",)
+    ).fetchone()[0] == "reader"
+    assert count_admins(db) == 1
+
+
+def test_delete_with_second_admin_present_succeeds(db):
+    """With a second admin present, deleting the first admin succeeds.
+    The same-transaction guard counts surviving admins correctly."""
+    create_account(db, "first@example.com", "pw1")   # admin
+    create_account(db, "second@example.com", "pw2")  # reader
+    db.commit()
+    # Promote second to admin
+    set_role(db, "second@example.com", "admin")
+    db.commit()
+    assert count_admins(db) == 2
+    # Now delete first — should succeed (second admin survives)
+    delete_account(db, "first@example.com")
+    db.commit()
+    assert db.execute(
+        "SELECT COUNT(*) FROM accounts WHERE email=?",
+        ("first@example.com",)
+    ).fetchone()[0] == 0
+    assert count_admins(db) == 1
+
+
+def test_set_role_guard_within_single_transaction(db):
+    """The last-admin guard and the role mutation must happen in one
+    transaction. If the guard raises, no partial write is committed.
+    We verify this by checking that after a refused demotion, the
+    connection has no uncommitted changes that could leak."""
+    create_account(db, "first@example.com", "pw1")
+    db.commit()
+    try:
+        set_role(db, "first@example.com", "reader")
+    except LastAdminError:
+        pass
+    # After the refused demotion, the connection should be clean:
+    # no pending writes, no partial state.
+    # The role must still be admin (unchanged).
+    assert db.execute(
+        "SELECT role FROM accounts WHERE email=?",
+        ("first@example.com",)
+    ).fetchone()[0] == "admin"
+    # And the transaction state must be consistent:
+    # count_admins should reflect the actual committed state.
+    assert count_admins(db) == 1
+
+
+def test_delete_account_guard_within_single_transaction(db):
+    """The last-admin guard and the delete mutation must happen in one
+    transaction. After a refused delete, no partial write leaks."""
+    create_account(db, "first@example.com", "pw1")
+    db.commit()
+    try:
+        delete_account(db, "first@example.com")
+    except LastAdminError:
+        pass
+    # Account still exists
+    assert db.execute(
+        "SELECT COUNT(*) FROM accounts WHERE email=?",
+        ("first@example.com",)
+    ).fetchone()[0] == 1
+    # count_admins consistent
+    assert count_admins(db) == 1

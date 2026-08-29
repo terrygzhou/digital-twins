@@ -55,13 +55,27 @@ class RoleDenied(Exception):
     Mirrors :class:`DuplicateEmailError` / :class:`LastAdminError`:
     a named exception the caller can catch to produce a 403 / exit-2
     response without leaking the full matrix.
+
+    When ``action_label`` is provided (via :func:`require_capability`),
+    the message becomes human-readable:
+    ``"role 'reader' may not trigger a run (capability 'trigger_run')"``.
+    Without it, the message is the terse
+    ``"role 'reader' lacks capability 'trigger_run'"``.
     """
-    def __init__(self, role: str, capability: str):
+    def __init__(self, role: str, capability: str,
+                 action_label: str | None = None):
         self.role = role
         self.capability = capability
-        super().__init__(
-            f"role {role!r} lacks capability {capability!r}"
-        )
+        self.action_label = action_label
+        if action_label:
+            super().__init__(
+                f"role {role!r} may not {action_label} "
+                f"(capability {capability!r})"
+            )
+        else:
+            super().__init__(
+                f"role {role!r} lacks capability {capability!r}"
+            )
 
 
 def guard(role: str, capability: str) -> None:
@@ -75,6 +89,32 @@ def guard(role: str, capability: str) -> None:
     caps = ROLE_CAPS.get(role, ROLE_CAPS["reader"])
     if capability not in caps:
         raise RoleDenied(role, capability)
+
+
+def require_capability(role: str, capability: str,
+                       action_label: str) -> None:
+    """Raise :class:`RoleDenied` with a named reason if ``role`` lacks
+    ``capability`` (T007 — the thin wrapper the CLI/HTTP boundary calls).
+
+    Wraps :func:`guard` so the caller gets a human-readable reason that
+    includes the *action label* (e.g. ``"trigger a run"``) rather than
+    just the capability id.  The action label is what the CLI/HTTP
+    response shows; the capability id is what the matrix checks.
+
+    >>> require_capability("reader", "trigger_run", "trigger a run")
+    RoleDenied: role 'reader' may not trigger a run (capability 'trigger_run')
+
+    >>> require_capability("admin", "trigger_run", "trigger a run")
+    # no exception
+    """
+    try:
+        guard(role, capability)
+    except RoleDenied:
+        raise RoleDenied(
+            role,
+            capability,
+            action_label=action_label,
+        ) from None
 
 
 def owner_tag_for(email: str) -> str:
@@ -139,20 +179,38 @@ def get_role(db, email: str) -> str | None:
 def set_role(db, email: str, role: str) -> None:
     """Change an account's role. Refused (``LastAdminError``) when the
     account is the last admin and ``role != 'admin'`` (SC-002).
+
+    The guard and the mutation happen in the *same transaction*
+    (BEGIN → count → apply → COMMIT): if the guard raises, the
+    connection is rolled back and no partial write leaks.
     """
-    last_admin_guard(db, email, new_role=role)
-    db.execute(
-        "UPDATE accounts SET role=? WHERE email=?", (role, email))
-    db.commit()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        last_admin_guard(db, email, new_role=role)
+        db.execute(
+            "UPDATE accounts SET role=? WHERE email=?", (role, email))
+        db.execute("COMMIT")
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
 
 
 def delete_account(db, email: str) -> None:
     """Delete an account. Refused (``LastAdminError``) when the account
     is the last admin (SC-002).
+
+    The guard and the mutation happen in the *same transaction*
+    (BEGIN → count → apply → COMMIT): if the guard raises, the
+    connection is rolled back and no partial write leaks.
     """
-    last_admin_guard(db, email, delete=True)
-    db.execute("DELETE FROM accounts WHERE email=?", (email,))
-    db.commit()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        last_admin_guard(db, email, delete=True)
+        db.execute("DELETE FROM accounts WHERE email=?", (email,))
+        db.execute("COMMIT")
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
 
 
 def count_admins(db) -> int:
