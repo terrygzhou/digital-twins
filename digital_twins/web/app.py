@@ -68,6 +68,7 @@ from digital_twins.accounts import (
     DuplicateEmailError,
     RoleDenied,
     create_account,
+    get_role,
     owner_tag_for,
     require_capability,
 )
