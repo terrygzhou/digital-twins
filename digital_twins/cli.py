@@ -1232,5 +1232,225 @@ def account_whoami() -> None:
         db.close()
 
 
+# --- config group (T018, US3 — per-user overrides, R5) ----------------------
+#
+# All three subcommands (set, list, unset) authenticate first via
+# DT_PERSONAL_TOKEN or DT_USER_PASSWORD + --as, then check the caller's
+# role against R3 (manage_own_config for own user, manage_all_user_config
+# for another user's).
+#
+# Key restriction: K is limited to R5's overridable knobs
+# (enabled, max_items, timeout_s); other keys → exit 2
+# ("not a user-overridable knob").
+# Value type-coerced via 001 schema.coerce at write time (fail-fast).
+
+
+def _config_authenticate(db, as_user: str) -> tuple[str, str]:
+    """Authenticate the caller for config commands and resolve their role.
+
+    Returns ``(caller_email, caller_role)`` on success. Exits 2 with a
+    named reason on failure.
+
+    Auth path:
+    - ``DT_PERSONAL_TOKEN`` set: verify the token → resolve account_email + role.
+    - Else: ``--as USER`` + ``DT_USER_PASSWORD`` → authenticate against the
+      accounts store, then resolve the role.
+    """
+    token = os.environ.get("DT_PERSONAL_TOKEN")
+    if token:
+        from digital_twins.auth import verify_personal_token
+        from digital_twins.accounts import get_role
+        caller_email = verify_personal_token(db, token)
+        if caller_email is None:
+            click.echo(
+                "authentication failed: DT_PERSONAL_TOKEN is invalid, "
+                "revoked, or unknown", err=True)
+            raise SystemExit(2)
+        role = get_role(db, caller_email)
+        if role is None:
+            click.echo(
+                "authentication failed: account no longer exists", err=True)
+            raise SystemExit(2)
+        return caller_email, role
+
+    if as_user is None:
+        click.echo(
+            "authentication failed: no credentials — set DT_PERSONAL_TOKEN "
+            "or pass --as with DT_USER_PASSWORD", err=True)
+        raise SystemExit(2)
+
+    password = os.environ.get("DT_USER_PASSWORD")
+    if password is None:
+        click.echo("DT_USER_PASSWORD not set", err=True)
+        raise SystemExit(2)
+
+    from digital_twins.auth import authenticate
+    ok = authenticate(db, as_user, password)
+    if not ok:
+        click.echo(f"authentication failed for '{as_user}'", err=True)
+        raise SystemExit(2)
+
+    from digital_twins.accounts import get_role
+    role = get_role(db, as_user)
+    if role is None:
+        click.echo(
+            "authentication failed: account no longer exists", err=True)
+        raise SystemExit(2)
+    return as_user, role
+
+
+def _config_check_target(
+    db, caller_email: str, caller_role: str, target_email: str
+) -> None:
+    """Check the caller may manage config for ``target_email``.
+
+    - Own user: any role with ``manage_own_config`` (admin/scheduler/reader).
+    - Another user: admin-only (``manage_all_user_config``).
+    Exits 2 with a named reason on denial.
+    """
+    from digital_twins.accounts import require_capability, RoleDenied
+
+    if target_email == caller_email:
+        # Own config: manage_own_config (all three roles)
+        try:
+            require_capability(caller_role, "manage_own_config",
+                               "manage own personal config")
+        except RoleDenied as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2)
+    else:
+        # Another user's config: admin-only (manage_all_user_config)
+        try:
+            require_capability(caller_role, "manage_all_user_config",
+                               "manage config for another user")
+        except RoleDenied as exc:
+            # The brief requires the message to read like:
+            # "role `reader` may not manage config for another user"
+            click.echo(
+                f"role `{caller_role}` may not manage config "
+                f"for another user", err=True)
+            raise SystemExit(2)
+
+
+@cli.group()
+def config() -> None:
+    """Manage per-user config overrides (R5).
+
+    Subcommands: set, list, unset.
+    All authenticate first (DT_PERSONAL_TOKEN or DT_USER_PASSWORD + --as),
+    then check the caller's role against R3.
+    """
+
+
+@config.command("set")
+@click.option("--as", "as_user", required=True,
+              help="Account whose config to set. For own config: any "
+                   "authenticated role. For another user's config: "
+                   "admin-only.")
+@click.option("--source", required=True,
+              help="Source name (e.g. hermes, pi).")
+@click.option("--key", required=True,
+              help="Config key to set. Must be one of: enabled, max_items, "
+                   "timeout_s.")
+@click.option("--value", required=True,
+              help="Value to set (type-coerced at write time).")
+def config_set(as_user: str, source: str, key: str, value: str) -> None:
+    """Set a per-user config override.
+
+    The role must permit **manage own personal config** (admin/scheduler/reader
+    for *their own* user; admin for another user's). ``K`` is restricted to
+    the overridable keys; other keys → exit 2. ``V`` is type-coerced via
+    001 ``schema.coerce`` at write time (fail-fast on a malformed value).
+    """
+    db = _open_schedules_db()
+    try:
+        caller_email, caller_role = _config_authenticate(db, as_user)
+        _config_check_target(db, caller_email, caller_role, as_user)
+
+        from digital_twins.user_config import set_override, NotUserOverridableError
+        from digital_twins.config.schema import SchemaError
+
+        try:
+            set_override(db, as_user, source, key, value)
+        except NotUserOverridableError as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2)
+        except SchemaError as exc:
+            click.echo(f"invalid value for {key}: {exc}", err=True)
+            raise SystemExit(2)
+
+        click.echo(f"set {source}.{key}={value} for `{as_user}`")
+    finally:
+        db.close()
+
+
+@config.command("list")
+@click.option("--as", "as_user", required=True,
+              help="Account whose overrides to list. Own: any authenticated "
+                   "role. Another user's: admin-only.")
+def config_list(as_user: str) -> None:
+    """List a user's per-user config overrides."""
+    db = _open_schedules_db()
+    try:
+        caller_email, caller_role = _config_authenticate(db, as_user)
+        _config_check_target(db, caller_email, caller_role, as_user)
+
+        from digital_twins.user_config import get_overrides
+        overrides = get_overrides(db, as_user)
+
+        if not overrides:
+            click.echo("no overrides")
+            return
+
+        header = ("source", "key", "value")
+        rows = [(src, key, val) for (src, key), val in
+                sorted(overrides.items())]
+        widths = [max(len(h), *(len(str(r[i]) if r[i] is not None else "-")
+                                 for r in rows))
+                  for i, h in enumerate(header)]
+        click.echo("  ".join(h.ljust(w) for h, w in zip(header, widths)))
+        for r in rows:
+            cells = [str(c) if c is not None else "-" for c in r]
+            click.echo("  ".join(c.ljust(w) for c, w in zip(cells, widths)))
+    finally:
+        db.close()
+
+
+@config.command("unset")
+@click.option("--as", "as_user", required=True,
+              help="Account whose override to remove. Own: any authenticated "
+                   "role. Another user's: admin-only.")
+@click.option("--source", required=True,
+              help="Source name (e.g. hermes, pi).")
+@click.option("--key", required=True,
+              help="Config key to remove. Must be one of: enabled, "
+                   "max_items, timeout_s.")
+def config_unset(as_user: str, source: str, key: str) -> None:
+    """Remove a per-user config override."""
+    db = _open_schedules_db()
+    try:
+        caller_email, caller_role = _config_authenticate(db, as_user)
+        _config_check_target(db, caller_email, caller_role, as_user)
+
+        from digital_twins.user_config import (
+            OVERRIDABLE_KEYS,
+            NotUserOverridableError,
+            unset_override,
+        )
+
+        if key not in OVERRIDABLE_KEYS:
+            click.echo(
+                f"{key}: not a user-overridable knob "
+                f"(overridable: {', '.join(sorted(OVERRIDABLE_KEYS))})",
+                err=True)
+            raise SystemExit(2)
+
+        unset_override(db, as_user, source, key)
+
+        click.echo(f"removed {source}.{key} for `{as_user}`")
+    finally:
+        db.close()
+
+
 def main() -> None:
     cli()
