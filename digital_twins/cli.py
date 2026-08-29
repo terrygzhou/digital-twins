@@ -338,12 +338,19 @@ def init(yes: bool) -> None:
 def serve(port: int, tick_seconds: float) -> None:
     """Start the long-running scheduler (serve).
 
-    Loads config, runs 001's health preconditions, connects and migrates
-    the state DB, then hands off to run_serve (T007).
+    Loads config, connects and migrates the state DB, then hands off to
+    run_serve (T007).
+
+    No endpoint-health gate at startup: 001's ``run`` does not gate on
+    endpoint health — it gates on per-source prerequisites, and the
+    pipeline fails per-source when an endpoint is actually needed.
+    ``serve`` matches that: a down endpoint at startup is not a reason to
+    refuse to start (an LLM-only pipeline can run with qdrant down). Per-
+    source failures at fire time are reported, never silent — T006's
+    ``serve_once_tick`` audits a ``failed`` row and advances (R-07).
 
     --port overrides scheduler.status_port; --port 0 disables the status
-    endpoint entirely (no socket bound). Fails fast with exit code 2 if a
-    required endpoint fails 001's health preconditions at startup, or if
+    endpoint entirely (no socket bound). Fails fast with exit code 2 if
     another live serve holds the pidfile (run_serve raises that; the CLI
     maps it to exit 2). SIGTERM/SIGINT -> clean shutdown (handled by
     run_serve).
@@ -352,16 +359,6 @@ def serve(port: int, tick_seconds: float) -> None:
 
     # Determine the status port: --port if given, else the knob default.
     status_port = port if port is not None else get(cfg, "scheduler.status_port")
-
-    # Health preconditions: match 001's `run`/`validate` gate — a required
-    # endpoint unreachable at startup fails fast (exit 2) with the named
-    # error. run_serve would not gate on this; the CLI does, at startup only.
-    results = health.run_health_checks(cfg)
-    if any(not r.ok for r in results):
-        _print_report(results)
-        click.echo("serve: required endpoint(s) failed health preconditions",
-                   err=True)
-        raise SystemExit(2)
 
     state_dir = Path(cfg["state_dir"])
     state_dir.mkdir(parents=True, exist_ok=True)

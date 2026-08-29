@@ -2,8 +2,15 @@
 
 RED-first per the task brief: these tests fail until cli.py lands the
 ``serve`` command. The CLI test pattern matches 001's style (CliRunner +
-env-var isolation + health monkeypatching, as in test_init.py /
-test_validate.py).
+env-var isolation, as in test_init.py / test_validate.py).
+
+No endpoint-health gate: 001's ``run`` does not gate on endpoint health —
+it gates on per-source prerequisites, and the pipeline fails per-source
+when an endpoint is actually needed. ``serve`` matches that (T008 review
+fix): a down endpoint at startup is not a reason to refuse to start.
+Per-source failures at fire time are handled by T006's
+``serve_once_tick`` (failed audit row + advance, R-07). So these tests
+do not stub ``health.run_health_checks``.
 
 The stop-after-N mechanism: since run_serve has a ``max_ticks`` test
 affordance from T007, the CLI test monkeypatches
@@ -42,18 +49,6 @@ def env_dirs(tmp_path, monkeypatch):
     monkeypatch.setenv("KB_STATE_DIR", str(state_dir))
     monkeypatch.chdir(tmp_path)
     return config_dir, state_dir
-
-
-def _stub_health(monkeypatch, ok=True):
-    """Stub 001 health checks (same pattern as test_init.py)."""
-
-    def _run(cfg):
-        return [
-            health.HealthResult(ep, ok, "ok" if ok else "down", "")
-            for ep in ("qdrant", "neo4j", "llm")
-        ]
-
-    monkeypatch.setattr(health, "run_health_checks", _run)
 
 
 def _seed_db(state_dir: Path):
@@ -116,15 +111,18 @@ def test_serve_command_exists_and_idle(env_dirs, monkeypatch):
     The serve command must:
     - load config (pre_command already did; the command re-loads or reuses)
     - determine status_port (default from scheduler.status_port knob)
-    - run 001 health preconditions (stubbed ok here)
     - connect + migrate the db
     - call run_serve(db, config, status_port, status_server=None)
       (port 0 -> no status server)
     - exit cleanly (run_serve returns; the command returns -> exit 0)
     - write ZERO audit rows (idle = no spam)
+
+    No endpoint-health gate: 001's ``run`` gates on per-source
+    prerequisites, not endpoint health; ``serve`` matches that. Endpoint
+    failures surface per-source at fire time (T006's serve_once_tick,
+    R-07).
     """
     config_dir, state_dir = env_dirs
-    _stub_health(monkeypatch)
     stub = _stub_run_serve(monkeypatch)
 
     # Seed the DB so pre_command's migrate has a target; no schedules = idle.
@@ -159,7 +157,6 @@ def test_serve_port_zero_disables_status_server(env_dirs, monkeypatch):
     ThreadingHTTPServer is constructed or started.
     """
     config_dir, state_dir = env_dirs
-    _stub_health(monkeypatch)
     stub = _stub_run_serve(monkeypatch)
     _seed_db(state_dir)
 
@@ -175,7 +172,6 @@ def test_serve_default_port_from_config(env_dirs, monkeypatch):
     The built-in default is 8765 (config/schema.py DEFAULTS).
     """
     config_dir, state_dir = env_dirs
-    _stub_health(monkeypatch)
     stub = _stub_run_serve(monkeypatch)
     _seed_db(state_dir)
 
@@ -199,7 +195,6 @@ def test_serve_second_instance_fails_fast(env_dirs, monkeypatch):
     this to exit 2.
     """
     config_dir, state_dir = env_dirs
-    _stub_health(monkeypatch)
     _seed_db(state_dir)
 
     # Pre-write the pidfile with a LIVE pid (our own).
@@ -214,35 +209,39 @@ def test_serve_second_instance_fails_fast(env_dirs, monkeypatch):
     assert str(os.getpid()) in result.output
 
 
-# 4 — missing/unreachable endpoint exits 2 -----------------------------------
+# 4 — no endpoint-health gate (match 001's ``run``) ---------------------------
 
 
-def test_serve_missing_endpoint_exit_2(env_dirs, monkeypatch):
-    """001 health precondition: a required endpoint (qdrant) unreachable
-    -> serve exits 2 with a named error.
+def test_serve_no_endpoint_health_gate(env_dirs, monkeypatch):
+    """T008 review fix: serve must NOT gate on endpoint health at startup.
 
-    Stub health.run_health_checks to report qdrant as down. The serve
-    command must check health BEFORE calling run_serve and exit 2.
+    001's ``run`` does not gate on endpoint health — it gates on
+    per-source prerequisites, and the pipeline fails per-source when an
+    endpoint is actually needed. ``serve`` matches that: with every
+    endpoint down, ``serve`` still starts and hands off to run_serve.
+    Endpoint failures surface per-source at fire time (T006's
+    serve_once_tick: failed audit row + advance, R-07) — not at startup.
     """
     config_dir, state_dir = env_dirs
     _seed_db(state_dir)
 
-    # Health check: qdrant down, others ok.
-    monkeypatch.setattr(health, "run_health_checks", lambda cfg: [
-        health.HealthResult(
-            "qdrant", False,
-            "qdrant.url is not configured",
-            "set qdrant.url in kb.local.yml (env: KB_QDRANT__URL), "
-            "then re-run init/validate",
-        ),
-        health.HealthResult("neo4j", True, "ok"),
-        health.HealthResult("llm", True, "ok"),
-    ])
+    # Stub run_health_checks to report every endpoint down AND record that
+    # it was called: serve must not even call it.
+    called = {"n": 0}
+
+    def _down(cfg):
+        called["n"] += 1
+        return [
+            health.HealthResult(ep, False, "down", "down")
+            for ep in ("qdrant", "neo4j", "llm")
+        ]
+
+    monkeypatch.setattr(health, "run_health_checks", _down)
 
     stub = _stub_run_serve(monkeypatch)
     result = CliRunner().invoke(cli, ["serve", "--port", "0"])
-    assert result.exit_code == 2, result.output
-    # The named error should appear
-    assert "qdrant" in result.output
-    # run_serve must NOT have been called (health gate fails before it)
-    assert stub.called is False
+    assert result.exit_code == 0, result.output
+    # run_serve WAS called: the health gate did not block startup
+    assert stub.called is True
+    # serve never consults the endpoint-health gate
+    assert called["n"] == 0
