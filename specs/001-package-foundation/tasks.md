@@ -59,14 +59,14 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T013 [P] [US1] Write init behavior tests — creates starter `kb.local.yml` with every source disabled, creates state dir + `state.db`, idempotent re-run, interrupted-init resume (edge case) — in `tests/unit/test_init.py`
-- [ ] T014 [P] [US1] Write validate tests — healthy against in-memory Qdrant + stubs, per-endpoint pass/fail + remediation hint, exit codes 0/1 — in `tests/integration/test_validate.py`
+- [x] T013 [P] [US1] Write init behavior tests — creates starter `kb.local.yml` with every source disabled, creates state dir + `state.db`, idempotent re-run, interrupted-init resume (edge case) — in `tests/unit/test_init.py`
+- [x] T014 [P] [US1] Write validate tests — healthy against in-memory Qdrant + stubs, per-endpoint pass/fail + remediation hint, exit codes 0/1 — in `tests/integration/test_validate.py`
 
 ### Implementation for User Story 1
 
-- [ ] T015 [US1] Implement endpoint health checks (Qdrant reachable + collection check, Neo4j reachable + auth, LLM endpoint reachable) with remediation hints in `digital_twins/health.py`
-- [ ] T016 [US1] Implement `init` command — prompt or read endpoints from config/env, `--yes` flag, create config dir + starter `kb.local.yml` (all sources disabled), create state dir + DB, run validation, idempotent/resumable — in `digital_twins/cli.py` (depends on T008, T009, T015)
-- [ ] T017 [US1] Implement `validate` command — health table (endpoint, ok/fail, detail, remediation), exit 0 only when all configured checks pass — in `digital_twins/cli.py` (depends on T015)
+- [x] T015 [US1] Implement endpoint health checks (Qdrant reachable + collection check, Neo4j reachable + auth, LLM endpoint reachable) with remediation hints in `digital_twins/health.py`
+- [x] T016 [US1] Implement `init` command — prompt or read endpoints from config/env, `--yes` flag, create config dir + starter `kb.local.yml` (all sources disabled), create state dir + DB, run validation, idempotent/resumable — in `digital_twins/cli.py` (depends on T008, T009, T015)
+- [x] T017 [US1] Implement `validate` command — health table (endpoint, ok/fail, detail, remediation), exit 0 only when all configured checks pass — in `digital_twins/cli.py` (depends on T015)
 
 **Checkpoint**: US1 fully functional — clean-host install → init → passing validation, independently testable (quickstart S1–S2).
 
