@@ -836,9 +836,12 @@ def token_revoke(token_id: int) -> None:
         caller_email, caller_role = _token_authenticate(db)
 
         # Check the token exists and determine its owner
-        all_rows = list_personal_tokens(db)
+        # Scope the query to the caller's tokens for non-admins to avoid
+        # information leak (non-admins should not enumerate all token ids).
+        filter_email = None if caller_role == "admin" else caller_email
+        rows = list_personal_tokens(db, filter_email)
         target = None
-        for r in all_rows:
+        for r in rows:
             if r["id"] == token_id:
                 target = r
                 break
