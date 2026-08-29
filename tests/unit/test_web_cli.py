@@ -110,21 +110,32 @@ class _Server:
             f"{timeout_s}s")
 
     def output(self, timeout_s: float = 5.0) -> str:
-        """All captured output so far (non-blocking)."""
+        """All captured output so far (non-blocking).
+
+        Uses ``select`` on the file descriptor + ``os.read`` for a true
+        non-blocking read.  The previous implementation used
+        ``proc.stdout.read(4096)`` after ``select`` reported data, but
+        ``text=True`` makes ``read`` a buffered call that can block past
+        the available data when the child holds the write end open.
+        """
         out = ""
         if self.proc.stdout is not None:
+            import os as _os
             import select
-            while True:
+            deadline = time.time() + timeout_s
+            while time.time() < deadline:
                 ready, _, _ = select.select(
                     [self.proc.stdout], [], [], 0.05)
                 if not ready:
                     break
-                chunk = self.proc.stdout.read(4096)
+                try:
+                    chunk = _os.read(
+                        self.proc.stdout.fileno(), 4096)
+                except OSError:
+                    break
                 if not chunk:
                     break
-                out += chunk
-            # Read whatever is buffered so far.
-            out = (self.proc.stdout.read() or out) or out
+                out += chunk.decode("utf-8", errors="replace")
         return out
 
     def stop(self) -> None:

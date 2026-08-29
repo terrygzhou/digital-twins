@@ -531,6 +531,43 @@ def serve(port: int, tick_seconds: float) -> None:
     click.echo("serve: stopped (clean shutdown)")
 
 
+@cli.command()
+def web() -> None:
+    """Start the web app (UI + /api/* REST surface).
+
+    Loads config (pre_command), reads ``web.bind`` / ``web.port`` from the
+    config layer, builds the WebApp, prints the listening URL, and serves
+    on the main thread (``ThreadingHTTPServer.serve_forever``).
+
+    This is a separate surface from ``serve``: it does NOT start the
+    scheduler loop and does NOT write the scheduler pidfile.
+    """
+    pre_command()
+    cfg = load()
+    bind = get(cfg, "web.bind")
+    port = int(get(cfg, "web.port"))
+
+    state_dir = Path(cfg["state_dir"])
+    state_dir.mkdir(parents=True, exist_ok=True)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+        from digital_twins.web.app import build_web_app
+        app = build_web_app(db, cfg, host=bind, port=port)
+        click.echo(
+            f"web: listening on http://{bind}:{port} "
+            f"(UI: http://{bind}:{port}/)")
+        try:
+            app.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            app.shutdown()
+            app.server_close()
+    finally:
+        db.close()
+
+
 @cli.command("serve-mcp")
 @click.option("--transport",
               type=click.Choice(["stdio", "http"], case_sensitive=False),
