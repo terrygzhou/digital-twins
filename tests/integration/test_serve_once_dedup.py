@@ -16,11 +16,16 @@ point count directly (exactly 1 point after both paths, in either order):
   - ``test_manual_then_schedule``   — path A then path B  (once-then-serve)
   - ``test_schedule_then_manual``   — path B then path A  (serve-then-once)
 
-The sibling ``tests/integration/test_sc001_dedup.py`` (T010) is the
-once-then-serve pin from the original task; this module adds the serve-then-
-once direction that the quickstart's "both orderings" language requires, and
-is the file the quickstart (SC-001 / Scenario 2) and the plan/tasks ledger
-(name ``test_serve_once_dedup.py``) reference.
+Both orderings are additionally pinned at the point-payload level
+(``test_dedup_is_content_level_not_run_level``) — the surviving single point
+carries the ingested content and the two audit rows are distinct runs.
+
+This module is the consolidated home of the SC-001 cross-trigger dedup pin:
+it is the file the quickstart (SC-001 / Scenario 2) and the plan/tasks ledger
+(name ``test_serve_once_dedup.py``) reference. The former sibling
+``tests/integration/test_sc001_dedup.py`` (T010) was a strict subset — it
+pinned the same once-then-serve invariant, only without the serve-then-once
+direction — and was folded here (T020) to remove the duplicate.
 
 Like the 001-pattern tests, the suite needs no live stores: Qdrant runs
 in-memory (shared by both trigger paths) and the embedder is stubbed.
@@ -241,3 +246,74 @@ def test_schedule_then_manual(tmp_path, fs_dir, db, shared_qdrant):
     assert all(r[1] in ("ok", "partial") for r in rows)
     # the two runs are distinct (distinct run_ids)
     assert len({r[0] for r in rows}) == 2
+
+
+# ---------------------------------------------------------------------------
+# content-level detail (folded from tests/integration/test_sc001_dedup.py, T010)
+# ---------------------------------------------------------------------------
+
+def test_dedup_is_content_level_not_run_level(
+        tmp_path, fs_dir, db, shared_qdrant):
+    """Explicit content-level pin: after ingesting the same content twice
+    (manual + schedule), the Qdrant collection has a single point whose
+    payload matches the source content. Two audit rows exist, but only one
+    point — the run audit does not duplicate content.
+
+    This complements the ordering tests by asserting the point's payload is
+    the ingested content (proving the surviving point is the real one, not an
+    orphan), and that the two audit rows are distinct runs (distinct run_ids).
+
+    (Folded here from the former sibling test_sc001_dedup.py, T010, in T020.)
+    """
+    cfg = _cfg(tmp_path, fs_dir)
+
+    # manual
+    run_pipeline(cfg, db, shared_qdrant, _embedder,
+                 source_names=["fs"], trigger="manual", scheduled_by="system")
+    # schedule
+    now = _now()
+    sid = _create_due_schedule(db, now, owner="system", source="fs")
+    loop.serve_once_tick(db, cfg)
+
+    # exactly one point, and it carries the ingested content
+    assert _point_count(shared_qdrant) == 1
+    scroll = shared_qdrant.scroll(
+        QDRANT_COLLECTION, with_payload=True, limit=10)
+    points = scroll[0] if isinstance(scroll, tuple) else scroll.points
+    assert len(points) == 1
+    payload = points[0].payload
+    assert payload["item_key"] == "a.txt"
+    assert payload["text"] == "alpha note"
+    assert payload["source"] == "fs"
+
+    # two distinct audit runs
+    rows = _audit_rows(db)
+    assert len(rows) == 2
+    run_ids = [r[0] for r in rows]
+    assert len(set(run_ids)) == 2, f"audit rows are not distinct runs: {run_ids}"
+
+
+def test_dedup_schedule_advanced_not_redue(
+        tmp_path, fs_dir, db, shared_qdrant):
+    """After a schedule fire dedups against prior content, the schedule is
+    advanced past its due time (not re-due), so the next tick will not
+    re-fire the same schedule immediately.
+
+    (Folded here from the former sibling test_sc001_dedup.py, T010, in T020;
+    this assertion is not duplicated in the ordering tests above.)
+    """
+    cfg = _cfg(tmp_path, fs_dir)
+
+    # manual ingest first, then a due schedule fire
+    run_pipeline(cfg, db, shared_qdrant, _embedder,
+                 source_names=["fs"], trigger="manual", scheduled_by="system")
+    now = _now()
+    sid = _create_due_schedule(db, now, owner="system", source="fs")
+    loop.serve_once_tick(db, cfg)
+
+    # the schedule advanced: next_fire_at is now strictly after the (forced)
+    # past due time
+    row = db.execute(
+        "SELECT next_fire_at FROM schedules WHERE id = ?", (sid,)).fetchone()
+    old_due = (now - timedelta(minutes=5)).isoformat(timespec="seconds")
+    assert row[0] > old_due, f"schedule not advanced: {row[0]} <= {old_due}"

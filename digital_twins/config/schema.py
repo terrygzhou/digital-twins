@@ -235,8 +235,11 @@ def _validate_source(path: str, raw: dict, custom: bool):
 def validate(cfg: dict) -> dict:
     """Validate + normalize a fully-merged config dict; return a clean copy.
 
-    Unknown keys raise SchemaError (fail-fast); unset optional values stay
-    None; every built-in source is always present (disabled by default).
+    Unknown keys raise SchemaError (fail-fast). Every section with a default
+    (qdrant, neo4j, llm, embedding, chunking, scheduler) is always present in
+    the returned dict — even when omitted from the input — with each sub-key
+    default-filled; unset optional values in those sections stay None. Every
+    built-in source is always present (disabled by default).
     """
     if not isinstance(cfg, dict):
         raise SchemaError("config root must be a mapping")

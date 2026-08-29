@@ -53,6 +53,19 @@ def test_daily_fires_tomorrow_when_now_after_fire_time():
     assert out == datetime(2025, 6, 16, 3, 0, 0)
 
 
+def test_daily_fires_tomorrow_when_now_exactly_equals_fire_time():
+    # now == fire_time exactly (03:00). Contract: the returned fire time must
+    # be STRICTLY after now ("strictly after `now`", contracts/scheduler.md
+    # invariant 1) — so a tick at the fire instant advances to TOMORROW's
+    # 03:00 rather than re-firing the same instant (that would be a
+    # zero-duration busy loop). Pins the target <= now.time() branch.
+    now = datetime(2025, 6, 15, 3, 0, 0)
+    anchor = datetime(2025, 6, 1, 12, 0, 0)
+    out = presets.expand_next("daily", None, "03:00", now, anchor)
+    assert out == datetime(2025, 6, 16, 3, 0, 0)
+    assert out > now
+
+
 def test_daily_ignores_anchor():
     # daily does not use anchor; different anchors give same result
     now = datetime(2025, 6, 15, 4, 0, 0)
@@ -137,7 +150,38 @@ def test_weekly_uses_anchor_weekday_not_now_weekday():
     assert out == datetime(2025, 6, 23, 3, 0, 0)
 
 
+def test_weekly_wraparound_same_week_later_day():
+    # Weekly wraparound: the anchor's weekday is LATER in the current week
+    # than `now` (now = Tue, anchor = Sun). The next occurrence is still THIS
+    # week — it does not wrap to the following week. 2025-06-23 is a
+    # Monday, so this week's Sunday is 2025-06-29; now is Wed 2025-06-25
+    # 04:00 → next Sunday 03:00 = 2025-06-29.
+    now = datetime(2025, 6, 25, 4, 0, 0)   # Wednesday
+    anchor = datetime(2025, 6, 22, 12, 0, 0)  # Sunday (weekday 6)
+    out = presets.expand_next("weekly", None, "03:00", now, anchor)
+    assert out == datetime(2025, 6, 29, 3, 0, 0)
+    # sanity: strictly after now, and within the same ISO week
+    assert out > now
+    assert out.isocalendar().week == now.isocalendar().week
+
+
+def test_weekly_wraparound_same_day_after_fire_time():
+    # now lands ON the anchor's weekday, after the fire time: must roll to
+    # NEXT week's same weekday, not today. now = Sun 2025-06-22 04:00
+    # (after 03:00) → next Sunday 2025-06-29 03:00.
+    now = datetime(2025, 6, 22, 4, 0, 0)
+    anchor = datetime(2025, 6, 22, 12, 0, 0)  # Sunday
+    out = presets.expand_next("weekly", None, "03:00", now, anchor)
+    assert out == datetime(2025, 6, 29, 3, 0, 0)
+
+
 # --- monthly -----------------------------------------------------------------
+# Monthly clamp boundary (data-model.md ruling R-10): an anchor whose day is
+# 31 clamps to each target month's length — Jan 31 → Feb 28 (Feb 29 in a
+# leap year) → Mar 31. The three tests below pin this chain end to end:
+# ``test_monthly_known_answer_jan31_to_feb28_to_mar31`` (the documented
+# known-answer), ``test_monthly_leap_year_feb29`` (leap-year boundary), and
+# ``test_monthly_clamps_day_to_shorter_month`` (day-31 → a 30-day month).
 
 
 def test_monthly_clamps_day_to_shorter_month():

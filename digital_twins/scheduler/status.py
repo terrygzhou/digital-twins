@@ -20,9 +20,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from digital_twins.scheduler.schedules import list_schedules
 
 # Module-level server start, used when a caller does not pass an explicit
-# ``start_time``. Set by :class:`StatusServer` at construction; a fresh
-# ``status_payload(db, config)`` call (e.g. in a unit test that never built a
-# server) falls back to the import time so ``uptime_s`` is always defined.
+# ``start_time``. Fixed at import time; a fresh ``status_payload(db, config)``
+# call (e.g. in a unit test that never built a server) falls back to it so
+# ``uptime_s`` is always defined. The running :class:`StatusServer` does NOT
+# mutate this — the handler passes its own ``start_time`` explicitly, so the
+# global stays a pure fallback default.
 _SERVER_START = time.time()
 
 # The audit_runs columns read for ``last_run`` (most recent row by started_at).
@@ -41,8 +43,10 @@ def status_payload(db, config, *, start_time: float | None = None) -> dict:
             accepted for forward-compatibility with later knobs).
         start_time: epoch seconds the server started; ``uptime_s`` is
             ``time.time() - start_time``. Defaults to the module-level
-            server start (:data:`_SERVER_START`), which :class:`StatusServer`
-            sets at construction.
+            import-time server start (:data:`_SERVER_START`). The running
+            :class:`StatusServer` always passes its own construction time
+            explicitly; the global is only a fallback for callers that build
+            a payload without a live server.
 
     Returns:
         ``{"uptime_s": float, "schedules": [...], "last_run": {...} | None,
@@ -197,12 +201,9 @@ class StatusServer(ThreadingHTTPServer):
         # The daemon thread that runs serve_forever. Set by start(), read by
         # stop(). None until start() is called.
         self._thread = None
-        # Keep the module-level default in sync so a stray status_payload
-        # call without an explicit start_time still reports this server's
-        # start (and so a second server doesn't clobber the first one's
-        # value while it is still serving).
-        global _SERVER_START
-        _SERVER_START = self.start_time
+        # The running server does NOT mutate the module-level _SERVER_START:
+        # the handler passes this server's start_time explicitly, so a second
+        # server cannot clobber the fallback default of a still-serving one.
         # Open our own read-only connection to the caller's db file with
         # check_same_thread=False so the handler thread (a different thread
         # from the caller's) can query it without tripping sqlite3's

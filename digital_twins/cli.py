@@ -173,9 +173,14 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
         cfg = load()
         state_dir = Path(cfg["state_dir"])
         if not state_dir.is_dir():
+            # "no state db" is a setup condition, not a credential failure:
+            # the accounts store is missing, so authentication could not be
+            # attempted. Naming the fix ("run init") keeps this distinct from
+            # a bad-password "authentication failed" below (T020 deferred-minor
+            # from the T011 review).
             click.echo(
-                f"authentication failed for '{as_user}': "
-                f"no state db at {state_dir}", err=True)
+                f"cannot authenticate as '{as_user}': no state db at "
+                f"{state_dir} — run 'digital-twins init' first", err=True)
             raise SystemExit(2)
         db = connect(state_dir)
         try:

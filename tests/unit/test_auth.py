@@ -328,6 +328,39 @@ def test_run_once_as_nonexistent_owner_exit_2(tmp_path, monkeypatch):
         db.close()
 
 
+def test_run_once_as_no_state_db_distinct_message(tmp_path, monkeypatch):
+    """--as with the state db missing -> exit 2 with a message that names the
+    setup gap (no state db, run init) and does NOT conflate it with a
+    credential failure ('authentication failed'). T020 deferred-minor: the
+    T011 review flagged the original message as ambiguous between 'no state
+    db' and 'auth failed'; this pins the split.
+    """
+    # Point config at a FRESH tmp_path so the state dir does not yet exist.
+    # (Unlike _setup_env's chdir + KB_STATE_DIR, we explicitly unset any
+    # state dir the caller's env may carry, so the CLI genuinely sees a
+    # missing state dir.)
+    config_dir = tmp_path / "config"
+    _write_config(config_dir, tmp_path / "data")
+    monkeypatch.setenv("KB_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("KB_STATE_DIR", str(tmp_path / "state_does_not_exist"))
+    monkeypatch.delenv("KB_STATE_DIR_FALLBACK", raising=False)
+    monkeypatch.setenv("DT_USER_PASSWORD", "whatever")
+    monkeypatch.chdir(tmp_path)
+
+    # Make sure the state dir really is absent.
+    state_dir = Path(os.environ["KB_STATE_DIR"])
+    assert not state_dir.exists(), "test precondition: state dir must be absent"
+
+    result = CliRunner().invoke(
+        cli_mod.cli, ["run", "--once", "--as", "ghost"])
+    assert result.exit_code == 2, f"exit={result.exit_code} out={result.output}"
+    # The message names the setup gap, not a credential failure.
+    assert "no state db" in result.output.lower()
+    assert "init" in result.output.lower()
+    # It does NOT use the credential-failure phrase.
+    assert "authentication failed" not in result.output.lower()
+
+
 def test_run_once_without_as_unchanged(tmp_path, monkeypatch):
     """run --once WITHOUT --as keeps scheduled_by='system' (T009 behavior)."""
     fs_dir = tmp_path / "data"
