@@ -567,5 +567,43 @@ def schedule_remove(schedule_id: int) -> None:
         db.close()
 
 
+@cli.command()
+@click.option("--email", required=True,
+              help="Account email address.")
+@click.option("--password", required=True,
+              help="Account password (stored hashed, never in plaintext).")
+def signup(email: str, password: str) -> None:
+    """Create an account.
+
+    Role is resolved by the shared helper: the first row in ``accounts``
+    becomes ``admin``, every later account is a ``reader`` (C-4/R7).
+    Duplicate email exits 2 with "account already exists: ``<email>``"
+    and leaves no second row.  The password is hashed with 001's
+    ``hash_password`` (R1); ``created_at``/``last_active`` are set to now.
+    """
+    from digital_twins.accounts import DuplicateEmailError, create_account
+
+    cfg = load()
+    state_dir = Path(cfg["state_dir"])
+    state_dir.mkdir(parents=True, exist_ok=True)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+        try:
+            create_account(db, email, password)
+        except DuplicateEmailError:
+            click.echo(f"account already exists: `{email}`", err=True)
+            raise SystemExit(2)
+        role = "admin" if _count_accounts(db) == 1 else "reader"
+        click.echo(f"created account `{email}` (role: {role})")
+    finally:
+        db.close()
+
+
+def _count_accounts(db) -> int:
+    """Number of rows in the accounts table."""
+    return db.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
+
+
 def main() -> None:
     cli()
