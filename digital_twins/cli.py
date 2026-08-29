@@ -415,13 +415,16 @@ def serve(port: int, tick_seconds: float) -> None:
 def _open_schedules_db() -> "sqlite3.Connection":
     """Load config, connect + migrate the state DB.
 
-    Fresh install (no state dir yet) gets created here so a first
-    ``schedule add`` on a clean install works without a prior ``init``.
+    Fresh install (no state dir yet) gets created + migrated here so a
+    first ``schedule add`` on a clean install works without a prior
+    ``init``.
     """
     cfg = load()
     state_dir = Path(cfg["state_dir"])
     state_dir.mkdir(parents=True, exist_ok=True)
-    return connect(state_dir)
+    db = connect(state_dir)
+    migrate(db)  # idempotent: no-op if already migrated
+    return db
 
 
 @cli.group()
