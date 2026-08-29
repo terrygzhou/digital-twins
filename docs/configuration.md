@@ -88,6 +88,14 @@ has not been supplied.
 | mcp.port | int | 8770 | KB_MCP__PORT | TCP port for the MCP (kb-mcp) service. |
 | mcp.service_account_email | str | system | KB_MCP__SERVICE_ACCOUNT_EMAIL | Service-account address the MCP service runs as. |
 
+## Web
+
+| knob | type | default | env var | notes |
+|---|---|---|---|---|
+| web.bind | str | 127.0.0.1 | KB_WEB__BIND | Address the web UI server binds to; `127.0.0.1` keeps it reachable only from the local host. |
+| web.port | int | 8767 | KB_WEB__PORT | TCP port for the web UI server. |
+| web.base_url | str | http://localhost:8767 | KB_WEB__BASE_URL | Public URL of the web UI, e.g. for embedding links in tool output or dashboards. |
+
 ## Sources
 
 All built-in sources ship **disabled** on a fresh install

@@ -19,6 +19,7 @@ GROUP_CHUNKING = "Chunking"
 GROUP_SCHEDULER = "Scheduler"
 GROUP_SOURCES = "Sources"
 GROUP_MCP = "MCP"
+GROUP_WEB = "Web"
 
 # --- registry ------------------------------------------------------------------
 #
@@ -142,6 +143,26 @@ KNOBS: dict[str, dict] = {
         "default": "system",
         "env": "KB_MCP__SERVICE_ACCOUNT_EMAIL",
         "group": GROUP_MCP,
+    },
+
+    # --- Web ---
+    "web.bind": {
+        "type": "str",
+        "default": "127.0.0.1",
+        "env": "KB_WEB__BIND",
+        "group": GROUP_WEB,
+    },
+    "web.port": {
+        "type": "int",
+        "default": 8767,
+        "env": "KB_WEB__PORT",
+        "group": GROUP_WEB,
+    },
+    "web.base_url": {
+        "type": "str",
+        "default": "http://localhost:8767",
+        "env": "KB_WEB__BASE_URL",
+        "group": GROUP_WEB,
     },
 
     # --- Sources (per built-in source: enabled / max_items / timeout_s) ---
