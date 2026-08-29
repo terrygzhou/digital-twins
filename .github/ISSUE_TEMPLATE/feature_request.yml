@@ -1,0 +1,55 @@
+name: Feature request
+description: Propose a new source, knob, tool, or transport.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which subsystem does the feature target?
+      options:
+        - Ingest
+        - Config
+        - Scheduler
+        - MCP
+        - Auth
+        - CLI
+        - Packaging
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: component
+    attributes:
+      label: Component
+      description: The specific module / knob / tool the feature touches.
+    validations:
+      required: true
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      description: What kind of feature is this?
+      options:
+        - new-source
+        - new-knob
+        - new-tool
+        - new-transport
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this needed? What problem does it solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How should it work? Sketch the knob / source / tool surface.
+    validations:
+      required: true

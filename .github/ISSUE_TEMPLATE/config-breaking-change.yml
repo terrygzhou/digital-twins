@@ -1,0 +1,52 @@
+name: Config-breaking change
+description: Propose a change that breaks config backward-compatibility.
+title: "[Breaking] "
+labels: ["breaking-change"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which config surface is affected?
+      options:
+        - Config
+        - Knobs
+        - Schema
+        - Migration
+    validations:
+      required: true
+  - type: dropdown
+    id: version_impact
+    attributes:
+      label: Version impact
+      description: >
+        The controlled vocabulary for the major-bump rule (docs/semver-policy.md).
+        A config-breaking change forces a **major** bump with a migration note.
+      options:
+        - major
+        - minor
+        - patch
+    validations:
+      required: true
+  - type: textarea
+    id: migration_note
+    attributes:
+      label: Migration note
+      description: What the user must do to migrate to the new config?
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the breaking change and why it is necessary.
+    validations:
+      required: true
+  - type: input
+    id: knob_or_field
+    attributes:
+      label: Knob or schema field
+      description: Which knob or schema field is breaking?
+      placeholder: "e.g. sources.fs.timeout_s"
+    validations:
+      required: true

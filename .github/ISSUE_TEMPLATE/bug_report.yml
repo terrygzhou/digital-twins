@@ -1,0 +1,69 @@
+name: Bug report
+description: Report a defect in the digital-twins package.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which subsystem is the bug in?
+      options:
+        - Ingest
+        - Config
+        - Scheduler
+        - MCP
+        - Auth
+        - CLI
+        - Packaging
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: component
+    attributes:
+      label: Component
+      description: The specific module / file / knob the bug is in.
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How severe is the impact?
+      options:
+        - critical
+        - high
+        - medium
+        - low
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro steps
+      description: Exact steps to reproduce the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened (include output / traceback).
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: digital-twins version
+      description: The version of digital-twins you are running.
+      placeholder: "e.g. 0.5.0"
+    validations:
+      required: true

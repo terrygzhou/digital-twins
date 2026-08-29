@@ -39,6 +39,25 @@ A config-breaking change is proposed via
 changelog's breaking entry forces the major bump
 (`docs/release-runbook.md`).
 
+## In-repo tracker cross-reference
+
+The repo ships an in-repo GitHub issue tracker at `.github/ISSUE_TEMPLATE/`
+(no live remote). Three forms, indexed by `config.yml`:
+
+- `bug_report.yml` — defect report (area, component, severity, repro,
+  expected, actual, version).
+- `feature_request.yml` — additive feature (area, component, type,
+  motivation, proposal). An additive feature maps to a **minor** bump.
+- `config-breaking-change.yml` — config-breaking change (area,
+  `version_impact`, `migration_note`, description, `knob_or_field`).
+
+`config-breaking-change.yml`'s **`version_impact`** + **`migration_note`**
+fields are the machine-readable link to the major-bump rule: the form forces
+the reporter to pick a `major`|`minor`|`patch` impact and to write the
+migration note that a breaking release carries. A config-breaking issue is the
+**only** path that forces a major version bump; bugs and feature requests
+never force one.
+
 ## Changelog linkage
 
 Every release since 0.1.0 has a `CHANGELOG.md` entry (Keep a Changelog
