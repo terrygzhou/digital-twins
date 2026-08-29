@@ -376,7 +376,8 @@ def serve(port: int, tick_seconds: float) -> None:
         if status_port > 0:
             try:
                 from digital_twins.scheduler.status import StatusServer
-                status_server = StatusServer(status_port)
+                status_server = StatusServer(
+                    ("127.0.0.1", status_port), db, cfg)
             except ImportError:
                 click.echo(
                     f"serve: status server not yet available (port "

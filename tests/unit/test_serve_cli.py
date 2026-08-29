@@ -178,9 +178,10 @@ def test_serve_default_port_from_config(env_dirs, monkeypatch):
     result = CliRunner().invoke(cli, ["serve"])
     assert result.exit_code == 0, result.output
     assert stub.status_port == 8765
-    # T017 not landed yet: the status server import fails -> status_server is
-    # None (lazy import with try/except ImportError).
-    assert stub.status_server is None
+    # T017 has landed: the status server is constructed (not None).
+    from digital_twins.scheduler.status import StatusServer
+    assert stub.status_server is not None
+    assert isinstance(stub.status_server, StatusServer)
 
 
 # 3 — second instance fails fast on live pidfile -----------------------------
