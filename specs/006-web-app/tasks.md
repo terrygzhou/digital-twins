@@ -93,7 +93,7 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 **Purpose**: Confirm the two standing guards stay green with the new web knobs in lock-step.
 
-- [ ] T022 [cross-cutting] Confirm test_knob_docs.py green for new web.* knobs — verify constitution IV lock-step (C-8) for the three new web knobs: run `pytest tests/unit/test_knob_docs.py` and confirm 100% coverage of `web.bind`/`web.port`/`web.base_url` across all four surfaces (`digital_twins/config/knobs.py` registry, `config.example.yml`, `.env.example`, `docs/configuration.md`) — the standing guard enforces registry ↔ example-files ↔ docs, so the new knobs pass only when all four are updated consistently. No new test logic needed. No red step (docs/config); record the green result in the SDD ledger.
+- [x] T022 [cross-cutting] Confirm test_knob_docs.py green for new web.* knobs — verify constitution IV lock-step (C-8) for the three new web knobs: run `pytest tests/unit/test_knob_docs.py` and confirm 100% coverage of `web.bind`/`web.port`/`web.base_url` across all four surfaces (`digital_twins/config/knobs.py` registry, `config.example.yml`, `.env.example`, `docs/configuration.md`) — the standing guard enforces registry ↔ example-files ↔ docs, so the new knobs pass only when all four are updated consistently. No new test logic needed. No red step (docs/config); record the green result in the SDD ledger.
 
 ---
 
