@@ -284,6 +284,12 @@ class TestConfigExampleKnobsInRegistry:
 class TestEnvExampleVarsInRegistry:
     """Every env var in .env.example must exist in KNOBS."""
 
+    # Auth-only env vars (002 ruling R-06): documented in .env.example but
+    # deliberately NOT config knobs — read from os.environ directly in the
+    # CLI layer, not through the config loader. T011 adds DT_USER_PASSWORD
+    # (the `run --once --as` password; interactive prompt is 003 territory).
+    _AUTH_ONLY_ENV = frozenset({"DT_USER_PASSWORD"})
+
     @pytest.mark.skipif(KNOBS is None, reason="KNOBS not yet created (T028)")
     def test_env_example_vars_in_registry(self, env_vars):
         # Build set of env vars declared in KNOBS
@@ -295,7 +301,7 @@ class TestEnvExampleVarsInRegistry:
 
         missing: list[str] = []
         for var in env_vars:
-            if var not in registry_envs:
+            if var not in registry_envs and var not in self._AUTH_ONLY_ENV:
                 missing.append(var)
         assert not missing, (
             f"Env vars in .env.example but not in KNOBS: {missing}"

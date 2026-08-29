@@ -1,5 +1,6 @@
 """digital-twins command-line interface."""
 
+import os
 from pathlib import Path
 import uuid
 
@@ -133,8 +134,12 @@ def validate() -> None:
               help="Count what would be ingested; write nothing.")
 @click.option("--once", is_flag=True,
               help="One-shot run: trigger='manual', no schedule advance, no pidfile.")
+@click.option("--as", "as_user", type=str, default=None,
+              help="Run as this user (requires --once). Password comes from "
+                   "the DT_USER_PASSWORD env var; auth failure exits 2 "
+                   "without touching any state.")
 def run(source_names: tuple, max_items: int, dry_run: bool,
-        once: bool) -> None:
+        once: bool, as_user: str) -> None:
     """One-shot ingestion: read -> chunk -> embed -> upsert.
 
     Fail-fast: a missing prerequisite exits 2 and names the source, the
@@ -144,14 +149,51 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
     scheduled_by='system', no schedule advance, no pidfile. Without --once,
     behavior is unchanged from 001 (the same defaults apply: the CLI one-shot
     command records trigger='manual' / scheduled_by='system').
+
+    --as USER authenticates against the accounts store (pbkdf2, R-04) using
+    the DT_USER_PASSWORD env var and records scheduled_by=USER. Auth runs
+    BEFORE any pipeline work: a bad password exits 2 without writing an
+    audit row, touching Qdrant, or advancing high-water. v1 reads the
+    password from the env var only (no interactive prompt — 003 territory).
     """
-    # --once: one-shot host-cron run. trigger='manual', scheduled_by='system'
-    # (no --as until T011), no schedule advance, no pidfile. Without --once
-    # the 001 behavior is unchanged; both paths share these values today, so
-    # 001's observable audit row is identical. (T008's `serve` will use
-    # trigger='schedule'; T011's --as will set scheduled_by to the owner.)
+    # --as: authenticate BEFORE any pipeline work. The check precedes config
+    # load, state-dir creation, and db connect, so a failure exits 2 without
+    # touching any state (ruling: "bad password exits 2 without touching any
+    # state"). DT_USER_PASSWORD is an auth-only env var (ruling R-06): read
+    # from os.environ directly, NOT a config knob.
+    if as_user is not None:
+        if not once:
+            click.echo("--as requires --once", err=True)
+            raise SystemExit(2)
+        password = os.environ.get("DT_USER_PASSWORD")
+        if password is None:
+            click.echo("DT_USER_PASSWORD not set", err=True)
+            raise SystemExit(2)
+        from digital_twins.auth import authenticate
+        cfg = load()
+        state_dir = Path(cfg["state_dir"])
+        if not state_dir.is_dir():
+            click.echo(
+                f"authentication failed for '{as_user}': "
+                f"no state db at {state_dir}", err=True)
+            raise SystemExit(2)
+        db = connect(state_dir)
+        try:
+            ok = authenticate(db, as_user, password)
+        finally:
+            db.close()
+        if not ok:
+            click.echo(f"authentication failed for '{as_user}'", err=True)
+            raise SystemExit(2)
+        scheduled_by = as_user
+    else:
+        scheduled_by = "system"
+
+    # --once: one-shot host-cron run. trigger='manual', scheduled_by per
+    # --as (or 'system'), no schedule advance, no pidfile. Without --once
+    # the 001 behavior is unchanged. (T008's `serve` will use
+    # trigger='schedule'.)
     trigger = "manual"
-    scheduled_by = "system"
     cfg = load()
     state_dir = Path(cfg["state_dir"])
     state_dir.mkdir(parents=True, exist_ok=True)
