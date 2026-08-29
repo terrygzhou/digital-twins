@@ -35,6 +35,11 @@ scheduler:
   status_port: 8765               # env: KB_SCHEDULER__STATUS_PORT
                                   # 0 disables the status endpoint (CLI remains the fallback surface)
 
+# --- MCP ---
+mcp:
+  port: 8770                      # env: KB_MCP__PORT
+  service_account_email: system  # env: KB_MCP__SERVICE_ACCOUNT_EMAIL
+
 # --- Sources (all disabled by default) ---
 sources:
   # Built-in sources (shipped with the package; enabled per install).

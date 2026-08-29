@@ -18,6 +18,7 @@ GROUP_EMBEDDING = "Embedding"
 GROUP_CHUNKING = "Chunking"
 GROUP_SCHEDULER = "Scheduler"
 GROUP_SOURCES = "Sources"
+GROUP_MCP = "MCP"
 
 # --- registry ------------------------------------------------------------------
 #
@@ -127,6 +128,20 @@ KNOBS: dict[str, dict] = {
         "default": 8765,
         "env": "KB_SCHEDULER__STATUS_PORT",
         "group": GROUP_SCHEDULER,
+    },
+
+    # --- MCP ---
+    "mcp.port": {
+        "type": "int",
+        "default": 8770,
+        "env": "KB_MCP__PORT",
+        "group": GROUP_MCP,
+    },
+    "mcp.service_account_email": {
+        "type": "str",
+        "default": "system",
+        "env": "KB_MCP__SERVICE_ACCOUNT_EMAIL",
+        "group": GROUP_MCP,
     },
 
     # --- Sources (per built-in source: enabled / max_items / timeout_s) ---
