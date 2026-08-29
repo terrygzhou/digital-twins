@@ -81,8 +81,14 @@ def _starter(overrides: dict, cfg: dict) -> dict:
 
 @click.group()
 @click.version_option(version=__version__)
-def cli() -> None:
+@click.option("--version-json", is_flag=True, hidden=True,
+              help="Print machine-readable version (JSON) and exit.")
+def cli(version_json: bool) -> None:
     """Environment-portable KB ingestion: layered config, fail-fast sources, dedup-safe ingest."""
+    if version_json:
+        import json
+        click.echo(json.dumps({"name": "digital-twins", "version": __version__}))
+        raise SystemExit(0)
     pre_command()
 
 
@@ -128,6 +134,7 @@ def run(source_names: tuple, max_items: int, dry_run: bool) -> None:
         embedder = None if dry_run else _make_embedder(cfg)
 
         from digital_twins.ingest.pipeline import (
+            DimensionMismatchError,
             PrerequisiteError,
             run_pipeline,
         )
@@ -140,6 +147,9 @@ def run(source_names: tuple, max_items: int, dry_run: bool) -> None:
         except PrerequisiteError as exc:
             click.echo(f"fail-fast: {exc}", err=True)
             raise SystemExit(2)
+        except DimensionMismatchError as exc:
+            click.echo(f"dimension mismatch: {exc}", err=True)
+            raise SystemExit(1)
         except (ConfigError, UnknownSourceError) as exc:
             raise SystemExit(f"config error: {exc}")
 

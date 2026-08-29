@@ -39,6 +39,19 @@ class PrerequisiteError(Exception):
             f"source '{source}': missing prerequisite(s): " + "; ".join(missing))
 
 
+class DimensionMismatchError(Exception):
+    """Qdrant collection dimension != pinned model dimension (S2-mismatch, NFR-2)."""
+
+    def __init__(self, collection: str, actual: int, expected: int):
+        self.collection = collection
+        self.actual = actual
+        self.expected = expected
+        super().__init__(
+            f"collection '{collection}' is {actual}-dim but the pinned model "
+            f"produces {expected}-dim vectors — "
+            f"recreate the collection at the pinned dimension or re-embed (FR-010)")
+
+
 @dataclass
 class RunSummary:
     run_id: str
@@ -55,11 +68,27 @@ def _cursor(db, source: str):
 
 
 def _ensure_collection(client, dim: int) -> None:
+    """Create the collection if missing; verify dimension if it exists.
+
+    Raises DimensionMismatchError if the existing collection's dimension
+    does not match `dim` (the pinned model's vector size).
+    """
     if not client.collection_exists(QDRANT_COLLECTION):
         client.create_collection(
             QDRANT_COLLECTION,
             vectors_config=qm.VectorParams(size=dim, distance=qm.Distance.COSINE),
         )
+        return
+    # Collection exists — verify its dimension matches the pinned model
+    info = client.get_collection(QDRANT_COLLECTION)
+    vectors = info.config.params.vectors
+    if hasattr(vectors, "size"):  # single-vector collection
+        actual = vectors.size
+    else:
+        first = next(iter(vectors.values()), None)
+        actual = first.size if first is not None else None
+    if actual != dim:
+        raise DimensionMismatchError(QDRANT_COLLECTION, actual, dim)
 
 
 def run_pipeline(
