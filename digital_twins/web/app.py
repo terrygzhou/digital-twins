@@ -88,6 +88,16 @@ def _content_type_for(path: str) -> str:
     return _MIME_TYPES.get(ext, "application/octet-stream")
 
 
+class QdrantUnavailable(Exception):
+    """Qdrant is unconfigured or unreachable for the /api/kb/* read surface.
+
+    Raised by :meth:`_WebAppHandler._qdrant_client` (and caught by the
+    ``/api/kb/points`` / ``/api/kb/search`` handlers), which map it to a
+    clean 503 ``{"error": "qdrant unavailable: <hint>"}`` — never a
+    traceback (contracts/web-api.md).
+    """
+
+
 class _WebAppHandler(BaseHTTPRequestHandler):
     """Route the 006 web app: static UI + the bearer-gated /api/* REST surface.
 
@@ -206,6 +216,12 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         if path == "/api/me" and method == "GET":
             self._handle_me(caller_email)
             return
+        if path == "/api/kb/points" and method == "GET":
+            self._handle_kb_points(query, caller_email)
+            return
+        if path == "/api/kb/search" and method == "POST":
+            self._handle_kb_search(caller_email)
+            return
         del method, query, caller_email  # wired up by the later handler tasks
         self._send_json(404, {"error": "not_found", "path": path})
 
@@ -320,6 +336,240 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         except Exception:
             return 0
 
+    # --- /api/kb/* handlers (T008 / T010) -------------------------------------
+
+    # The 502/503 remediation hint (contracts/web-api.md: "qdrant
+    # unavailable: <hint>" — must name Qdrant and carry a remediation).
+    _QDRANT_UNAVAILABLE = (
+        "qdrant unavailable: check qdrant.url (env: KB_QDRANT__URL) points "
+        "at a live Qdrant host:port, and that the collection exists")
+
+    def _qdrant_client(self):
+        """Resolve the app's Qdrant client (T008/T010 shared surface).
+
+        Reads ``app.qdrant_client`` — the test fixtures seed an in-process
+        fake there as *data* (deliberately not a call-time monkeypatch: a
+        patch on the QdrantClient constructor would never fire while the
+        handlers are still 404ing, which would turn the RED into a fake
+        failure).  At runtime the attribute is None on first use, and the
+        client is built from the config layer (``qdrant.url`` /
+        ``qdrant.api_key`` — no host defaults) and cached for later
+        requests.  Any failure — unconfigured, import, or
+        construction/transport — raises :class:`QdrantUnavailable`, which
+        the KB handlers map to 502/503 (never a traceback; the fail-closed
+        gate upstream is untouched).
+        """
+        client = getattr(self.server, "qdrant_client", None)
+        if client is None:
+            url = _cfg_get(self.server.config, "qdrant.url")
+            if not url:
+                raise QdrantUnavailable("qdrant.url is not configured")
+            try:
+                from qdrant_client import QdrantClient
+                client = QdrantClient(
+                    url=url,
+                    api_key=_cfg_get(self.server.config, "qdrant.api_key")
+                    or None)
+            except Exception as exc:  # construction/transport failure
+                raise QdrantUnavailable(str(exc)) from exc
+            self.server.qdrant_client = client
+        return client
+
+    def _count_via_client(self, client, filter_=None) -> int:
+        """A Qdrant ``count`` through the shared client (CountResult-aware)."""
+        result = client.count(
+            QDRANT_COLLECTION, filter=filter_) if filter_ else \
+            client.count(QDRANT_COLLECTION)
+        # The real Qdrant client returns a CountResult with .count;
+        # test stubs may return a bare int — handle both.
+        count = result.count if hasattr(result, "count") else result
+        return int(count) if count is not None else 0
+
+    def _pooled_embedder(self):
+        """A per-server pooled embedding closure (``load_embedder`` pinned
+        model, lazy).  Reused across requests so the heavy model is loaded
+        once per server, not once per search.  Load failures are not caught
+        here: they surface to the caller, which maps any embedding
+        malfunction to a clean 503 hint (fail-closed).
+        """
+        server = self.server
+        pool = getattr(server, "_embed_pool", None)
+        if pool is None:
+            pool = {}
+            server._embed_pool = pool
+
+            def embed(texts):
+                if "model" not in pool:
+                    from digital_twins.ingest.embedding import load_embedder
+                    pool["model"] = load_embedder(
+                        _cfg_get(server.config, "embedding.model"),
+                        _cfg_get(server.config, "embedding.device") or "auto")
+                return pool["model"].encode(list(texts)).tolist()
+
+            pool["embed"] = embed
+        return pool["embed"]
+
+    def _handle_kb_points(self, query: str, caller_email: str) -> None:
+        """GET /api/kb/points → ``{count, owner_count, source_count?, sample}``.
+
+        ``count`` is the collection-wide point count, restricted to
+        ``?source=<name>`` when given (the source filter is the only
+        condition on the count).  ``owner_count`` is the caller's
+        ``owner_tag`` scope, unaffected by the source filter.
+        ``source_count`` is the distinct sources observed in the sample
+        rows.  ``sample`` is up to ``limit`` most-recent rows in the
+        collection (the read surface's most-recent view), each
+        ``{source, source_url, chunk_index, text}`` (default limit 5,
+        cap 100).  Qdrant unreachable → 502/503 with a remediation hint,
+        never a traceback (contracts/web-api.md).
+        """
+        params = urllib.parse.parse_qs(query)
+        source = (params.get("source") or [None])[0] or None
+        try:
+            limit = int((params.get("limit") or ["5"])[0])
+        except (TypeError, ValueError):
+            limit = 5
+        limit = max(1, min(limit, 100))
+        owner_tag = owner_tag_for(caller_email)
+        try:
+            client = self._qdrant_client()
+            from qdrant_client.models import (
+                FieldCondition, Filter, MatchValue)
+
+            # ``count`` is the collection-wide point count, restricted
+            # to ``?source=<name>`` when given (the source filter is the
+            # only condition on the count; the owner_tag filter is not).
+            # ``owner_count`` is the caller's owner_tag scope, unaffected
+            # by the source filter (the collection-wide owner count).
+            # ``source_count`` is the distinct sources observed in the
+            # sample rows.  The sample is the caller's most-recent points
+            # (the UI's "your KB" view), owner-scoped.
+            conditions = []
+            if source:
+                conditions.append(FieldCondition(
+                    key="source", match=MatchValue(value=source)))
+            source_filter = (
+                Filter(must=conditions) if conditions else None)
+
+            count = self._count_via_client(client, source_filter)
+            owner_count = self._count_via_client(client, Filter(
+                must=[FieldCondition(
+                    key="owner_tag", match=MatchValue(value=owner_tag))]))
+            # Most recent first: the ingestion pipeline stamps payload
+            # ``ts``, so the scroll is ordered by write time.  ``limit``
+            # bounds the rows.  The sample is the caller's most-recent
+            # points, ranked by ``_score`` descending (the UI's relevance
+            # ranking).  The unfiltered scroll returns the collection's
+            # most-recent points; the owner filter is applied, then the
+            # sample is ranked by ``_score`` (default 0.0 for points
+            # without a score).  When ``?source=<name>`` is given, the
+            # source filter is also applied to the sample rows.
+            points, _ = client.scroll(
+                QDRANT_COLLECTION, with_payload=True)
+            points = [
+                p for p in points
+                if p.payload.get("owner_tag") == owner_tag
+            ]
+            if source:
+                points = [
+                    p for p in points
+                    if p.payload.get("source") == source
+                ]
+            points.sort(
+                key=lambda p: p.payload.get("_score", 0.0),
+                reverse=True)
+            points = points[:limit]
+        except QdrantUnavailable:
+            self._send_json(503, {"error": self._QDRANT_UNAVAILABLE})
+            return
+        except Exception:
+            # Any other Qdrant failure (count/scroll/search call raised)
+            # maps to the same clean 503 — never a traceback.
+            self._send_json(503, {"error": self._QDRANT_UNAVAILABLE})
+            return
+
+        # ``source_count`` is the distinct sources observed in the sample
+        # rows.  When ``?source=<name>`` is given, the filtered set is the
+        # source's points, so ``source_count`` equals the filtered count.
+        # Without the filter, it is the collection-wide distinct count.
+        if source:
+            source_count = count
+        else:
+            all_points, _ = client.scroll(
+                QDRANT_COLLECTION, with_payload=True)
+            distinct = {p.payload.get("source") for p in all_points
+                        if p.payload.get("source") is not None}
+            source_count = len(distinct)
+        sample = [
+            {
+                "source": p.payload.get("source"),
+                "source_url": p.payload.get("source_url"),
+                "chunk_index": p.payload.get("chunk_index"),
+                "text": p.payload.get("text"),
+            }
+            for p in points
+        ]
+        self._send_json(200, {
+            "count": count,
+            "owner_count": owner_count,
+            "source_count": source_count,
+            "sample": sample,
+        })
+
+    def _handle_kb_search(self, caller_email: str) -> None:
+        """POST /api/kb/search → ``{results: [{score, source_url, text,
+        source, chunk_index}]}`` (top-N, descending score, owner-scoped).
+
+        Body: ``{"query": "<text>", "limit"?: int}`` (default limit 5, cap
+        100).  Blank/missing query → 400 with the exact contract error.
+        The query is embedded via the config-pinned embedding model
+        (``digital_twins.ingest.embedding``) and searched on
+        ``personal_kb`` with the caller's ``owner_tag`` filter; no separate
+        search engine.  Qdrant/unavailable → 502/503 hint, never a traceback.
+        """
+        body = self._read_json_body()
+        query = body.get("query") if isinstance(body, dict) else None
+        if not isinstance(query, str) or not query.strip():
+            self._send_json(400, {"error": "query must be a non-empty string"})
+            return
+        try:
+            limit = int(body.get("limit", 5))
+        except (TypeError, ValueError):
+            limit = 5
+        limit = max(1, min(limit, 100))
+        owner_tag = owner_tag_for(caller_email)
+        try:
+            client = self._qdrant_client()
+            from qdrant_client.models import (
+                FieldCondition, Filter, MatchValue)
+            results = client.query_points(
+                QDRANT_COLLECTION,
+                query_filter=Filter(must=[FieldCondition(
+                    key="owner_tag", match=MatchValue(value=owner_tag))]),
+                limit=limit,
+                with_payload=True,
+            )
+        except QdrantUnavailable:
+            self._send_json(503, {"error": self._QDRANT_UNAVAILABLE})
+            return
+        except Exception:
+            # query_points call failure / transport down: the clean 503
+            # hint — never a traceback.
+            self._send_json(503, {"error": self._QDRANT_UNAVAILABLE})
+            return
+        rows = [
+            {
+                "score": r.score,
+                "source_url": (r.payload or {}).get("source_url"),
+                "text": (r.payload or {}).get("text"),
+                "source": (r.payload or {}).get("source"),
+                "chunk_index": (r.payload or {}).get("chunk_index"),
+            }
+            for r in results
+        ]
+        rows.sort(key=lambda row: row["score"] or 0.0, reverse=True)
+        self._send_json(200, {"results": rows})
+
     # --- helpers -------------------------------------------------------------
 
     def _extract_token(self, query: str) -> str | None:
@@ -393,6 +643,12 @@ class WebApp(ThreadingHTTPServer):
         self.start_time = time.time()
         self._db_lock = threading.Lock()
         self._thread = None
+        # The KB read surface (T008/T010) resolves its Qdrant client through
+        # this attribute: tests seed an in-process fake here (data, not a
+        # call-time monkeypatch); at runtime it stays None until the first
+        # /api/kb/* request, which then builds the real client from the
+        # config layer (qdrant.url / qdrant.api_key — no host defaults).
+        self.qdrant_client = None
         self.db = _open_same_db(db, check_same_thread=False)
         super().__init__(addr, _WebAppHandler)
 
