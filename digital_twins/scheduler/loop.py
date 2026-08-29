@@ -33,6 +33,7 @@ from digital_twins.config.schema import get
 from digital_twins.ingest.pipeline import run_pipeline
 from digital_twins.scheduler.schedules import claim_and_advance, due_schedules
 from digital_twins.state.models import finish_audit_run, start_audit_run
+from digital_twins.user_config import merge_user_config
 
 # Load config fresh on every tick (SC-005: cap/pause changes honored without
 # restart). Named `load_config` here (not `load`) so a monkeypatch of
@@ -84,6 +85,13 @@ def serve_once_tick(db, config) -> dict:
             command uses — so callers hand it exactly what they hand
             ``run_pipeline``: the resolved config.
 
+            003 multi-user (C-3): for each due schedule, the tick merges the
+            schedule owner's ``user_config`` overrides into a **copy** of the
+            global config via :func:`merge_user_config` and passes that merged
+            config to ``run_pipeline``. The global ``config`` is never mutated
+            (SC-003 isolation at the serve level): two owners' merges are
+            independent, so alice's cap change never alters bob's run.
+
     Returns:
         ``{"fired": [schedule id...], "skipped": [schedule id...],
         "queue_depth": int}`` — see module docstring for the semantics.
@@ -104,6 +112,7 @@ def serve_once_tick(db, config) -> dict:
 
     for schedule in due:
         source = schedule["source"]
+        owner = schedule["owner"]
         entry = config["sources"].get(source)
         if entry is None or not entry.get("enabled"):
             # Paused source: do NOT fire-and-advance. No audit row (nothing
@@ -112,16 +121,26 @@ def serve_once_tick(db, config) -> dict:
             skipped.append(schedule["id"])
             continue
 
+        # 003 multi-user (C-3): merge the schedule owner's per-user overrides
+        # into a COPY of the global config. The global `config` is never
+        # mutated (SC-003): merge_user_config returns a fresh deep copy with
+        # the owner's overrides applied. If the owner has no overrides the
+        # merge is a no-op (the copy equals the global).
+        merged_config = merge_user_config(config, db, owner, source=source)
+
         fired_at = now
         rows_before = _audit_count(db)
         try:
             # The pipeline writes its own audit row (trigger + scheduled_by
             # passed through); success or not, advance the schedule.
+            # R6: pass owner=owner so the pipeline stamps owner + owner_tag
+            # on each point payload (per-user scoping, SC-005).
             run_pipeline(
-                config, db, qdrant, embedder,
+                merged_config, db, qdrant, embedder,
                 source_names=[source],
                 trigger="schedule",
-                scheduled_by=schedule["owner"],
+                scheduled_by=owner,
+                owner=owner,
             )
         except Exception:
             # R-07: a failed fire is audited and advanced — never silent,
@@ -130,7 +149,7 @@ def serve_once_tick(db, config) -> dict:
             # the run died before any audit row was started, backstop with a
             # fresh `failed` row so the fire is always reported.
             if _audit_count(db) == rows_before:
-                _audit_failed_run(db, source, schedule["owner"])
+                _audit_failed_run(db, source, owner)
         claim_and_advance(db, schedule["id"], fired_at)
         fired.append(schedule["id"])
 
