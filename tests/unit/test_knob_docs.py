@@ -322,3 +322,71 @@ class TestEnvVarConsistency:
         assert not mismatches, (
             f"Env var mismatches between KNOBS and config.example.yml: {mismatches}"
         )
+
+
+class TestSchedulerStatusPort:
+    """T002: scheduler.status_port knob (default 8765, 0 disables)."""
+
+    @pytest.mark.skipif(KNOBS is None, reason="KNOBS not yet created (T028)")
+    def test_knob_registered(self):
+        """scheduler.status_port must be a registered knob."""
+        assert "scheduler.status_port" in KNOBS, (
+            "scheduler.status_port is not in the KNOBS registry"
+        )
+
+    @pytest.mark.skipif(KNOBS is None, reason="KNOBS not yet created (T028)")
+    def test_knob_has_required_fields(self):
+        """The entry must carry type, default, env, and group."""
+        entry = KNOBS.get("scheduler.status_port")
+        assert entry is not None
+        for field in ("type", "default", "env", "group"):
+            assert field in entry, f"scheduler.status_port: missing field {field!r}"
+
+    def test_default_is_8765(self):
+        """The built-in default must be 8765."""
+        from digital_twins.config.schema import DEFAULTS
+
+        assert DEFAULTS.get("scheduler.status_port") == 8765, (
+            "scheduler.status_port default must be 8765"
+        )
+
+    def test_zero_is_accepted(self):
+        """0 is a valid value (means 'disabled'); coerce must accept it."""
+        from digital_twins.config.schema import coerce
+
+        assert coerce("scheduler.status_port", 0) == 0
+
+    def test_negative_rejected(self):
+        """Negative values must raise SchemaError naming the knob."""
+        from digital_twins.config.schema import SchemaError, coerce
+
+        with pytest.raises(SchemaError, match="scheduler.status_port"):
+            coerce("scheduler.status_port", -1)
+
+    def test_non_int_rejected(self):
+        """Non-integer strings must raise SchemaError naming the knob."""
+        from digital_twins.config.schema import SchemaError, coerce
+
+        with pytest.raises(SchemaError, match="scheduler.status_port"):
+            coerce("scheduler.status_port", "not-a-port")
+
+    def test_documented_in_config_example(self, config_knobs):
+        """The knob must be documented in config.example.yml with default + env."""
+        assert "scheduler.status_port" in config_knobs, (
+            "scheduler.status_port is not documented in config.example.yml"
+        )
+        doc = config_knobs["scheduler.status_port"]
+        assert doc.get("value") == "8765", (
+            f"scheduler.status_port: config.example.yml documents "
+            f"value {doc.get('value')!r}, expected '8765'"
+        )
+        assert doc.get("env") == "KB_SCHEDULER__STATUS_PORT", (
+            f"scheduler.status_port: config.example.yml env annotation "
+            f"{doc.get('env')!r} != KB_SCHEDULER__STATUS_PORT"
+        )
+
+    def test_env_var_in_env_example(self, env_vars):
+        """KB_SCHEDULER__STATUS_PORT must appear in .env.example."""
+        assert "KB_SCHEDULER__STATUS_PORT" in env_vars, (
+            "KB_SCHEDULER__STATUS_PORT is not in .env.example"
+        )

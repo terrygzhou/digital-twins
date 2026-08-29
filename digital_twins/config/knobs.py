@@ -16,6 +16,7 @@ GROUP_GLOBAL = "Global"
 GROUP_ENDPOINTS = "Endpoints"
 GROUP_EMBEDDING = "Embedding"
 GROUP_CHUNKING = "Chunking"
+GROUP_SCHEDULER = "Scheduler"
 GROUP_SOURCES = "Sources"
 
 # --- registry ------------------------------------------------------------------
@@ -118,6 +119,14 @@ KNOBS: dict[str, dict] = {
         "default": 100,
         "env": "KB_CHUNKING__OVERLAP",
         "group": GROUP_CHUNKING,
+    },
+
+    # --- Scheduler ---
+    "scheduler.status_port": {
+        "type": "int",
+        "default": 8765,
+        "env": "KB_SCHEDULER__STATUS_PORT",
+        "group": GROUP_SCHEDULER,
     },
 
     # --- Sources (per built-in source: enabled / max_items / timeout_s) ---

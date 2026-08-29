@@ -33,6 +33,8 @@ DEFAULTS: dict = {
     # chunking
     "chunking.max_chars": 800,
     "chunking.overlap": 100,
+    # scheduler
+    "scheduler.status_port": 8765,
 }
 
 # string knobs that accept empty values (endpoints are placeholders until init)
@@ -128,6 +130,14 @@ def _declared_type(path: str):
     return str
 
 
+# Knobs with a minimum value (fail-fast on out-of-range, principle IV).
+# 0 is a sentinel meaning "disabled" — it is NOT a minimum here; the minimum
+# is the value itself (0 is allowed).
+_MIN_VALUE: dict = {
+    "scheduler.status_port": 0,
+}
+
+
 def coerce(path: str, value):
     """Coerce one value to the type declared for the knob.
 
@@ -150,13 +160,19 @@ def coerce(path: str, value):
         raise SchemaError(f"{path}: expected true/false, got {value!r}")
     if target is int:
         if isinstance(value, int) and not isinstance(value, bool):
-            return value
-        if isinstance(value, str):
+            result = value
+        elif isinstance(value, str):
             try:
-                return int(value.strip())
+                result = int(value.strip())
             except ValueError:
-                pass
-        raise SchemaError(f"{path}: must be an integer, got {value!r}")
+                raise SchemaError(f"{path}: must be an integer, got {value!r}")
+        else:
+            raise SchemaError(f"{path}: must be an integer, got {value!r}")
+        if path in _MIN_VALUE and result < _MIN_VALUE[path]:
+            raise SchemaError(
+                f"{path}: must be >= {_MIN_VALUE[path]}, got {value!r}"
+            )
+        return result
     if isinstance(value, str):
         if value == "" and path not in _ALLOW_EMPTY:
             raise SchemaError(f"{path}: must be a non-empty string")
@@ -226,7 +242,7 @@ def validate(cfg: dict) -> dict:
         raise SchemaError("config root must be a mapping")
     known_sections = {
         "state_dir", "config_dir", "qdrant", "neo4j", "llm",
-        "embedding", "chunking", "sources",
+        "embedding", "chunking", "scheduler", "sources",
     }
     out = {}
     for key, value in cfg.items():
@@ -245,7 +261,7 @@ def validate(cfg: dict) -> dict:
                 )
         elif key in ("state_dir", "config_dir"):
             out[key] = coerce(key, value)
-        elif key in ("qdrant", "neo4j", "llm", "embedding", "chunking"):
+        elif key in ("qdrant", "neo4j", "llm", "embedding", "chunking", "scheduler"):
             if not isinstance(value, dict):
                 raise SchemaError(f"{key}: must be a mapping")
             known_subs = {p.split(".", 1)[1] for p in DEFAULTS

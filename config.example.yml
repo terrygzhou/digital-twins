@@ -30,6 +30,11 @@ chunking:
   max_chars: 800                  # env: KB_CHUNKING__MAX_CHARS
   overlap: 100                    # env: KB_CHUNKING__OVERLAP
 
+# --- Scheduler ---
+scheduler:
+  status_port: 8765               # env: KB_SCHEDULER__STATUS_PORT
+                                  # 0 disables the status endpoint (CLI remains the fallback surface)
+
 # --- Sources (all disabled by default) ---
 sources:
   # Built-in sources (shipped with the package; enabled per install).
