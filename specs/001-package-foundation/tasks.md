@@ -38,8 +38,8 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
 - [x] T006 [P] Write portability invariant test — automated scan of shipped code, config defaults, and docs for host paths/usernames/install locations (SC-003, NFR-13) in `tests/integration/test_portability.py` (FAILS until the package exists to scan; must stay green in every later phase)
-- [ ] T007 Implement typed config model + validation for the full knob surface in `digital_twins/config/schema.py` (per `contracts/config-schema.md`)
-- [ ] T008 Implement four-layer config loader — env (incl. `.env`) → `kb.local.yml` → `kb.yml` → built-in defaults, deep-merge, env wins; `KB_CONFIG_DIR`/`KB_STATE_DIR` path resolution — in `digital_twins/config/loader.py`
+- [x] T007 Implement typed config model + validation for the full knob surface in `digital_twins/config/schema.py` (per `contracts/config-schema.md`)
+- [x] T008 Implement four-layer config loader — env (incl. `.env`) → `kb.local.yml` → `kb.yml` → built-in defaults, deep-merge, env wins; `KB_CONFIG_DIR`/`KB_STATE_DIR` path resolution — in `digital_twins/config/loader.py`
 - [ ] T009 Implement state layer: sqlite (WAL) connect + state-dir resolution in `digital_twins/state/db.py`; tables `accounts`, `highwater(source, item_key, last_key, updated_at)`, `audit_runs` in `digital_twins/state/models.py`
 - [ ] T010 Implement `PRAGMA user_version` migration runner that completes before any command in `digital_twins/state/migrations.py`; wire into the CLI entry path in `digital_twins/cli.py`
 - [ ] T011 Implement deterministic point-ID scheme (prefix + item key + content hash) in `digital_twins/ingest/ids.py` and config-driven chunking in `digital_twins/ingest/chunking.py`
