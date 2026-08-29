@@ -17,8 +17,14 @@ web framework) that routes:
   ``digital_twins.auth.verify_session`` (the same helper 003's
   ``auth_checker`` uses).  Absent/expired/revoked → ``401
   {"error": "unauthorized"}``.  The handlers themselves land in
-  T005–T016; until then, a gated-but-unimplemented ``/api/*`` route returns
+  T005–T016; a gated-but-unimplemented ``/api/*`` route returns
   ``404 {"error": "not_found", "path": "<path>"}``.
+
+  Implemented so far:
+  - ``GET /api/me`` → ``{"email", "role", "point_count"}`` (T006).
+    ``point_count`` is the count of Qdrant points in the caller's
+    ``owner_tag`` scope; degrades to 0 when Qdrant is unreachable
+    (no 500 — the user still sees their account status).
 
 The 003 credential endpoints are re-exposed under ``/api/auth/*`` by
 reusing ``digital_twins.accounts`` / ``digital_twins.auth`` directly (R2:
@@ -35,13 +41,20 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from digital_twins.accounts import DuplicateEmailError, create_account, get_role
+from digital_twins.accounts import (
+    DuplicateEmailError,
+    create_account,
+    get_role,
+    owner_tag_for,
+)
 from digital_twins.auth import (
     authenticate,
     create_session,
     revoke_session,
     verify_session,
 )
+from digital_twins.config.schema import get as _cfg_get
+from digital_twins.health import QDRANT_COLLECTION
 
 
 # The static-asset root: ``digital_twins/web/static/`` (C-2/R4).  The actual
@@ -187,9 +200,12 @@ class _WebAppHandler(BaseHTTPRequestHandler):
 
     def _dispatch_rest(self, method: str, path: str, query: str,
                        caller_email: str) -> None:
-        # T004 scaffold: the REST handlers (/api/me, /api/kb/points, ...) land
-        # in T005–T016.  Until then a gated-but-unimplemented route is a
-        # clean JSON 404 — the gate has already run (no 401 past this point).
+        # The REST handlers land incrementally in T005–T016; a gated but
+        # unimplemented route is a clean JSON 404 (the gate has already
+        # run — no 401 past this point).
+        if path == "/api/me" and method == "GET":
+            self._handle_me(caller_email)
+            return
         del method, query, caller_email  # wired up by the later handler tasks
         self._send_json(404, {"error": "not_found", "path": path})
 
@@ -246,6 +262,63 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         with self.server._db_lock:
             revoke_session(self.server.db, token)
         self._send_json(200, {"revoked": True})
+
+    # --- /api/me handler (T006) ---------------------------------------------
+
+    def _handle_me(self, caller_email: str) -> None:
+        """GET /api/me → 200 ``{"email", "role", "point_count"}``.
+
+        ``email`` + ``role`` come from the ``accounts`` table; ``point_count``
+        is the number of Qdrant points in the caller's ``owner_tag`` scope.
+        If Qdrant is unreachable (or not configured), ``point_count`` degrades
+        to 0 — the endpoint must work even when the vector store is down
+        (the user needs to see their account status).
+        """
+        with self.server._db_lock:
+            role = get_role(self.server.db, caller_email)
+        if role is None:
+            # Defensively: the session verified but the account row is gone
+            # (e.g. deleted out-of-band).  Return the email with a reader
+            # fallback so the UI still gets a coherent shape.
+            role = "reader"
+        point_count = self._count_points_for_owner(
+            owner_tag_for(caller_email))
+        self._send_json(200, {
+            "email": caller_email,
+            "role": role,
+            "point_count": point_count,
+        })
+
+    def _count_points_for_owner(self, owner_tag: str) -> int:
+        """Count Qdrant points whose payload ``owner_tag == owner_tag``.
+
+        Returns 0 on any failure (Qdrant not configured, unreachable, or
+        the count call itself errors) — the /api/me contract is that the
+        user always gets a 200 with a coherent account status, and a
+        missing vector store is not a reason to 500.
+        """
+        config = self.server.config
+        url = _cfg_get(config, "qdrant.url")
+        if not url:
+            return 0
+        try:
+            from qdrant_client import QdrantClient
+            from qdrant_client.models import FieldCondition, Filter, MatchValue
+            client = QdrantClient(
+                url=url, api_key=_cfg_get(config, "qdrant.api_key") or None)
+            result = client.count(
+                QDRANT_COLLECTION,
+                filter=Filter(
+                    must=[FieldCondition(
+                        key="owner_tag", match=MatchValue(value=owner_tag))],
+                ),
+            )
+            # The real Qdrant client returns a CountResult with .count;
+            # test stubs may return a bare int — handle both.
+            count = result.count if hasattr(result, "count") else result
+            return int(count) if count is not None else 0
+        except Exception:
+            return 0
 
     # --- helpers -------------------------------------------------------------
 
