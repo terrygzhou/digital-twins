@@ -200,3 +200,83 @@ def finish_audit_run(conn, run_id: str, status: str, per_source_counts=None) -> 
         (status, _now(), json.dumps(per_source_counts or {}), run_id),
     )
     conn.commit()
+
+
+def list_runs(db, user: str | None = None, all_users: bool = False):
+    """Query ``audit_runs`` with a "mine" filter (T019, US3).
+
+    Parameters
+    ----------
+    db:
+        Open 001/002/003 state connection (``audit_runs`` + ``accounts``
+        tables required).
+    user:
+        The caller's email.  When set and ``all_users`` is False, returns
+        only the runs where ``scheduled_by = user`` — the "mine" view.
+        ``system``-attributed runs are naturally excluded because their
+        ``scheduled_by`` is the literal string ``'system'``, which never
+        matches a real user's email.
+    all_users:
+        When True, the caller must hold the ``view_all_history``
+        capability (R3: admin only).  Returns **every** row in
+        ``audit_runs`` (including system runs and other users' runs).
+        If the caller's role lacks the capability, raises
+        :class:`digital_twins.accounts.RoleDenied`.
+
+    Returns
+    -------
+    list of tuples
+        Each tuple is one ``audit_runs`` row in the order
+        ``(run_id, started_at, completed_at, status, trigger,
+        scheduled_by, per_source_counts)``.  Returns an empty list when
+        no rows match.
+
+    Raises
+    ------
+    RoleDenied
+        If ``all_users=True`` but the caller's role lacks
+        ``view_all_history`` (i.e. is not admin).
+
+    Notes
+    -----
+    If both ``user`` is None and ``all_users`` is False, an empty list is
+    returned (no view requested).  This is a safety default: callers
+    should always pass ``user`` or set ``all_users=True``.
+    """
+    from ..accounts import get_role, guard
+
+    if all_users:
+        # Role check: the caller must hold view_all_history (R3: admin
+        # only).  Uses accounts.get_role + accounts.guard so the
+        # capability matrix is the single source of truth.
+        if user is None:
+            raise ValueError(
+                "list_runs(all_users=True) requires a user email for the "
+                "role check"
+            )
+        role = get_role(db, user)
+        if role is None:
+            raise ValueError(
+                f"list_runs: unknown account {user!r} — cannot perform "
+                "role check for all_users"
+            )
+        guard(role, "view_all_history")
+        rows = db.execute(
+            "SELECT run_id, started_at, completed_at, status, trigger, "
+            "scheduled_by, per_source_counts FROM audit_runs "
+            "ORDER BY started_at DESC"
+        ).fetchall()
+    elif user is not None:
+        # "Mine" view: runs where scheduled_by matches the user's email.
+        # system runs (scheduled_by='system') are excluded automatically
+        # because no real user has the email 'system'.
+        rows = db.execute(
+            "SELECT run_id, started_at, completed_at, status, trigger, "
+            "scheduled_by, per_source_counts FROM audit_runs "
+            "WHERE scheduled_by=? ORDER BY started_at DESC",
+            (user,),
+        ).fetchall()
+    else:
+        # No user, no all_users: nothing to return.
+        rows = []
+    return rows
