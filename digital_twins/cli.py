@@ -131,12 +131,27 @@ def validate() -> None:
               help="Override the per-source item cap for this run.")
 @click.option("--dry-run", is_flag=True,
               help="Count what would be ingested; write nothing.")
-def run(source_names: tuple, max_items: int, dry_run: bool) -> None:
+@click.option("--once", is_flag=True,
+              help="One-shot run: trigger='manual', no schedule advance, no pidfile.")
+def run(source_names: tuple, max_items: int, dry_run: bool,
+        once: bool) -> None:
     """One-shot ingestion: read -> chunk -> embed -> upsert.
 
     Fail-fast: a missing prerequisite exits 2 and names the source, the
     prerequisite, and where to set it. An audit row is written regardless.
+
+    --once marks the run as one-shot (host-cron path): trigger='manual',
+    scheduled_by='system', no schedule advance, no pidfile. Without --once,
+    behavior is unchanged from 001 (the same defaults apply: the CLI one-shot
+    command records trigger='manual' / scheduled_by='system').
     """
+    # --once: one-shot host-cron run. trigger='manual', scheduled_by='system'
+    # (no --as until T011), no schedule advance, no pidfile. Without --once
+    # the 001 behavior is unchanged; both paths share these values today, so
+    # 001's observable audit row is identical. (T008's `serve` will use
+    # trigger='schedule'; T011's --as will set scheduled_by to the owner.)
+    trigger = "manual"
+    scheduled_by = "system"
     cfg = load()
     state_dir = Path(cfg["state_dir"])
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -194,7 +209,8 @@ def run(source_names: tuple, max_items: int, dry_run: bool) -> None:
             summary = run_pipeline(
                 cfg, db, qdrant, embedder,
                 source_names=list(source_names) or None,
-                max_items=max_items, dry_run=dry_run)
+                max_items=max_items, dry_run=dry_run,
+                trigger=trigger, scheduled_by=scheduled_by)
         except PrerequisiteError as exc:
             click.echo(f"fail-fast: {exc}", err=True)
             raise SystemExit(2)
