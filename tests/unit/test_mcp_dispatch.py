@@ -160,16 +160,29 @@ def test_scheduler_list_all_users_permission_denied(db, ctx_factory):
 # (d) owner calling run on own schedule → success
 # ---------------------------------------------------------------------------
 
-def test_owner_run_own_schedule_success(db, ctx_factory):
-    """An owner running their own schedule → ok (stub body)."""
+def test_owner_run_own_schedule_success(db, ctx_factory, monkeypatch):
+    """An owner running their own schedule passes both gates and reaches the
+    tool body (T009 d).
+
+    T009 was written when the body was a stub (ok). Now that T020 implements
+    the real body, the body resolves the config and — with the hermes source
+    disabled in the default config — returns ``source_disabled`` (nothing to
+    run).  The point of this test is that the role-gate + owner-scope both
+    pass and the *body* runs: a ``source_disabled`` (the body's answer) proves
+    the body executed, not a gate's ``permission_denied``/``schedule_not_found``.
+    """
     sched = _make_schedule(db, "owner@example.com")
     ctx = ctx_factory("owner@example.com", "scheduler")
     result = _dispatch(ctx, "kb_schedule_run", {
         "schedule_id": sched["id"],
         "agent_kind": "test",
     })
-    assert result.get("ok") is True, (
-        f"owner run own schedule: expected success, got {result}"
+    code = _error_code(result)
+    # source_disabled (body ran, source disabled) OR ok (source enabled in the
+    # resolved config) both prove the gates passed and the body executed.
+    assert code in ("source_disabled", None), (
+        f"owner run own schedule: expected the body to run "
+        f"(source_disabled or success), got {code}: {result}"
     )
 
 
