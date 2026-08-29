@@ -111,6 +111,7 @@ _SOURCE_KNOB_TYPES = {
     "prefix": str,
     "entrypoint": str,
     "credential": str,
+    "email": str,
 }
 
 
@@ -180,7 +181,7 @@ class SchemaError(Exception):
 
 
 def _validate_source(path: str, raw: dict, custom: bool):
-    allowed_keys = set(SOURCE_DEFAULTS) | {"extra", "prefix"}
+    allowed_keys = set(SOURCE_DEFAULTS) | {"extra", "prefix", "email", "credential"}
     if custom:
         allowed_keys |= set(CUSTOM_SOURCE_DEFAULTS)
     if not isinstance(raw, dict):
@@ -196,7 +197,7 @@ def _validate_source(path: str, raw: dict, custom: bool):
             out[key] = coerce(f"{path}.enabled", value)
         elif key in ("max_items", "timeout_s"):
             out[key] = coerce(f"{path}.{key}", value)
-        elif key in ("prefix", "entrypoint", "credential"):
+        elif key in ("prefix", "entrypoint", "credential", "email"):
             if not isinstance(value, str):
                 raise SchemaError(f"{path}.{key}: must be a string")
             out[key] = value

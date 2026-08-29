@@ -109,9 +109,9 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 ### Implementation for User Story 3
 
-- [ ] T028 [US3] Implement machine-readable knob registry (single source of truth for the config surface) in `digital_twins/config/knobs.py` (makes T027 pass)
-- [ ] T029 [US3] Finalize `config.example.yml` + `.env.example` grouping (endpoints / embedding / graph / agent-runtimes / email / per-source) and the loader's debug layer-wins output — in `config.example.yml`, `.env.example`, `digital_twins/config/loader.py` (makes T026 pass)
-- [ ] T030 [US3] Write the config reference section (layers, precedence, every knob, how to add values) in `README.md`
+- [x] T028 [US3] Implement machine-readable knob registry (single source of truth for the config surface) in `digital_twins/config/knobs.py` (makes T027 pass)
+- [x] T029 [US3] Finalize `config.example.yml` + `.env.example` grouping (endpoints / embedding / graph / agent-runtimes / email / per-source) and the loader's debug layer-wins output — in `config.example.yml`, `.env.example`, `digital_twins/config/loader.py` (makes T026 pass)
+- [x] T030 [US3] Write the config reference section (layers, precedence, every knob, how to add values) in `README.md`
 
 **Checkpoint**: US3 functional — the config surface is complete, documented, and precedence is deterministic and proven.
 
@@ -125,13 +125,13 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T031 [P] [US4] Write dimension-mismatch test — collection vector size ≠ configured model dim → hard error with remediation message at validate-time and before first write; 0 silent mismatches (SC-005) — in `tests/integration/test_dim_mismatch.py`
-- [ ] T032 [P] [US4] Write upgrade-preservation test — seed state (high-water + audit + accounts), run a version-bumped migration, assert all rows + config survive (SC-006) — in `tests/unit/test_upgrade.py`
+- [x] T031 [P] [US4] Write dimension-mismatch test — collection vector size ≠ configured model dim → hard error with remediation message at validate-time and before first write; 0 silent mismatches (SC-005) — in `tests/integration/test_dim_mismatch.py`
+- [x] T032 [P] [US4] Write upgrade-preservation test — seed state (high-water + audit + accounts), run a version-bumped migration, assert all rows + config survive (SC-006) — in `tests/unit/test_upgrade.py`
 
 ### Implementation for User Story 4
 
-- [ ] T033 [US4] Implement embedding dimension guard — compare model dim vs collection vector size, hard-fail with remediation (re-embed, or new collection) — in `digital_twins/health.py` and pre-write check in `digital_twins/ingest/pipeline.py` (makes T031 pass)
-- [ ] T034 [US4] Complete `--version` machine-readable output in `digital_twins/cli.py`, finalize `CHANGELOG.md` 0.1.0 entry, and harden `digital_twins/state/migrations.py` per T032
+- [x] T033 [US4] Implement embedding dimension guard — compare model dim vs collection vector size, hard-fail with remediation (re-embed, or new collection) — in `digital_twins/health.py` and pre-write check in `digital_twins/ingest/pipeline.py` (makes T031 pass)
+- [x] T034 [US4] Complete `--version` machine-readable output in `digital_twins/cli.py`, finalize `CHANGELOG.md` 0.1.0 entry, and harden `digital_twins/state/migrations.py` per T032
 
 **Checkpoint**: US4 functional — data-safety and upgrade-safety invariants are enforced and proven.
 
@@ -145,12 +145,12 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 ### Tests for User Story 5 ⚠️
 
-- [ ] T035 [P] [US5] Write custom-source tests — config-declared `entrypoint` factory participates in a run (capability checks, credential, stamped `source_url`); missing credential → exit 2; bad entrypoint → fail-fast naming the module — in `tests/integration/test_custom_source.py`
+- [x] T035 [P] [US5] Write custom-source tests — config-declared `entrypoint` factory participates in a run (capability checks, credential, stamped `source_url`); missing credential → exit 2; bad entrypoint → fail-fast naming the module — in `tests/integration/test_custom_source.py`
 
 ### Implementation for User Story 5
 
-- [ ] T036 [US5] Implement user-defined source loader — import + call `module:factory` from config, validate the returned `Source` against the contract, capability from config entry — in `digital_twins/sources/custom.py` (depends on T020, makes T035 pass)
-- [ ] T037 [US5] Write the "add a source" how-to (config entry shape, capability fields, credential convention, prefix) in `README.md`
+- [x] T036 [US5] Implement user-defined source loader — import + call `module:factory` from config, validate the returned `Source` against the contract, capability from config entry — in `digital_twins/sources/custom.py` (depends on T020, makes T035 pass)
+- [x] T037 [US5] Write the "add a source" how-to (config entry shape, capability fields, credential convention, prefix) in `README.md`
 
 **Checkpoint**: All user stories independently functional.
 
@@ -160,9 +160,9 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 **Purpose**: Whole-feature validation and release readiness
 
-- [ ] T038 [P] Polish `README.md` quickstart + validation guide against `quickstart.md` wording; verify every documented command/flag exists
-- [ ] T039 Run `quickstart.md` Scenarios 1–7 end-to-end against a local Qdrant instance; fix any drift between docs and behavior
-- [ ] T040 [P] Final audit pass — portability scan (T006) + knob-doc audit (T027) green on the shipped tree; tag `v0.1.0`
+- [x] T038 [P] Polish `README.md` quickstart + validation guide against `quickstart.md` wording; verify every documented command/flag exists
+- [x] T039 Run `quickstart.md` Scenarios 1–7 end-to-end against a local Qdrant instance; fix any drift between docs and behavior
+- [x] T040 [P] Final audit pass — portability scan (T006) + knob-doc audit (T027) green on the shipped tree; tag `v0.1.0`
 
 ---
 

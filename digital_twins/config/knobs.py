@@ -146,17 +146,34 @@ for _name in _BUILTIN_SOURCES:
         "group": GROUP_SOURCES,
     }
 
-# --- Source credentials (non-KB_ env vars, documented in .env.example) ---
+# --- Source credentials + account env vars (non-KB_ env vars, documented in
+#     .env.example) ---
+# `credential` is the env var holding the required secret. The IMAP mail
+# sources also read the account address from a per-provider env var
+# (`sources.<name>.email`) — documented here so the knob-doc sync guard
+# (SC-002) keeps it in .env.example.
 KNOBS["sources.yahoo.credential"] = {
     "type": "str",
     "default": None,
     "env": "YMAIL_APP_PASSWORD",
     "group": GROUP_SOURCES,
 }
+KNOBS["sources.yahoo.email"] = {
+    "type": "str",
+    "default": None,
+    "env": "YMAIL_EMAIL",
+    "group": GROUP_SOURCES,
+}
 KNOBS["sources.gmail.credential"] = {
     "type": "str",
     "default": None,
     "env": "GMAIL_APP_PASSWORD",
+    "group": GROUP_SOURCES,
+}
+KNOBS["sources.gmail.email"] = {
+    "type": "str",
+    "default": None,
+    "env": "GMAIL_EMAIL",
     "group": GROUP_SOURCES,
 }
 

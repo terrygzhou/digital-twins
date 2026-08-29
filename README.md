@@ -195,6 +195,8 @@ All disabled on a fresh install. Each source supports:
 | `sources.<name>.max_items` | 200 | per-run cap |
 | `sources.<name>.timeout_s` | 1500 | per-source timeout |
 | `sources.<name>.extra.*` | source-specific | see below |
+| `sources.yahoo.credential` / `sources.gmail.credential` | provider app-password env-var name | env-var holding the required secret (IMAP sources) |
+| `sources.yahoo.email` / `sources.gmail.email` | `""` | IMAP account address; empty = use the provider `*_EMAIL` env var |
 
 Per-source `extra` fields:
 
@@ -208,12 +210,14 @@ Per-source `extra` fields:
 | `gmail` | `imap_host` | IMAP host (default `imap.gmail.com`) |
 | `fs` | `dir` | directory of files (demo/test source) |
 
-Credential env vars (referenced by name in config; values never in `kb.yml`):
+Credential / account env vars (referenced by name in config; values never in `kb.yml`):
 
-| Source | Env var |
-|---|---|
-| `yahoo` | `YMAIL_APP_PASSWORD` |
-| `gmail` | `GMAIL_APP_PASSWORD` |
+| Source | Env var | Purpose |
+|---|---|---|
+| `yahoo` | `YMAIL_APP_PASSWORD` | required IMAP app password (secret) |
+| `gmail` | `GMAIL_APP_PASSWORD` | required IMAP app password (secret) |
+| `yahoo` | `YMAIL_EMAIL` | IMAP account address (used when `sources.yahoo.email` is empty) |
+| `gmail` | `GMAIL_EMAIL` | IMAP account address (used when `sources.gmail.email` is empty) |
 
 ### Custom Sources
 
@@ -285,7 +289,7 @@ class MyToolSource(Source):
         prefix="mytool:",
     )
 
-    def prerequisites(self):
+    def prerequisites(self) -> list[str]:
         missing = []
         if not os.environ.get("MYTOOL_TOKEN"):
             missing.append("MYTOOL_TOKEN is not set")

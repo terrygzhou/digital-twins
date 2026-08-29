@@ -3,6 +3,25 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [0.1.1] - 2026-08-29
+
+### Added
+
+- **IMAP account-address knob** (closes the last SC-002 gap):
+  `sources.yahoo.email` / `sources.gmail.email` are now first-class source
+  knobs. The IMAP mail sources read the account address from config when set,
+  otherwise fall back to the provider env var (`YMAIL_EMAIL` / `GMAIL_EMAIL`).
+  The `init` starter config now documents both the `credential` env-var name
+  and the `email` knob for yahoo/gmail.
+- Two new unit tests lock in the config-wins / env-var-fallback behaviour
+  (`tests/unit/test_imap_mail_source.py`).
+
+### Changed
+
+- `config.example.yml`, `.env.example`, `README.md` config reference:
+  document the new `email` knob and the `YMAIL_EMAIL` / `GMAIL_EMAIL`
+  account-address env vars.
+
 ## [0.1.0] - 2026-08-29
 
 ### Added

@@ -56,6 +56,16 @@ def test_gmail_read_with_stubbed_imap(monkeypatch):
     source = build("gmail", {"extra": {"imap_host": "imap.gmail.com"}})
     assert source.prerequisites() == []
 
+    items, _ = _read_one(monkeypatch, source)
+    assert len(items) == 1
+    assert items[0].key == "<test-123@example.com>"
+    assert "Hello, this is the email body." in items[0].content
+    assert items[0].metadata["from"] == "sender@example.com"
+    assert items[0].metadata["subject"] == "Test Email"
+
+
+def _read_one(monkeypatch, source):
+    """Stub a one-message IMAP; return (items, captured_connect_args)."""
     raw_email = (
         b"From: sender@example.com\r\n"
         b"To: me@example.com\r\n"
@@ -65,6 +75,7 @@ def test_gmail_read_with_stubbed_imap(monkeypatch):
         b"\r\n"
         b"Hello, this is the email body.\r\n"
     )
+    captured = {}
 
     class StubIMAP:
         def select(self, mailbox, mode="R"):
@@ -82,15 +93,34 @@ def test_gmail_read_with_stubbed_imap(monkeypatch):
         def logout(self):
             pass
 
-    stub = StubIMAP()
-    monkeypatch.setattr(imap_mod, "_imap_connect", lambda *a, **kw: stub)
+    def capture_connect(host, email_addr, password):
+        captured.update(host=host, email_addr=email_addr,
+                        password=password)
+        return StubIMAP()
 
-    items = list(source.read(None))
-    assert len(items) == 1
-    assert items[0].key == "<test-123@example.com>"
-    assert "Hello, this is the email body." in items[0].content
-    assert items[0].metadata["from"] == "sender@example.com"
-    assert items[0].metadata["subject"] == "Test Email"
+    monkeypatch.setattr(imap_mod, "_imap_connect", capture_connect)
+    return list(source.read(None)), captured
+
+
+def test_gmail_email_knob_wins_over_env(monkeypatch):
+    """sources.gmail.email in config beats GMAIL_EMAIL for the login address."""
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "test-cred")
+    monkeypatch.setenv("GMAIL_EMAIL", "env@example.com")
+    source = build("gmail", {
+        "extra": {"imap_host": "imap.gmail.com"},
+        "email": "config@example.com",
+    })
+    _, captured = _read_one(monkeypatch, source)
+    assert captured["email_addr"] == "config@example.com"
+
+
+def test_gmail_email_falls_back_to_env(monkeypatch):
+    """Without a config `email`, the GMAIL_EMAIL env var is used."""
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "test-cred")
+    monkeypatch.setenv("GMAIL_EMAIL", "env@example.com")
+    source = build("gmail", {"extra": {"imap_host": "imap.gmail.com"}})
+    _, captured = _read_one(monkeypatch, source)
+    assert captured["email_addr"] == "env@example.com"
 
 
 def test_yahoo_read_respects_max_unseen(monkeypatch):

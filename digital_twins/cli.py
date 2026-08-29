@@ -60,14 +60,27 @@ def _exit_code(results) -> int:
     return 1 if any(not r.ok for r in results) else 0
 
 
+# IMAP mail sources: credential env var + account-address env var
+_IMAP_ENV = {
+    "yahoo": ("YMAIL_APP_PASSWORD", "YMAIL_EMAIL"),
+    "gmail": ("GMAIL_APP_PASSWORD", "GMAIL_EMAIL"),
+}
+
+
 def _starter(overrides: dict, cfg: dict) -> dict:
-    """Starter kb.local.yml: resolved endpoints + every built-in source disabled."""
-    data: dict = {
-        "sources": {
-            name: {"enabled": False, "max_items": 200, "timeout_s": 1500}
-            for name in BUILTIN_SOURCES
-        }
+    """Starter kb.local.yml: resolved endpoints + every built-in source disabled.
+
+    IMAP mail sources (yahoo/gmail) additionally ship their `credential`
+    env-var name and an empty `email` knob so the user knows both vars exist.
+    """
+    sources: dict = {
+        name: {"enabled": False, "max_items": 200, "timeout_s": 1500}
+        for name in BUILTIN_SOURCES
     }
+    for name, (cred, _email_env) in _IMAP_ENV.items():
+        sources[name]["credential"] = cred
+        sources[name]["email"] = ""
+    data: dict = {"sources": sources}
     for prefix, keys in _ENDPOINT_SECTIONS:
         values = {}
         for key in keys:

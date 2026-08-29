@@ -58,12 +58,14 @@ sources:
     max_items: 200       # env: KB_SOURCES__YAHOO__MAX_ITEMS
     timeout_s: 1500      # env: KB_SOURCES__YAHOO__TIMEOUT_S
     credential: ""       # env: YMAIL_APP_PASSWORD
+    email: ""            # env: YMAIL_EMAIL (IMAP account address; empty = use env var)
     # extra: { imap_host: "imap.mail.yahoo.com" }
   gmail:
     enabled: false       # env: KB_SOURCES__GMAIL__ENABLED
     max_items: 200       # env: KB_SOURCES__GMAIL__MAX_ITEMS
     timeout_s: 1500      # env: KB_SOURCES__GMAIL__TIMEOUT_S
     credential: ""       # env: GMAIL_APP_PASSWORD
+    email: ""            # env: GMAIL_EMAIL (IMAP account address; empty = use env var)
     # extra: { imap_host: "imap.gmail.com" }
   fs:
     enabled: false       # env: KB_SOURCES__FS__ENABLED

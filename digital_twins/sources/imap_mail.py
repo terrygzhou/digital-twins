@@ -35,6 +35,9 @@ class ImapMailSource(Source):
         self.imap_host: str = str(extra.get("imap_host") or "")
         self.max_unseen: int = int(extra.get("max_unseen", 200))
         self.credential: str = _CREDENTIALS.get(name, "")
+        # Account address: config `sources.<name>.email` wins; falls back to
+        # the provider env var (YMAIL_EMAIL / GMAIL_EMAIL) when unset.
+        self.email: str = str(entry.get("email") or "")
 
     def prerequisites(self) -> list:
         missing = []
@@ -53,11 +56,10 @@ class ImapMailSource(Source):
     def read(self, since: str | None):
         if not self.imap_host:
             return
-        conn = _imap_connect(
-            self.imap_host,
-            os.environ.get(_EMAIL_ENV.get(self.name, ""), ""),
-            os.environ.get(self.credential, ""),
-        )
+        email_addr = self.email or os.environ.get(
+            _EMAIL_ENV.get(self.name, ""), "")
+        conn = _imap_connect(self.imap_host, email_addr,
+                             os.environ.get(self.credential, ""))
         try:
             conn.select("INBOX")
             status, data = conn.search(None, "UNSEEN")
