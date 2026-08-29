@@ -772,7 +772,7 @@ class TestScenario7_UpgradePreservation:
         conn = connect(tmp_path)
         v1 = migrations.migrate(conn)
         v2 = migrations.migrate(conn)
-        assert v1 == v2 == 1
+        assert v1 == v2 == 2
         conn.close()
 
     def test_existing_upgrade_tests_pass(self, tmp_path, monkeypatch):
@@ -783,8 +783,8 @@ class TestScenario7_UpgradePreservation:
         v1 = migrations.migrate(conn)
         v2 = migrations.migrate(conn)
         v3 = migrations.migrate(conn)
-        assert v1 == v2 == v3 == 1
-        assert migrations.user_version(conn) == 1
+        assert v1 == v2 == v3 == 2
+        assert migrations.user_version(conn) == 2
         conn.close()
 
 

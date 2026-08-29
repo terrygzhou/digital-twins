@@ -32,11 +32,32 @@ CREATE TABLE IF NOT EXISTS audit_runs (
 );
 """
 
+DDL_V2 = """
+CREATE TABLE IF NOT EXISTS schedules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner TEXT NOT NULL,
+    source TEXT NOT NULL,
+    preset TEXT NOT NULL CHECK (preset IN ('daily', 'hourly', 'weekly', 'monthly', 'every-N-hours')),
+    param INTEGER,
+    fire_time TEXT NOT NULL DEFAULT '03:00',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    next_fire_at TEXT NOT NULL,
+    acl TEXT NOT NULL DEFAULT 'owner',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (owner, source, preset, param, fire_time)
+);
+"""
+
 AUDIT_STATUSES = ("ok", "partial", "failed")
 
 
 def apply_v1(conn) -> None:
     conn.executescript(DDL_V1)
+
+
+def apply_v2(conn) -> None:
+    conn.executescript(DDL_V2)
 
 
 def _now() -> str:

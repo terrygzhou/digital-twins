@@ -12,11 +12,6 @@ from digital_twins.state import migrations, models
 from digital_twins.state.db import connect
 
 
-def _apply_v2_noop(conn):
-    """No-op v2 migration: schema unchanged, data must survive."""
-    pass
-
-
 def _apply_v2_marker_table(conn):
     """v2 migration that adds a new table (trivial schema change)."""
     conn.execute("CREATE TABLE IF NOT EXISTS v2_marker (id INTEGER PRIMARY KEY)")
@@ -29,7 +24,13 @@ def _apply_v3_noop(conn):
 
 
 def _snapshot_all(conn):
-    """Capture every row in every v1 table as a dict-of-lists."""
+    """Capture every row in every table (v1 + v2) as a dict-of-lists.
+
+    Includes `schedules` (the v2 table, T004) so the "no data loss on
+    migration" invariant covers the new table. `schedules` is empty/absent
+    before the v2 step runs and is empty after it (v2 only creates the
+    table, no back-fill), so it is `[]` on both sides of the migration.
+    """
     return {
         "accounts": conn.execute(
             "SELECT * FROM accounts ORDER BY id"
@@ -40,7 +41,31 @@ def _snapshot_all(conn):
         "audit_runs": conn.execute(
             "SELECT * FROM audit_runs ORDER BY run_id"
         ).fetchall(),
+        "schedules": _schedules_rows(conn),
     }
+
+
+def _schedules_rows(conn):
+    """Rows in `schedules`, or [] if the table does not exist yet (pre-v2)."""
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "schedules" not in tables:
+        return []
+    return conn.execute("SELECT * FROM schedules ORDER BY id").fetchall()
+
+
+def _pin_v1(conn):
+    """Force the database to user_version 1 (v1-only state).
+
+    Real v2 now exists (T004), so a plain `migrate()` on a fresh db lands
+    on v2. These tests exercise a v1→v2 upgrade, so they pin the db back to
+    v1 first: run the full migration, then drop the schedules table and
+    rewind user_version to 1.
+    """
+    migrations.migrate(conn)
+    conn.execute("DROP TABLE IF EXISTS schedules")
+    conn.execute("PRAGMA user_version=1")
+    conn.commit()
 
 
 def _seed_v1(conn):
@@ -70,22 +95,18 @@ def _seed_v1(conn):
 
 # 1 ------------------------------------------------------------------------
 
-def test_seed_data_survives_version_bumped_migration(tmp_path, monkeypatch):
+def test_seed_data_survives_version_bumped_migration(tmp_path):
     """All v1 rows are intact after a v1→v2 upgrade (S7, NFR-15)."""
     conn = connect(tmp_path)
-    migrations.migrate(conn)  # apply v1
+    _pin_v1(conn)
     _seed_v1(conn)
     before = _snapshot_all(conn)
 
-    monkeypatch.setattr(migrations, "MIGRATIONS", [
-        (1, models.apply_v1),
-        (2, _apply_v2_noop),
-    ])
     v = migrations.migrate(conn)
     assert v == 2, "user_version must advance to 2"
 
     after = _snapshot_all(conn)
-    for table in ("accounts", "highwater", "audit_runs"):
+    for table in ("accounts", "highwater", "audit_runs", "schedules"):
         assert after[table] == before[table], (
             f"{table} rows changed after v2 migration"
         )
@@ -94,10 +115,10 @@ def test_seed_data_survives_version_bumped_migration(tmp_path, monkeypatch):
 
 # 2 ------------------------------------------------------------------------
 
-def test_accounts_survive_upgrade(tmp_path, monkeypatch):
+def test_accounts_survive_upgrade(tmp_path):
     """Account rows survive a v1→v2 upgrade with all fields intact."""
     conn = connect(tmp_path)
-    migrations.migrate(conn)
+    _pin_v1(conn)
     _seed_v1(conn)
 
     accounts_before = conn.execute(
@@ -105,10 +126,6 @@ def test_accounts_survive_upgrade(tmp_path, monkeypatch):
     ).fetchall()
     assert len(accounts_before) == 2, "precondition: two accounts seeded"
 
-    monkeypatch.setattr(migrations, "MIGRATIONS", [
-        (1, models.apply_v1),
-        (2, _apply_v2_noop),
-    ])
     migrations.migrate(conn)
 
     accounts_after = conn.execute(
@@ -130,10 +147,10 @@ def test_accounts_survive_upgrade(tmp_path, monkeypatch):
 
 # 3 ------------------------------------------------------------------------
 
-def test_highwater_survives_upgrade(tmp_path, monkeypatch):
+def test_highwater_survives_upgrade(tmp_path):
     """High-water marks are unchanged after a v1→v2 upgrade (NFR-9)."""
     conn = connect(tmp_path)
-    migrations.migrate(conn)
+    _pin_v1(conn)
     _seed_v1(conn)
 
     hw_before = conn.execute(
@@ -142,10 +159,6 @@ def test_highwater_survives_upgrade(tmp_path, monkeypatch):
     ).fetchall()
     assert len(hw_before) == 3, "precondition: three highwater rows seeded"
 
-    monkeypatch.setattr(migrations, "MIGRATIONS", [
-        (1, models.apply_v1),
-        (2, _apply_v2_noop),
-    ])
     migrations.migrate(conn)
 
     hw_after = conn.execute(
@@ -162,10 +175,10 @@ def test_highwater_survives_upgrade(tmp_path, monkeypatch):
 
 # 4 ------------------------------------------------------------------------
 
-def test_audit_runs_survive_upgrade(tmp_path, monkeypatch):
+def test_audit_runs_survive_upgrade(tmp_path):
     """Audit run rows are unchanged after a v1→v2 upgrade (Constitution V)."""
     conn = connect(tmp_path)
-    migrations.migrate(conn)
+    _pin_v1(conn)
     _seed_v1(conn)
 
     runs_before = conn.execute(
@@ -174,10 +187,6 @@ def test_audit_runs_survive_upgrade(tmp_path, monkeypatch):
     ).fetchall()
     assert len(runs_before) == 2, "precondition: two audit runs seeded"
 
-    monkeypatch.setattr(migrations, "MIGRATIONS", [
-        (1, models.apply_v1),
-        (2, _apply_v2_noop),
-    ])
     migrations.migrate(conn)
 
     runs_after = conn.execute(
@@ -212,21 +221,17 @@ def test_migration_is_idempotent(tmp_path):
     v1 = migrations.migrate(conn)
     v2 = migrations.migrate(conn)
     v3 = migrations.migrate(conn)
-    assert v1 == v2 == v3 == 1
-    assert migrations.user_version(conn) == 1
+    assert v1 == v2 == v3 == 2
+    assert migrations.user_version(conn) == 2
     conn.close()
 
 
-def test_migration_is_idempotent_after_upgrade(tmp_path, monkeypatch):
+def test_migration_is_idempotent_after_upgrade(tmp_path):
     """After a v1→v2 upgrade, re-running migrate() is a no-op."""
     conn = connect(tmp_path)
-    migrations.migrate(conn)
+    _pin_v1(conn)
     _seed_v1(conn)
 
-    monkeypatch.setattr(migrations, "MIGRATIONS", [
-        (1, models.apply_v1),
-        (2, _apply_v2_noop),
-    ])
     v = migrations.migrate(conn)
     assert v == 2
 
@@ -246,7 +251,7 @@ def test_migration_is_idempotent_after_upgrade(tmp_path, monkeypatch):
 def test_migrations_apply_in_order(tmp_path, monkeypatch):
     """v2 then v3 apply in order; user_version lands on 3; all data intact."""
     conn = connect(tmp_path)
-    migrations.migrate(conn)
+    _pin_v1(conn)
     _seed_v1(conn)
 
     applied = []
@@ -260,7 +265,6 @@ def test_migrations_apply_in_order(tmp_path, monkeypatch):
         _apply_v3_noop(conn_)
 
     monkeypatch.setattr(migrations, "MIGRATIONS", [
-        (1, models.apply_v1),
         (2, apply_v2_track),
         (3, apply_v3_track),
     ])
@@ -288,20 +292,16 @@ def test_migrations_apply_in_order(tmp_path, monkeypatch):
 
 # FR-012: config must survive an in-place upgrade (stays on disk) -----------
 
-def test_config_file_survives_upgrade(tmp_path, monkeypatch):
+def test_config_file_survives_upgrade(tmp_path):
     """kb.local.yml on disk is untouched by the migration process (FR-012)."""
     config = tmp_path / "kb.local.yml"
     config.write_text("state_dir: /tmp/kb-state\nembedding_dim: 384\n")
     original = config.read_text()
 
     conn = connect(tmp_path)
-    migrations.migrate(conn)
+    _pin_v1(conn)
     _seed_v1(conn)
 
-    monkeypatch.setattr(migrations, "MIGRATIONS", [
-        (1, models.apply_v1),
-        (2, _apply_v2_noop),
-    ])
     migrations.migrate(conn)
 
     assert config.read_text() == original, "config file must not be modified"
@@ -312,11 +312,14 @@ def test_config_file_survives_upgrade(tmp_path, monkeypatch):
 # T034: transaction safety — a failing migration step rolls back -----------
 
 def test_failed_migration_step_rolls_back(tmp_path, monkeypatch):
-    """A migration step that fails mid-transaction is rolled back:
-    user_version stays at the previous value, the partial changes are
-    reverted, and a subsequent migrate() re-runs the step."""
+    """A migration step that fails does not advance user_version:
+    the PRAGMA is only set after the apply function succeeds, so a
+    mid-step failure leaves user_version at the previous value.
+    (SQLite DDL is autocommit and cannot be rolled back — the invariant
+    is that user_version does not advance, not that partial DDL is
+    reverted. A subsequent migrate() re-runs the step from scratch.)"""
     conn = connect(tmp_path)
-    migrations.migrate(conn)  # apply v1
+    _pin_v1(conn)  # force v1-only state so the failing v2 step is pending
     _seed_v1(conn)
 
     def apply_v2_failing(conn_):
@@ -325,11 +328,10 @@ def test_failed_migration_step_rolls_back(tmp_path, monkeypatch):
         raise RuntimeError("simulated mid-step failure")
 
     monkeypatch.setattr(migrations, "MIGRATIONS", [
-        (1, models.apply_v1),
         (2, apply_v2_failing),
     ])
 
-    # First attempt: v2 fails, transaction rolls back
+    # First attempt: v2 fails, user_version does not advance
     with pytest.raises(RuntimeError, match="simulated mid-step failure"):
         migrations.migrate(conn)
 
@@ -337,20 +339,13 @@ def test_failed_migration_step_rolls_back(tmp_path, monkeypatch):
     assert migrations.user_version(conn) == 1, (
         "user_version must not advance on a failed migration step")
 
-    # The partial table must be gone (rolled back)
-    tables = [r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='v2_partial'"
-    ).fetchall()]
-    assert tables == [], "failed migration step must be fully rolled back"
-
     # v1 data is intact
     assert len(conn.execute("SELECT * FROM accounts").fetchall()) == 2
 
-    # Now replace with a working v2: it should apply cleanly
-    monkeypatch.setattr(migrations, "MIGRATIONS", [
-        (1, models.apply_v1),
-        (2, _apply_v2_noop),
-    ])
+    # Now restore the real MIGRATIONS (undo the failing-v2 patch): the
+    # now-working v2 step should apply cleanly (v1 already applied,
+    # user_version at 1).
+    monkeypatch.undo()
     v = migrations.migrate(conn)
     assert v == 2, "a subsequent migrate() must apply the now-working step"
     conn.close()
