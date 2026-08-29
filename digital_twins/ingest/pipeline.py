@@ -112,6 +112,7 @@ def run_pipeline(
     max_items: int | None = None,
     dry_run: bool = False,
     trigger: str = "manual",
+    scheduled_by: str = "system",
 ) -> RunSummary:
     """Run one ingestion pass over the enabled (or named) sources.
 
@@ -119,11 +120,16 @@ def run_pipeline(
     prerequisite check passes). `embedder` maps list[str] -> list of vectors
     and must be lazy about its own heavy setup. `neo4j` is a driver-shaped
     object exposing `.run(query, **params)` (None = skip graph writes).
+
+    `trigger` records how the run was started ('manual' for run --once / the
+    CLI one-shot, 'schedule' for serve fires). `scheduled_by` records the
+    owning user ('system' when run --once has no --as; T011 sets the owner
+    user later).
     """
     run_id = str(uuid.uuid4())
     built: list = []
     counts: dict = {}
-    start_audit_run(db, run_id, trigger=trigger)
+    start_audit_run(db, run_id, trigger=trigger, scheduled_by=scheduled_by)
     try:
         if source_names is None:
             source_names = [n for n, e in cfg["sources"].items()
