@@ -229,10 +229,10 @@ def test_audit_recent_audit_shape(web_app):
     RED: the route is unimplemented (T014) → the scaffold's clean JSON 404.
     """
     _app, db, host, port, tokens = web_app
-    base = "2026-02-0%dT00:00:00+00:00"
-    for i in range(1, 16):  # 15 rows, ts strictly ascending
+    # 15 rows with strictly-ascending ISO-8601 timestamps (day 1–15).
+    for i in range(1, 16):
         _seed_audit_row(
-            db, base % i, "alice@example.com", "manual",
+            db, f"2026-02-{i:02d}T00:00:00+00:00", "alice@example.com", "manual",
             per_source_counts={"fs": 3},
         )
 
@@ -249,7 +249,7 @@ def test_audit_recent_audit_shape(web_app):
         f"default limit must be 10 rows (of 15 seeded), got {len(rows)}")
     # Most recent first: ts day 15 down to day 6.
     assert [r["run_id"] for r in rows[:0]] == []  # shape check only
-    expected_ts_desc = [f"2026-02-0{d}T00:00:00+00:00" for d in
+    expected_ts_desc = [f"2026-02-{d:02d}T00:00:00+00:00" for d in
                         [15, 14, 13, 12, 11, 10, 9, 8, 7, 6]]
     assert [r["started_at"] for r in rows] == expected_ts_desc, (
         f"rows must be most-recent-first with the default limit; got "
@@ -277,9 +277,9 @@ def test_audit_recent_audit_shape(web_app):
         f"limit=3 must yield exactly 3 rows, got "
         f"{len(rows3) if isinstance(rows3, list) else rows3!r}")
     assert [r["started_at"] for r in rows3] == [
-        "2026-02-015T00:00:00+00:00",
-        "2026-02-014T00:00:00+00:00",
-        "2026-02-013T00:00:00+00:00"], (
+        "2026-02-15T00:00:00+00:00",
+        "2026-02-14T00:00:00+00:00",
+        "2026-02-13T00:00:00+00:00"], (
         f"limit=3 must be the 3 most recent, got "
         f"{[r.get('started_at') for r in rows3]!r}")
     # (d) Cap: ?limit=500 is clamped to 100 — with only 15 rows the
@@ -311,8 +311,12 @@ def test_audit_recent_web_trigger_visible(web_app, monkeypatch):
     clean JSON 404, so the test fails on the 200 assertion.
     """
     app, db, host, port, tokens = web_app
-    caller = "alice@example.com"
+    caller = "admin@example.com"
     token = tokens[caller]
+
+    # Enable the fs source in the app config so the handler's source
+    # validation accepts it.
+    app.config["sources"]["fs"] = {"enabled": True, "extra": {"dir": "/tmp"}}
 
     captured: dict = {}
 
@@ -363,6 +367,8 @@ def test_audit_recent_web_trigger_visible(web_app, monkeypatch):
     assert row[1] == caller, f"scheduled_by must be the caller, got {row!r}"
 
     # It is visible immediately in /api/audit/recent for the owner.
+    # Admin sees all rows (including the one just triggered), so the
+    # run_id must appear in the admin's view.
     code, parsed, raw = _http_get(
         host, port, "/api/audit/recent?limit=10",
         headers={"Authorization": f"Bearer {token}"})

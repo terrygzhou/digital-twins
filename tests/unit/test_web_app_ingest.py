@@ -210,6 +210,13 @@ def test_ingest_run_trigger_web_scheduled_by(web_app, monkeypatch, tmp_path):
         captured["kwargs"] = kwargs
         captured["cfg"] = cfg
         captured["db"] = db
+        # Simulate the real pipeline's audit-row write (R3: the pipeline
+        # writes the row, not the handler).
+        from digital_twins.state.models import start_audit_run, finish_audit_run
+        start_audit_run(db, "run-web-1",
+                        trigger=kwargs.get("trigger", "web"),
+                        scheduled_by=kwargs.get("scheduled_by", "system"))
+        finish_audit_run(db, "run-web-1", "ok", {"fs": 2})
         return RunSummary(run_id="run-web-1", counts={"fs": 2},
                           points=3, status="ok")
 
@@ -292,9 +299,14 @@ def test_ingest_run_dedup_parity(web_app):
     fake = _InMemoryQdrant()
     app.qdrant_client = fake
 
+    # A minimal fake embedder: return a fixed 4-dim vector for every text.
+    def fake_embed(texts):
+        return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+
     # Leg 1: the same content via run_pipeline directly (run --once parity).
     summary = pipeline_mod.run_pipeline(
-        app.config, app.db, qdrant=fake, source_names=["fs"],
+        app.config, app.db, qdrant=fake, embedder=fake_embed,
+        source_names=["fs"],
         trigger="manual", scheduled_by="system", owner=None,
     )
     assert summary.status == "ok", f"leg 1 pipeline run failed: {summary!r}"

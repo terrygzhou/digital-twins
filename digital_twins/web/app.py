@@ -25,6 +25,18 @@ web framework) that routes:
     ``point_count`` is the count of Qdrant points in the caller's
     ``owner_tag`` scope; degrades to 0 when Qdrant is unreachable
     (no 500 — the user still sees their account status).
+  - ``POST /api/ingest/run`` → the run summary from
+    ``digital_twins.ingest.pipeline.run_pipeline`` (T012): the same
+    code path as ``run --once`` and MCP ``kb_ingest`` (R3), with
+    ``trigger='web'`` + ``scheduled_by=<caller-email>`` and points
+    owner-stamped with the caller's ``owner_tag`` (R6).  The
+    ``trigger_run`` capability gate runs BEFORE any pipeline work:
+    a refusal is a 403 ``permission_denied`` with NO audit row.
+  - ``GET /api/audit/recent`` → the last N ``audit_runs`` rows, most
+    recent first, in the 001/002/004 audit record shape with
+    ``per_source_counts`` DECODED to a dict (T014).  Non-admins see
+    only rows where ``scheduled_by`` equals their own email
+    (NFR-16); admins see all rows.
 
 The 003 credential endpoints are re-exposed under ``/api/auth/*`` by
 reusing ``digital_twins.accounts`` / ``digital_twins.auth`` directly (R2:
@@ -41,11 +53,13 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from digital_twins import accounts as _accounts_mod
 from digital_twins.accounts import (
     DuplicateEmailError,
+    RoleDenied,
     create_account,
-    get_role,
     owner_tag_for,
+    require_capability,
 )
 from digital_twins.auth import (
     authenticate,
@@ -53,8 +67,10 @@ from digital_twins.auth import (
     revoke_session,
     verify_session,
 )
-from digital_twins.config.schema import get as _cfg_get
+from digital_twins.config.schema import DEFAULTS as _cfg_defaults, get as _cfg_get
 from digital_twins.health import QDRANT_COLLECTION
+from digital_twins.ingest import pipeline as _pipeline_mod
+from digital_twins import sources as _sources_mod
 
 
 # The static-asset root: ``digital_twins/web/static/`` (C-2/R4).  The actual
@@ -222,6 +238,12 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         if path == "/api/kb/search" and method == "POST":
             self._handle_kb_search(caller_email)
             return
+        if path == "/api/ingest/run" and method == "POST":
+            self._handle_ingest_run(caller_email)
+            return
+        if path == "/api/audit/recent" and method == "GET":
+            self._handle_audit_recent(query, caller_email)
+            return
         del method, query, caller_email  # wired up by the later handler tasks
         self._send_json(404, {"error": "not_found", "path": path})
 
@@ -291,7 +313,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         (the user needs to see their account status).
         """
         with self.server._db_lock:
-            role = get_role(self.server.db, caller_email)
+            role = _accounts_mod.get_role(self.server.db, caller_email)
         if role is None:
             # Defensively: the session verified but the account row is gone
             # (e.g. deleted out-of-band).  Return the email with a reader
@@ -570,7 +592,218 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         rows.sort(key=lambda row: row["score"] or 0.0, reverse=True)
         self._send_json(200, {"results": rows})
 
+    # --- /api/ingest/run handler (T012) ----------------------------------------
+
+    def _handle_ingest_run(self, caller_email: str) -> None:
+        """POST /api/ingest/run → the ``run_pipeline`` run summary.
+
+        Body: ``{"source": "<name>"}`` (a single enabled source),
+        ``{"source": "all"}``, or ``{}`` (run all enabled sources).
+        The run goes through ``digital_twins.ingest.pipeline.run_pipeline``
+        (R3 — the same code path as ``run --once`` and MCP ``kb_ingest``)
+        with ``trigger='web'``, ``scheduled_by=<caller-email>``, and
+        ``owner=<caller-email>`` so every point is owner-stamped with the
+        caller's ``owner_tag`` (R6) and content-level dedup holds
+        (NFR-1/NFR-14).
+
+        The ``trigger_run`` capability gate runs BEFORE any pipeline work:
+        a refusal is a 403 ``permission_denied`` naming the missing
+        capability, and NO audit row is written.  Source validation
+        (disabled / unknown / none-enabled) rejects with 400 before the
+        pipeline runs too.  A missing-prerequisite failure surfaces as a
+        409 naming the prerequisites, with the pipeline's ``failed`` audit
+        row already written (constitution IV/V).
+        """
+        # Capability gate FIRST (before ANY pipeline work): reader → 403
+        # with the missing capability named; no audit row on refusal.
+        # Resolved at call time via the module attribute so test
+        # monkeypatches of ``accounts.get_role`` intercept the lookup.
+        with self.server._db_lock:
+            role = _accounts_mod.get_role(self.server.db, caller_email)
+        if role is None:
+            role = "reader"
+        try:
+            require_capability(role, "trigger_run", "trigger a run")
+        except RoleDenied as exc:
+            self._send_json(403, {
+                "code": "permission_denied",
+                "message": str(exc),
+            })
+            return
+
+        # Source validation (before any pipeline work).
+        config = self.server.config
+        sources_cfg = config.get("sources") or {}
+        body = self._read_json_body()
+        source_val = body.get("source") if isinstance(body, dict) else None
+        enabled = [
+            name for name, entry in sources_cfg.items()
+            if isinstance(entry, dict) and entry.get("enabled")
+        ]
+        if source_val in (None, ""):
+            source_names = enabled
+        elif source_val == "all":
+            source_names = enabled
+        else:
+            if source_val not in sources_cfg:
+                # Mirrors run --once's UnknownSourceError: the source name
+                # is not present in the config at all.
+                self._send_json(
+                    400, {"error": f"unknown source '{source_val}'"})
+                return
+            if not sources_cfg[source_val].get("enabled"):
+                self._send_json(
+                    400,
+                    {"error": f"source '{source_val}' is not enabled"})
+                return
+            source_names = [source_val]
+        if not source_names:
+            self._send_json(400, {"error": "no sources enabled"})
+            return
+
+        # The pipeline hand-off: the SAME code path as run --once / MCP
+        # kb_ingest (R3).  The audit row is written by run_pipeline
+        # (start/finish_audit_run) with trigger='web' + scheduled_by=caller;
+        # on a prerequisite failure the pipeline audits the run 'failed'
+        # before re-raising.
+        db = self.server.db
+        owner = caller_email
+        qdrant_client = self.server.qdrant_client
+
+        # Merge the server's config with the schema defaults so the pipeline
+        # has the chunking/embedding knobs it needs (the test fixtures may
+        # pass a minimal config without these sections).
+        merged_cfg = _merge_defaults(config)
+
+        def _resolve_qdrant():
+            if qdrant_client is not None:
+                return qdrant_client
+            url = _cfg_get(config, "qdrant.url")
+            if not url:
+                raise QdrantUnavailable("qdrant.url is not configured")
+            try:
+                from qdrant_client import QdrantClient
+                return QdrantClient(
+                    url=url,
+                    api_key=_cfg_get(config, "qdrant.api_key") or None)
+            except Exception as exc:  # construction/transport failure
+                raise QdrantUnavailable(str(exc)) from exc
+
+        try:
+            # The SAME hand-off as run --once / MCP kb_ingest: positional
+            # (cfg, db, qdrant, embedder) + the web trigger kwargs.  The
+            # audit row is written by run_pipeline itself (R3).  Resolved
+            # at call time via the module attribute so test monkeypatches
+            # of ``pipeline_mod.run_pipeline`` intercept the hand-off.
+            run_pipeline = _pipeline_mod.run_pipeline
+            summary = run_pipeline(
+                merged_cfg,
+                db,
+                _resolve_qdrant,
+                self._pooled_embedder(),
+                source_names=source_names,
+                trigger="web",
+                scheduled_by=caller_email,
+                owner=owner,
+            )
+        except _pipeline_mod.PrerequisiteError as exc:
+            # The pipeline has already audited this run 'failed' before
+            # re-raising (constitution IV/V) — surface the prerequisites.
+            self._send_json(
+                409,
+                {"error": f"source '{exc.source}': missing prerequisite(s): "
+                          f"{'; '.join(exc.missing)}"})
+            return
+        except _sources_mod.UnknownSourceError as exc:
+            name = exc.args[0] if exc.args else str(exc)
+            self._send_json(400, {"error": f"unknown source '{name}'"})
+            return
+        except Exception:
+            self._send_json(
+                500,
+                {"error": "ingest run failed: see server log for details"})
+            return
+
+        self._send_json(200, {
+            "run_id": summary.run_id,
+            "status": summary.status,
+            "counts": summary.counts,
+            "points": summary.points,
+        })
+
+    # --- /api/audit/recent handler (T014) --------------------------------------
+
+    def _handle_audit_recent(self, query: str, caller_email: str) -> None:
+        """GET /api/audit/recent → ``{"rows": [...]}`` (the last N audit
+        runs, most recent first).
+
+        Reads ``audit_runs`` from the 001/003 SQLite state (unchanged
+        schema — no new migration).  Non-admin callers get only rows where
+        ``scheduled_by`` equals their own email (NFR-16); an admin gets all
+        rows.  ``limit`` defaults to 10, capped at 100.  Each row carries
+        the 001/002/004 audit record shape with ``per_source_counts``
+        DECODED to a dict (the table stores it JSON-encoded).
+        """
+        params = urllib.parse.parse_qs(query)
+        try:
+            limit = int((params.get("limit") or ["10"])[0])
+        except (TypeError, ValueError):
+            limit = 10
+        limit = max(1, min(limit, 100))
+
+        with self.server._db_lock:
+            role = _accounts_mod.get_role(self.server.db, caller_email)
+            if role is None:
+                role = "reader"
+            if role == "admin":
+                rows = self.server.db.execute(
+                    "SELECT run_id, started_at, completed_at, status, "
+                    "trigger, scheduled_by, per_source_counts FROM audit_runs "
+                    "ORDER BY started_at DESC LIMIT ?",
+                    (limit,)).fetchall()
+            else:
+                rows = self.server.db.execute(
+                    "SELECT run_id, started_at, completed_at, status, "
+                    "trigger, scheduled_by, per_source_counts FROM audit_runs "
+                    "WHERE scheduled_by=? ORDER BY started_at DESC LIMIT ?",
+                    (caller_email, limit)).fetchall()
+
+        out_rows = [
+            {
+                "run_id": row[0],
+                "started_at": row[1],
+                "completed_at": row[2],
+                "status": row[3],
+                "trigger": row[4],
+                "scheduled_by": row[5],
+                "per_source_counts": self._decode_counts(row[6]),
+            }
+            for row in rows
+        ]
+        self._send_json(200, {"rows": out_rows})
+
     # --- helpers -------------------------------------------------------------
+
+    def _decode_counts(self, raw) -> dict:
+        """Decode a JSON-encoded ``per_source_counts`` column to a dict.
+
+        The table stores the per-source counts as a JSON string; the
+        audit surface (T014) must hand the UI the decoded dict (e.g.
+        ``{"fs": 3}``), not the raw JSON text.
+        """
+        if raw is None:
+            return {}
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode("utf-8")
+        if isinstance(raw, str):
+            try:
+                decoded = json.loads(raw)
+                return decoded if isinstance(decoded, dict) else {}
+            except (ValueError, json.JSONDecodeError):
+                return {}
+        return {}
 
     def _extract_token(self, query: str) -> str | None:
         """Read the session token: Bearer header first, ?token= fallback."""
@@ -639,7 +872,11 @@ class WebApp(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, addr, db, config):
-        self.config = config
+        # Merge the caller's config with the schema defaults so the handlers
+        # (and any direct pipeline calls using ``self.config``) have the
+        # chunking/embedding knobs they need.  The caller's config is never
+        # mutated; ``self.config`` is a new nested dict.
+        self.config = _merge_defaults(config)
         self.start_time = time.time()
         self._db_lock = threading.Lock()
         self._thread = None
@@ -651,6 +888,33 @@ class WebApp(ThreadingHTTPServer):
         self.qdrant_client = None
         self.db = _open_same_db(db, check_same_thread=False)
         super().__init__(addr, _WebAppHandler)
+
+
+def _merge_defaults(cfg: dict) -> dict:
+    """Merge a config dict with the schema's flat dotted-key defaults.
+
+    The schema's ``DEFAULTS`` uses dotted keys (``"chunking.max_chars"``)
+    but the pipeline's ``get`` function traverses a nested dict.  This
+    helper builds a nested dict from the flat defaults, then overlays the
+    caller's config on top (caller wins).  The result is a new dict — the
+    caller's config is never mutated.
+    """
+    nested: dict = {}
+    for dotted_key, value in _cfg_defaults.items():
+        parts = dotted_key.split(".")
+        node = nested
+        for part in parts[:-1]:
+            if part not in node or not isinstance(node[part], dict):
+                node[part] = {}
+            node = node[part]
+        node[parts[-1]] = value
+    # Overlay the caller's config (deep-merge: caller's keys win).
+    for key, value in cfg.items():
+        if isinstance(value, dict) and isinstance(nested.get(key), dict):
+            nested[key] = {**nested[key], **value}
+        else:
+            nested[key] = value
+    return nested
 
 
 def _open_same_db(db, check_same_thread: bool = False):
