@@ -62,3 +62,15 @@ def authenticate(db, owner: str, password: str) -> bool:
     derived = hashlib.pbkdf2_hmac(
         "sha256", password.encode("utf-8"), salt, _ITERS)
     return hmac.compare_digest(derived.hex(), expected)
+
+
+# --- 003 multi-user: personal token & session helpers (T001 scaffold) ---
+
+def verify_personal_token(db, token: str) -> str | None:
+    """Look up a personal token; return the account email or None (R2). Stub — T004+."""
+    raise NotImplementedError("verify_personal_token: 003 T004")
+
+
+def verify_session(db, session_token: str) -> str | None:
+    """Look up a session token; return the account email or None (R4). Stub — T005+."""
+    raise NotImplementedError("verify_session: 003 T005")
