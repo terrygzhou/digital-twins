@@ -50,4 +50,6 @@ The stable, documented config schema (BR-11.6.4). Precedence: **env (incl. `.env
 | `sources.<custom>.credential` | — | env-var name the source requires (capability declaration) |
 | `sources.<custom>.prefix` | `<name>:` | stamped onto `source_url` |
 
+A complete example of a custom source (`mytool`) is in `config.example.yml` under `sources.mytool` (commented out).
+
 Credential env vars (e.g. `YMAIL_APP_PASSWORD`, `GMAIL_APP_PASSWORD`) are referenced **by name** in config and resolved from env/`.env` — secret values never live in `kb.yml` (NFR-11 hygiene).

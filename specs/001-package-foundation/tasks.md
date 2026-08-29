@@ -145,7 +145,7 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 ### Tests for User Story 5 ⚠️
 
-- [x] T035 [P] [US5] Write custom-source tests — config-declared `entrypoint` factory participates in a run (capability checks, credential, stamped `source_url`); missing credential → exit 2; bad entrypoint → fail-fast naming the module — in `tests/integration/test_custom_source.py`
+- [x] T035 [P] [US5] Write custom-source tests — config-declared `entrypoint` factory participates in a run (capability checks, credential, stamped `source_url`); missing credential → exit 2; bad entrypoint → fail-fast naming the module — in `tests/unit/test_custom_source.py`
 
 ### Implementation for User Story 5
 

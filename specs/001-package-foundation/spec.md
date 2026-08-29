@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-29
 
-**Status**: Draft
+**Status**: Complete (v0.1.1, 166 tests, all 40 tasks done)
 
 **Input**: User description: "BRD slice BR-11.1.1–BR-11.1.5 + BR-11.2 (requirement.md §2): an installable, environment-portable foundation for the digital-twins KB ingestion package — layered config, first-run initializer, named sources with fail-fast enablement, health validation, and zero host coupling."
 
@@ -167,6 +167,19 @@ and stamped tag, and that it fails fast when its prerequisite is absent.
 - **SC-004**: A fresh install reports 0 enabled sources; enabling any source with a missing prerequisite produces an error naming the missing prerequisite on 100% of attempts (never a silent zero-item ingest).
 - **SC-005**: An embedding-model / collection-dimension mismatch produces a hard error with a remediation message on 100% of attempts; silent mismatch occurrences are 0 (NFR-2).
 - **SC-006**: Upgrading across a version boundary preserves the state directory, account database, and configuration with 0 data loss (NFR-15).
+
+## Out of Scope
+
+The following BR-11 sub-requirements are deferred to later slices:
+
+- **BR-11.1.6** Docker image + compose bundle (Qdrant + Neo4j + LLM + embedding)
+- **BR-11.1.7** PyPI publication + public repo mechanics
+- **BR-11.1.8** Web application surface (dashboard, query, chat, ingestion triggers)
+- **BR-11.3** Scheduler: `serve` long-running process, preset cadences, per-user schedules, status endpoint
+- **BR-11.4** Multi-user: sign-up, roles (admin/scheduler/reader), per-user config/run history/credentials
+- **BR-11.5** MCP scheduler tools (`kb_schedule_*`, `kb_run_history`)
+- **BR-11.6.3** Issue tracker + versioning policy (BR-11.6.1–.2 and .4 are in scope: README, LICENSE, CHANGELOG, config schema)
+- **NFR-16/17** Per-user auditability and credential scoping (require multi-user from BR-11.4)
 
 ## Assumptions
 

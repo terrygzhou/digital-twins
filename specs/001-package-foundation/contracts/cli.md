@@ -5,6 +5,7 @@ Entry point: `digital-twins` (console script) and `python -m digital_twins`.
 | Command | Purpose | Exit codes |
 |---|---|---|
 | `digital-twins --version` | print machine-readable version | 0 |
+| `digital-twins --version-json` | print version as JSON (`{"name", "version"}`) | 0 |
 | `digital-twins init` | first-run setup | 0 ok; 1 failure |
 | `digital-twins run` | one-shot ingestion | 0 ok; 1 config/validate failure; 2 fail-fast prerequisite |
 | `digital-twins validate` | health check | 0 healthy; 1 unhealthy |

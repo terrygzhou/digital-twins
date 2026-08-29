@@ -10,11 +10,10 @@ Runnable validation scenarios proving the slice works end-to-end. Assumes the fe
 ## Scenario 1 — Clean-host init (US1, NFR-12)
 
 ```bash
-pip install -e .
-digital-twins init        # prompts for qdrant.url, neo4j.url/user, llm.endpoint
+time (pip install -e . && digital-twins init && digital-twins validate)
 ```
 
-**Expected**: config dir created with `kb.local.yml` (every source `enabled: false`); state dir + `state.db` created; health table printed; exit 0. Re-running `init` keeps existing values, prompts for nothing new, exits 0 (idempotent).
+**Expected**: config dir created with `kb.local.yml` (every source `enabled: false`); state dir + `state.db` created; health table printed; exit 0. Re-running `init` keeps existing values, prompts for nothing new, exits 0 (idempotent). Total wall time should be under 30 minutes on a clean host with network access (SC-001 / NFR-12).
 
 ## Scenario 2 — Validate + dimension guard (US4, NFR-2)
 

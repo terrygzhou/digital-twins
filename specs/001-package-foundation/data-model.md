@@ -52,7 +52,7 @@ A named ingestion channel, built-in or user-defined.
 
 ### Account
 
-Minimal in this slice (multi-user is a later feature): `id`, `email`, `role` (default `reader`), password hash. Created empty by `init`; first-account-becomes-admin applies when the accounts feature lands.
+Minimal in this slice (multi-user is a later feature): `id`, `email`, `role` (default `reader`), `password_hash` (nullable — no accounts exist in this slice). Created empty by `init` via `CREATE TABLE IF NOT EXISTS`; first-account-becomes-admin applies when the accounts feature (BR-11.4) lands.
 
 ### HealthReport
 
