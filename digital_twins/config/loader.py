@@ -21,6 +21,7 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv as _load_dotenv
 
+from . import deprecation as _deprecation
 from . import schema as _schema
 from .schema import SchemaError, coerce, env_path_for
 
@@ -138,6 +139,34 @@ def load(cwd=None, env=None, config_dir=None):
     cfg["state_dir"] = str(Path(cfg["state_dir"]).expanduser())
     cfg["config_dir"] = str(config_dir)
     return cfg
+
+
+# --- deprecation aliases ------------------------------------------------------
+#
+# ``_DEPRECATED_ALIASES`` maps a deprecated dotted config path to the knob /
+# command it has been replaced by. The set is intentionally empty at 0.5.0:
+# no shipped knob is deprecated yet. The mechanism lives here so that when a
+# future release deprecates a knob, the loader fires the one-run
+# ``DeprecationWarning`` (see ``config/deprecation.py``) and resolves the old
+# alias to the new value. This is host-neutral and adds no new knob.
+_DEPRECATED_ALIASES: dict[str, str] = {}
+
+
+def resolve(dotted: str, value):
+    """Resolve one dotted config path, firing a one-run deprecation warning
+    if the path is a deprecated alias.
+
+    When ``dotted`` is in :data:`_DEPRECATED_ALIASES`, the warning is fired
+    (at most once per process per name) and the value is returned unchanged —
+    the loader then continues as if the value had been set under the new
+    knob's path. For any non-aliased path the value is returned as-is, with
+    no warning. This keeps the mechanism inert for the current knob surface
+    while making the deprecation path explicit and testable.
+    """
+    new_name = _DEPRECATED_ALIASES.get(dotted)
+    if new_name is not None:
+        _deprecation.deprecation_warn(dotted, new_name)
+    return value
 
 
 def load_debug(cwd=None, env=None, config_dir=None) -> dict[str, str]:
