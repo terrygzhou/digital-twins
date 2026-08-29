@@ -49,7 +49,7 @@ Polish: US5 status contract (T018), docs + standing guards (T019–T020)
 
 ## Phase 7: User Story 5 — Health/status surface (P3) ✅ goal: `/status` contract
 
-- [ ] **T017** `[US5]` — `status.py`: `status_payload(db, config, pending_fires)` + `ThreadingHTTPServer` handler (`GET /status` → 200 JSON, else 404) per `contracts/scheduler.md`; `tests/unit/test_status.py` red first (payload shape incl. empty-schedules and failed-last-run cases, SC-004 timing)
+- [ ] **T017** `[US5]` — `status.py`: `status_payload(db, config, pending_fires)` + `ThreadingHTTPServer` handler (`GET /status` → 200 JSON, else 404) per `contracts/scheduler.md`; `tests/unit/test_status.py` red first (payload shape incl. empty-schedules and failed-last-run cases; SC-004 wall-clock assertion: payload computed in <500 ms — assert on the measured duration in the red test)
 - [ ] **T018** `[US5]` — Port 0 disables the server entirely (US1 edge); red test first (no listener, `serve` otherwise functional)
 
 ## Phase 8: Polish & cross-cutting

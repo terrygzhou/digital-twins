@@ -22,7 +22,7 @@ Uniqueness: one active schedule per `(owner, source, preset, param, fire_time)` 
 Expansion rules (deterministic, the contract the presets expose):
 - `hourly` → every 60 min from now (no fire-time anchor)
 - `every-N-hours` → now + N*3600s after each fire
-- `daily`/`weekly`/`monthly` → next local `fire_time` occurrence (weekly anchors to the creation weekday, monthly to the creation day-of-month, clamped to month length)
+- `daily`/`weekly`/`monthly` → next local `fire_time` occurrence (weekly anchors to the creation weekday, monthly to the creation day-of-month, clamped to month length: Jan 31 → Feb 28 (or Feb 29 in leap years) → Mar 31, i.e. the last valid day of the shorter month)
 
 ### AuditRun (001 shape, values extended)
 

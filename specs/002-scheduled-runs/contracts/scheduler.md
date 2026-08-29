@@ -6,6 +6,7 @@
 # presets.py — pure functions, no I/O (property-testable)
 def expand_next(preset: str, param: int | None, fire_time: str, now: datetime, anchor: datetime) -> datetime: ...
 # anchor: schedule creation time; weekly/monthly anchor rules per data-model.md
+# param validation: int >= 1, only for every-N-hours; other values raise ValueError
 
 def preset_values() -> list[str]:  # ['daily','hourly','weekly','monthly','every-N-hours']
 
@@ -15,17 +16,26 @@ def list_schedules(db, owner: str | None = None) -> list[dict]: ...
 def update_schedule(db, schedule_id, **fields) -> dict: ...      # cadence/param/fire_time/enabled
 def delete_schedule(db, schedule_id) -> None: ...
 def due_schedules(db, now=None) -> list[dict]: ...              # enabled AND next_fire_at <= now
+#   ordering: oldest next_fire_at first (ties broken by schedule id ascending)
 
 def claim_and_advance(db, schedule_id, fired_at) -> None: ...
-# atomically: next_fire_at = expand_next(fired_at); the row is the fire's ticket
+# fired_at = actual fire time (run start); atomically: next_fire_at = expand_next(fired_at); the row is the fire's ticket
 
 # loop.py
 def serve_once_tick(db, config) -> dict: ...
-# one pass: due_schedules -> run pipeline per schedule (001 pipeline, shared state)
-# -> claim_and_advance; returns {fired: [...], skipped: [...], queue_depth: int}
+# one pass: due_schedules -> run pipeline per schedule (001 pipeline, shared state,
+# trigger='schedule', scheduled_by=schedule owner) -> claim_and_advance
+# per-source caps/timeouts read fresh from `config` on every tick (no caching)
+# returns {fired: [schedule id...], skipped: [schedule id...], queue_depth: int}
 
 def run_serve(db, config, status_port: int) -> None: ...
-# pidfile guard (R4) -> status server if port>0 -> loop{ serve_once_tick; sleep } until SIGTERM
+# pidfile guard at config["state_dir"]/"serve.lock" (R4) -> status server if status_port>0
+# -> loop{ serve_once_tick; sleep } until SIGTERM/SIGINT
+# migration v2 must have been applied before the loop starts (001 pre_command pattern);
+# signal handlers do not run migrations
+# per-source prerequisite failure during a fire: write a `failed` audit row for that
+# schedule and keep serving (next tick retries); serve itself exits 2 only for
+# config/health preconditions at startup, not for per-source fire-time failures
 
 # status.py
 def status_payload(db, config, pending_fires: int) -> dict:
@@ -34,6 +44,8 @@ def status_payload(db, config, pending_fires: int) -> dict:
 #   "last_run":  { "source": str, "status": "ok|partial|failed", "run_id": str, "completed_at": str } | null,
 #   "queue_depth": int
 # }
+# last_run = single object: the most recent run across all sources;
+# "per source" in the spec wording is satisfied by the source field on that object
 ```
 
 ## Invariants
