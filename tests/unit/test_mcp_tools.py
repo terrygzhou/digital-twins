@@ -287,3 +287,252 @@ def test_kb_schedule_create_r2_fields(db, ctx_factory):
             f"R2 field names: missing {field!r} in returned schedule, "
             f"got keys: {list(schedule.keys())}"
         )
+
+
+# ---------------------------------------------------------------------------
+# T015: kb_schedule_update
+# ---------------------------------------------------------------------------
+
+def test_kb_schedule_update_updates_schedule(db, ctx_factory):
+    """kb_schedule_update mutates a schedule and returns the updated row."""
+    # Seed a schedule for alice.
+    sched = create_schedule(db, owner="alice@example.com",
+                            source="hermes", preset="daily")
+    sched_id = sched["id"]
+
+    ctx = ctx_factory("alice@example.com", "scheduler")
+    result = _dispatch(ctx, "kb_schedule_update", {
+        "schedule_id": sched_id,
+        "enabled": False,
+        "agent_kind": "test",
+    })
+    assert result.get("ok") is True, (
+        f"update: expected success, got {result}"
+    )
+    # The returned data must contain the updated schedule.
+    data = result.get("data", {})
+    schedule = data.get("schedule")
+    assert schedule is not None, (
+        f"update: expected data.schedule, got data keys: {list(data.keys())}"
+    )
+    assert schedule["enabled"] == 0, (
+        f"update: expected enabled=0 (False), got {schedule['enabled']}"
+    )
+    # Verify the change persisted in the DB.
+    row = db.execute(
+        "SELECT enabled FROM schedules WHERE id = ?", (sched_id,)
+    ).fetchone()
+    assert row is not None, "update: schedule row should still exist in DB"
+    assert row[0] == 0, (
+        f"update: DB row expected enabled=0, got {row[0]}"
+    )
+
+
+def test_kb_schedule_update_requires_schedule_crud(db, ctx_factory):
+    """A reader (no schedule_crud) → permission_denied."""
+    sched = create_schedule(db, owner="alice@example.com",
+                            source="hermes", preset="daily")
+    ctx = ctx_factory("reader@example.com", "reader")
+    result = _dispatch(ctx, "kb_schedule_update", {
+        "schedule_id": sched["id"],
+        "enabled": False,
+        "agent_kind": "test",
+    })
+    assert _error_code(result) == "permission_denied", (
+        f"reader update: expected permission_denied, got {result}"
+    )
+
+
+def test_kb_schedule_update_owner_only(db, ctx_factory):
+    """R5/R9: a non-owner, non-admin caller gets schedule_not_found.
+
+    Alice owns the schedule; Bob (a scheduler, not admin) tries to update it.
+    The response must be schedule_not_found (no leak of the schedule's
+    existence).
+    """
+    sched = create_schedule(db, owner="alice@example.com",
+                            source="hermes", preset="daily")
+    ctx = ctx_factory("bob@example.com", "scheduler")
+    result = _dispatch(ctx, "kb_schedule_update", {
+        "schedule_id": sched["id"],
+        "enabled": False,
+        "agent_kind": "test",
+    })
+    assert _error_code(result) == "schedule_not_found", (
+        f"non-owner update: expected schedule_not_found, got {result}"
+    )
+    # Verify the schedule was NOT modified.
+    row = db.execute(
+        "SELECT enabled FROM schedules WHERE id = ?", (sched["id"],)
+    ).fetchone()
+    assert row is not None and row[0] == 1, (
+        f"non-owner update: schedule should be unchanged (enabled=1), "
+        f"got {row}"
+    )
+
+
+def test_kb_schedule_update_admin_can_update(db, ctx_factory):
+    """R9: an admin caller can update another user's schedule."""
+    sched = create_schedule(db, owner="alice@example.com",
+                            source="hermes", preset="daily")
+    ctx = ctx_factory("admin@example.com", "admin")
+    result = _dispatch(ctx, "kb_schedule_update", {
+        "schedule_id": sched["id"],
+        "enabled": False,
+        "agent_kind": "test",
+    })
+    assert result.get("ok") is True, (
+        f"admin update: expected success, got {result}"
+    )
+    # Verify the change persisted.
+    row = db.execute(
+        "SELECT enabled FROM schedules WHERE id = ?", (sched["id"],)
+    ).fetchone()
+    assert row is not None and row[0] == 0, (
+        f"admin update: DB row expected enabled=0, got {row}"
+    )
+
+
+def test_kb_schedule_update_no_audit_runs(db, ctx_factory):
+    """R11: an update (CRUD) writes no audit_runs row."""
+    sched = create_schedule(db, owner="alice@example.com",
+                            source="hermes", preset="daily")
+    ctx = ctx_factory("alice@example.com", "scheduler")
+    _dispatch(ctx, "kb_schedule_update", {
+        "schedule_id": sched["id"],
+        "enabled": False,
+        "agent_kind": "test",
+    })
+    assert _audit_runs_count(db) == 0, (
+        "R11: update_schedule must not write an audit_runs row "
+        "(CRUD is not a run)"
+    )
+
+
+def test_kb_schedule_update_r2_fields(db, ctx_factory):
+    """R2: the returned schedule object uses schedule_id, not id."""
+    sched = create_schedule(db, owner="alice@example.com",
+                            source="hermes", preset="daily")
+    ctx = ctx_factory("alice@example.com", "scheduler")
+    result = _dispatch(ctx, "kb_schedule_update", {
+        "schedule_id": sched["id"],
+        "enabled": False,
+        "agent_kind": "test",
+    })
+    assert result.get("ok") is True
+    schedule = result.get("data", {}).get("schedule", {})
+    assert "schedule_id" in schedule, (
+        f"R2 field names: expected 'schedule_id' in returned schedule, "
+        f"got keys: {list(schedule.keys())}"
+    )
+    assert schedule["schedule_id"] == sched["id"], (
+        f"R2 schedule_id: expected {sched['id']}, got {schedule['schedule_id']}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T017: kb_schedule_delete
+# ---------------------------------------------------------------------------
+
+def test_kb_schedule_delete_deletes_schedule(db, ctx_factory):
+    """kb_schedule_delete removes a schedule row and returns the deleted id."""
+    sched = create_schedule(db, owner="alice@example.com",
+                            source="hermes", preset="daily")
+    sched_id = sched["id"]
+
+    ctx = ctx_factory("alice@example.com", "scheduler")
+    result = _dispatch(ctx, "kb_schedule_delete", {
+        "schedule_id": sched_id,
+        "agent_kind": "test",
+    })
+    assert result.get("ok") is True, (
+        f"delete: expected success, got {result}"
+    )
+    # The returned data must contain the deleted schedule_id.
+    data = result.get("data", {})
+    assert data.get("deleted") == sched_id, (
+        f"delete: expected data.deleted={sched_id}, got {data}"
+    )
+    # Verify the row is gone from the DB.
+    row = db.execute(
+        "SELECT COUNT(*) FROM schedules WHERE id = ?", (sched_id,)
+    ).fetchone()
+    assert row[0] == 0, (
+        f"delete: schedule row should be removed, got {row[0]} rows"
+    )
+
+
+def test_kb_schedule_delete_requires_schedule_crud(db, ctx_factory):
+    """A reader (no schedule_crud) → permission_denied."""
+    sched = create_schedule(db, owner="alice@example.com",
+                            source="hermes", preset="daily")
+    ctx = ctx_factory("reader@example.com", "reader")
+    result = _dispatch(ctx, "kb_schedule_delete", {
+        "schedule_id": sched["id"],
+        "agent_kind": "test",
+    })
+    assert _error_code(result) == "permission_denied", (
+        f"reader delete: expected permission_denied, got {result}"
+    )
+
+
+def test_kb_schedule_delete_owner_only(db, ctx_factory):
+    """R5/R9: a non-owner, non-admin caller gets schedule_not_found.
+
+    Alice owns the schedule; Bob (a scheduler, not admin) tries to delete it.
+    The response must be schedule_not_found (no leak of the schedule's
+    existence).
+    """
+    sched = create_schedule(db, owner="alice@example.com",
+                            source="hermes", preset="daily")
+    ctx = ctx_factory("bob@example.com", "scheduler")
+    result = _dispatch(ctx, "kb_schedule_delete", {
+        "schedule_id": sched["id"],
+        "agent_kind": "test",
+    })
+    assert _error_code(result) == "schedule_not_found", (
+        f"non-owner delete: expected schedule_not_found, got {result}"
+    )
+    # Verify the schedule was NOT deleted.
+    row = db.execute(
+        "SELECT COUNT(*) FROM schedules WHERE id = ?", (sched["id"],)
+    ).fetchone()
+    assert row[0] == 1, (
+        f"non-owner delete: schedule should still exist, got {row[0]} rows"
+    )
+
+
+def test_kb_schedule_delete_admin_can_delete(db, ctx_factory):
+    """R9: an admin caller can delete another user's schedule."""
+    sched = create_schedule(db, owner="alice@example.com",
+                            source="hermes", preset="daily")
+    ctx = ctx_factory("admin@example.com", "admin")
+    result = _dispatch(ctx, "kb_schedule_delete", {
+        "schedule_id": sched["id"],
+        "agent_kind": "test",
+    })
+    assert result.get("ok") is True, (
+        f"admin delete: expected success, got {result}"
+    )
+    # Verify the row is gone.
+    row = db.execute(
+        "SELECT COUNT(*) FROM schedules WHERE id = ?", (sched["id"],)
+    ).fetchone()
+    assert row[0] == 0, (
+        f"admin delete: schedule row should be removed, got {row[0]} rows"
+    )
+
+
+def test_kb_schedule_delete_no_audit_runs(db, ctx_factory):
+    """R11: a delete (CRUD) writes no audit_runs row."""
+    sched = create_schedule(db, owner="alice@example.com",
+                            source="hermes", preset="daily")
+    ctx = ctx_factory("alice@example.com", "scheduler")
+    _dispatch(ctx, "kb_schedule_delete", {
+        "schedule_id": sched["id"],
+        "agent_kind": "test",
+    })
+    assert _audit_runs_count(db) == 0, (
+        "R11: delete_schedule must not write an audit_runs row "
+        "(CRUD is not a run)"
+    )
