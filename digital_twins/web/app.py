@@ -37,6 +37,16 @@ web framework) that routes:
     ``per_source_counts`` DECODED to a dict (T014).  Non-admins see
     only rows where ``scheduled_by`` equals their own email
     (NFR-16); admins see all rows.
+   - ``POST /api/kb/chat`` → the chat **surface** (T016, C-1/R8):
+     auth-checked (the bearer gate), owner-scoped (the caller's
+     ``owner_tag`` is known from the verified session), and
+     input-validated (blank query → 400) — but 006 ships it **surface
+     only**: with no ``llm.endpoint`` / ``llm.model`` configured it
+     returns a clean ``501 not_implemented`` with a remediation hint
+     (mirrors 004's BR-10 MCP stub pattern) and NO LLM/RAG generation
+     is attempted.  A follow-up slice fills generation without
+     re-plumbing (the auth/scoping/validation/error-shape contract is
+     stable).
 
 The 003 credential endpoints are re-exposed under ``/api/auth/*`` by
 reusing ``digital_twins.accounts`` / ``digital_twins.auth`` directly (R2:
@@ -243,6 +253,9 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/audit/recent" and method == "GET":
             self._handle_audit_recent(query, caller_email)
+            return
+        if path == "/api/kb/chat" and method == "POST":
+            self._handle_chat(caller_email)
             return
         del method, query, caller_email  # wired up by the later handler tasks
         self._send_json(404, {"error": "not_found", "path": path})
@@ -781,6 +794,80 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             for row in rows
         ]
         self._send_json(200, {"rows": out_rows})
+
+    # --- /api/kb/chat handler (T016, C-1/R8) ----------------------------------
+
+    #: The 501 remediation hint (contracts/web-api.md: "set llm.endpoint /
+    #: llm.model to enable chat (006 ships the surface only; R8)").  Mirrors
+    #: 004's BR-10 MCP not_implemented stub pattern — the endpoint ships the
+    #: surface (auth + scoping + validation + error shape) and defers
+    #: generation to a follow-up slice.
+    _CHAT_NOT_IMPLEMENTED_REMEDIATION = (
+        "set llm.endpoint / llm.model to enable chat "
+        "(006 ships the surface only; R8)")
+
+    def _handle_chat(self, caller_email: str) -> None:
+        """POST /api/kb/chat → the chat **surface** (C-1/R8).
+
+        006 ships the surface only — the auth/scoping/validation/error-shape
+        contract is stable so a follow-up slice can fill generation without
+        re-plumbing:
+
+        - **Auth**: the bearer gate ran before this handler (``_handle_api``),
+          so ``caller_email`` is a verified session.
+        - **Owner scoping**: the caller's ``owner_tag`` is derived from
+          ``caller_email`` (``owner_tag_for``) — the same per-user scope the
+          KB read surface uses.  Generation (when it lands) will be scoped to
+          this owner.
+        - **Validation**: blank/missing query → ``400 {"error": "query must
+          be a non-empty string"}`` (the exact contract error, after the
+          gate, before any LLM/config read).
+        - **No generation in 006**: with no ``llm.endpoint`` / ``llm.model``
+          configured the handler returns ``501 not_implemented`` with the
+          remediation hint naming the two knobs — and makes NO LLM call, NO
+          embedding call, NO Qdrant call, and NO network call (R8).
+        """
+        body = self._read_json_body()
+        query = body.get("query") if isinstance(body, dict) else None
+        if not isinstance(query, str) or not query.strip():
+            self._send_json(
+                400, {"error": "query must be a non-empty string"})
+            return
+
+        # Owner scoping is established here (the caller's owner_tag is known
+        # from the verified session) so a follow-up slice can scope
+        # generation without re-plumbing.  In 006 it is intentionally NOT
+        # used — no RAG/LLM call is attempted (R8).
+        # Owner scoping is established (the caller's owner_tag is derivable
+        # from the verified session) so a follow-up slice can scope
+        # generation without re-plumbing; 006 does not use it.
+        owner_tag = owner_tag_for(caller_email)
+        del owner_tag  # pinned for the follow-up slice; unused in 006
+
+        # The 501 surface decision: read ``llm.endpoint`` / ``llm.model``
+        # from the config layer (the only knob access the handler
+        # performs).  In 006 the answer is the same 501 either way —
+        # generation is a follow-up slice (R8) — but the knobs are read so
+        # the surface is decision-ready: when a follow-up slice lands, it
+        # branches on exactly this state.  Nothing LLM-shaped is
+        # constructed or called.
+        endpoint = _cfg_get(self.server.config, "llm.endpoint")
+        model = _cfg_get(self.server.config, "llm.model")
+        if not endpoint or not model:
+            # No LLM endpoint configured: the clean 501 (mirrors 004's
+            # BR-10 not_implemented stub) with the remediation hint.
+            self._send_json(501, {
+                "code": "not_implemented",
+                "remediation": self._CHAT_NOT_IMPLEMENTED_REMEDIATION,
+            })
+            return
+        # Endpoint configured but generation is still a follow-up slice in
+        # 006: the same surface 501 (the remediation hint still names the
+        # knobs — the operator's next step in 006 is to check them).
+        self._send_json(501, {
+            "code": "not_implemented",
+            "remediation": self._CHAT_NOT_IMPLEMENTED_REMEDIATION,
+        })
 
     # --- helpers -------------------------------------------------------------
 
