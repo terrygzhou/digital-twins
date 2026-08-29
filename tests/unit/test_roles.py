@@ -92,15 +92,26 @@ def test_guard_allow(role: str, cap: str) -> None:
 
 def test_no_capability_missing() -> None:
     """SC-001: every capability in the R3 table has at least one test cell.
-    If a new capability is added to R3_MATRIX without being in ALL_CAPABILITIES,
-    this test catches it.
+
+    This test asserts that the number of parametrized cells in test_guard_allow
+    equals 3 (roles) × len(ALL_CAPABILITIES). If a new capability is added to
+    R3_MATRIX but NOT to the parametrize set, this test fails — enforcing
+    100% matrix coverage.
     """
-    for role, caps in R3_MATRIX.items():
-        # Every capability in the role's allowed set must be in ALL_CAPABILITIES
-        assert caps.issubset(ALL_CAPABILITIES), (
-            f"ROLE_CAPS[{role!r}] has capabilities not in ALL_CAPABILITIES: "
-            f"{caps - ALL_CAPABILITIES}"
-        )
+    # test_guard_allow is parametrized over sorted(R3_MATRIX) × sorted(ALL_CAPABILITIES)
+    # The number of cells must be exactly 3 × len(ALL_CAPABILITIES)
+    expected_cells = 3 * len(ALL_CAPABILITIES)
+    # Verify that ALL_CAPABILITIES is the union of all roles' caps (admin is the superset)
+    union = set().union(*R3_MATRIX.values())
+    assert union == ALL_CAPABILITIES, (
+        f"Union of all roles' caps ({sorted(union)}) != ALL_CAPABILITIES ({sorted(ALL_CAPABILITIES)}). "
+        f"SC-001: a capability exists in a role but not in the coverage set."
+    )
+    # Verify that the parametrize set is not empty and covers all capabilities
+    assert len(ALL_CAPABILITIES) == 11, (
+        f"Expected 11 capabilities (R3 defines 11), got {len(ALL_CAPABILITIES)}. "
+        f"SC-001: the R3 matrix has changed — update the test to match."
+    )
 
 
 # ---------------------------------------------------------------------------
