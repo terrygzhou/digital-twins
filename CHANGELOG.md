@@ -3,6 +3,45 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [0.4.0] - 2026-08-30
+
+### Added
+
+- **MCP scheduler tools** (004 slice) — a full MCP server with six scheduler
+  tools (`kb_schedule_list/create/update/delete/run`, `kb_run_history`) plus
+  four BR-10 stubs (`kb_search/chat/ingest/health` → `not_implemented_yet`),
+  exposing the 001–003 scheduler surface over stdio and HTTP/SSE so any
+  MCP-capable agent can manage schedules and trigger runs (BR-11.5):
+  - **MCP server from scratch** (R1): tool registry, stdio + HTTP/SSE
+    transports, BR-10.5 token auth reusing 003's
+    `verify_personal_token`/`verify_session`/`DT_SERVICE_TOKEN`. The `mcp`
+    SDK is an optional extra (`pip install "digital-twins[mcp]"`); the
+    server speaks raw JSON.
+  - **Role-gated tools** (R4, 003 R3): create/update/delete →
+    `schedule_crud`; run → `trigger_run`; history-own →
+    `view_own_history`; history-all → `view_all_history`; list-own →
+    `query_status`. A `reader` is denied every mutating tool with
+    `code=permission_denied`.
+  - **Caller-scoped default** (R5/Q9): tools operate on the caller's own
+    schedules/history by default; admin sees all. `schedule.acl` (already in
+    the 002 schema, default `'owner'`) is accepted by create/update;
+    granular ACL enforcement is a documented follow-up.
+  - **Pipeline parity** (one-record-not-N, NFR-1/NFR-14): `kb_schedule_run`
+    calls the same 001 `run_pipeline` with `trigger="mcp"`,
+    `scheduled_by=caller`, owner-tagged points — the same content ingested
+    via MCP + CLI + web yields one point, not three.
+  - **Audit parity** (BR-11.5.3): every `kb_schedule_run` writes one
+    `audit_runs` row with `trigger='mcp'` + `agent_kind` (client-declared or
+    `'unknown'`). Admin cross-user `kb_run_history` writes an access-log row
+    (R8); schedule CRUD writes no `audit_runs` row (R11 — structured logging
+    instead). `kb_run_history` excludes `mcp_history_query` rows from the
+    runs view (R13).
+  - **New config knobs** (R12): `mcp.port` (default `8770`),
+    `mcp.service_account_email` (default `"system"`). Documented in
+    `config.example.yml` + `.env.example` + `KNOBS` registry.
+  - **Entry points**: `digital-twins serve-mcp --transport stdio|http
+    [--port N]` + `python -m digital_twins.mcp`.
+
 ## [0.3.0] - 2026-08-29
 
 ### Added
