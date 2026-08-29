@@ -274,7 +274,18 @@ def validate(cfg: dict) -> dict:
                         f"(known: {', '.join(sorted(known_subs))})"
                     )
                 section[sub] = coerce(f"{key}.{sub}", sub_value)
+            for sub, default in DEFAULTS.items():
+                if sub.startswith(key + ".") and sub.split(".", 1)[1] not in section:
+                    sub_key = sub.split(".", 1)[1]
+                    section[sub_key] = coerce(f"{key}.{sub_key}", default)
             out[key] = section
+    # every section with a default is always present, even when omitted
+    for section_key in ("qdrant", "neo4j", "llm", "embedding", "chunking", "scheduler"):
+        out.setdefault(section_key, {})
+        for sub, default in DEFAULTS.items():
+            if sub.startswith(section_key + "."):
+                sub_key = sub.split(".", 1)[1]
+                out[section_key].setdefault(sub_key, coerce(f"{section_key}.{sub_key}", default))
     # embedding.device must be one of the documented values
     device = get(out, "embedding.device")
     if device is not None and device not in EMBEDDING_DEVICES:
