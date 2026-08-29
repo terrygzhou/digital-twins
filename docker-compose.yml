@@ -1,0 +1,71 @@
+version: "3.8"
+services:
+  qdrant:
+    image: qdrant/qdrant:1.9.7
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  neo4j:
+    image: neo4j/neo4j:5.18-community
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD}", "RETURN 1;"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  llm:
+    image: lmsys/sglang:v0.4.2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  embedding-model:
+    image: python:3.11-slim
+    environment:
+      - TRANSFORMERS_CACHE=/models
+    volumes:
+      - embedding-data:/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/models"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  digital-twins:
+    build: .
+    image: digital-twins:0.5.0
+    environment:
+      KB_QDRANT__URL: "http://${QDRANT_HOST:-qdrant}:6333"
+      KB_NEO4J__URL: "bolt://${NEO4J_HOST:-neo4j}:7687"
+      KB_NEO4J__USER: "${NEO4J_USER:-neo4j}"
+      KB_NEO4J__PASSWORD: "${NEO4J_PASSWORD:-password}"
+      KB_LLM__ENDPOINT: "http://${LLM_ENDPOINT:-llm}:8000/v1"
+      KB_EMBEDDING__ENDPOINT: "http://${EMBEDDING_ENDPOINT:-embedding-model}:8080/v1"
+    volumes:
+      - digital-twins-state:/data
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      llm:
+        condition: service_healthy
+      embedding-model:
+        condition: service_healthy
+
+volumes:
+  qdrant-data:
+  neo4j-data:
+  embedding-data:
+  digital-twins-state:
