@@ -16,8 +16,65 @@ from datetime import datetime, timezone
 
 from .auth import hash_password
 
-# Role capability matrix (R3). Populated by T003+.
-ROLE_CAPS: dict[str, set[str]] = {}
+# Role capability matrix (R3). T004 fills the full 11-capability × 3-role table.
+# Capability identifiers are stable snake_case strings; see research.md R3.
+ROLE_CAPS: dict[str, set[str]] = {
+    "admin": {
+        "sign_in",
+        "query_status",
+        "view_own_history",
+        "view_all_history",
+        "trigger_run",
+        "schedule_crud",
+        "manage_own_config",
+        "manage_own_tokens",
+        "write_global_config",
+        "manage_accounts",
+        "manage_all_user_config",
+    },
+    "scheduler": {
+        "sign_in",
+        "query_status",
+        "view_own_history",
+        "trigger_run",
+        "schedule_crud",
+        "manage_own_config",
+        "manage_own_tokens",
+    },
+    "reader": {
+        "sign_in",
+        "query_status",
+        "view_own_history",
+    },
+}
+
+
+class RoleDenied(Exception):
+    """Raised when a role lacks a required capability (R3 matrix).
+
+    Mirrors :class:`DuplicateEmailError` / :class:`LastAdminError`:
+    a named exception the caller can catch to produce a 403 / exit-2
+    response without leaking the full matrix.
+    """
+    def __init__(self, role: str, capability: str):
+        self.role = role
+        self.capability = capability
+        super().__init__(
+            f"role {role!r} lacks capability {capability!r}"
+        )
+
+
+def guard(role: str, capability: str) -> None:
+    """Raise :class:`RoleDenied` if ``role`` lacks ``capability`` (R3).
+
+    Unknown/legacy roles (e.g. ``"owner"`` from 001's test fixtures) are
+    treated as reader-equivalent: read capabilities allowed, mutating
+    capabilities denied. No crash, no KeyError — the guard degrades
+    gracefully to the most restrictive known profile.
+    """
+    caps = ROLE_CAPS.get(role, ROLE_CAPS["reader"])
+    if capability not in caps:
+        raise RoleDenied(role, capability)
 
 
 def owner_tag_for(email: str) -> str:
