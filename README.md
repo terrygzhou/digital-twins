@@ -119,7 +119,102 @@ Credential env vars (referenced by name in config; values never in `kb.yml`):
 
 ### Custom Sources
 
-User-defined sources ship no package code. Add a block to `kb.yml`:
+User-defined sources ship no package code — you write a small Python module
+that fulfils the source contract, and the pipeline imports and drives it.
+The full contract lives in [`digital_twins/sources/base.py`](digital_twins/sources/base.py)
+and [`specs/001-package-foundation/contracts/source.md`](specs/001-package-foundation/contracts/source.md).
+
+#### The Contract
+
+Your module must export a **factory function**:
+
+```python
+def make_source(entry: dict) -> Source:
+    ...
+```
+
+The factory receives the config entry dict (everything under `sources.<name>`
+in `kb.local.yml`, plus a `name` key). It must return a `Source` instance
+with:
+
+| Member | Type | Purpose |
+|---|---|---|
+| `name` | `str` | short identifier (usually the config key) |
+| `capability` | `Capability` | declared runtime / credential / prefix |
+| `prerequisites()` | `-> list[str]` | human-readable list of **missing** prerequisites; empty = ready. Must be connection-free (no I/O). |
+| `read(since)` | `-> Iterator[IngestItem]` | yield items newer than the high-water cursor `since` (`str` or `None`). Must be resumable: re-reading after interruption yields the same items with stable keys. |
+| `close()` | `-> None` | release any resources (connections, handles). |
+
+#### Capability
+
+```python
+Capability(runtime, credential, prefix)
+```
+
+| Field | Type | Purpose |
+|---|---|---|
+| `runtime` | `str \| None` | agent runtime this source reads (e.g. `"hermes"`, `"pi"`); `None` = host-neutral |
+| `credential` | `str \| None` | env-var name holding the required secret (e.g. `"MYTOOL_TOKEN"`); `None` = no credential |
+| `prefix` | `str` | stamped onto `source_url` (e.g. `"mytool:"`) |
+
+#### IngestItem
+
+```python
+IngestItem(key, content, ts, metadata)
+```
+
+| Field | Type | Purpose |
+|---|---|---|
+| `key` | `str` | stable unique identifier (feeds the deterministic point ID; used for dedup) |
+| `content` | `str` | the text to chunk and embed |
+| `ts` | `str` | ISO-8601 timestamp (drives the high-water cursor) |
+| `metadata` | `dict` | optional extra fields (defaults to `{}`) |
+
+#### Minimal Working Example
+
+`mytool_kb.py` (place on your `PYTHONPATH` or in the same directory as the config):
+
+```python
+import os
+from digital_twins.sources.base import Source, Capability, IngestItem
+
+
+class MyToolSource(Source):
+    name = "mytool"
+    capability = Capability(
+        runtime="mytool",
+        credential="MYTOOL_TOKEN",
+        prefix="mytool:",
+    )
+
+    def prerequisites(self):
+        missing = []
+        if not os.environ.get("MYTOOL_TOKEN"):
+            missing.append("MYTOOL_TOKEN is not set")
+        return missing
+
+    def read(self, since):
+        # Replace with your actual fetch logic.
+        # `since` is the last high-water cursor (ISO-8601 string or None).
+        for item in self._fetch(since):
+            yield IngestItem(
+                key=item["id"],
+                content=item["text"],
+                ts=item["updated_at"],
+                metadata={"author": item.get("author")},
+            )
+
+    def close(self):
+        pass  # nothing to release
+
+
+def make_source(entry):
+    return MyToolSource()
+```
+
+#### Configuration
+
+Add a block to `kb.local.yml` (or `kb.yml`):
 
 ```yaml
 sources:
@@ -135,6 +230,27 @@ sources:
 | `sources.<name>.entrypoint` | `module:factory` import path |
 | `sources.<name>.credential` | env-var name (capability declaration) |
 | `sources.<name>.prefix` | `source_url` prefix (default `<name>:`) |
+
+#### Fail-Fast Behaviour
+
+The pipeline validates your source before ingesting anything:
+
+| Failure | Behaviour |
+|---|---|
+| Module cannot be imported | `CustomSourceError` naming the module path and the original import error |
+| Factory attribute missing or not callable | `CustomSourceError` naming the expected contract |
+| Factory returns a non-`Source` | `CustomSourceError` naming the returned type and the expected `Source` |
+| `Source` missing a required method (`prerequisites`, `read`, `close`) | `CustomSourceError` naming the missing method |
+| `capability` is not a `Capability` instance | `CustomSourceError` naming the expected type |
+| Declared credential env var is missing | `prerequisites()` reports it; `digital-twins run` exits with status 2 |
+
+Nothing is ingested until all prerequisites pass.
+
+#### Testing
+
+See [`tests/unit/test_custom_source.py`](tests/unit/test_custom_source.py)
+for test patterns: valid entrypoint, contract adherence, import failure,
+non-Source return, missing methods, and credential env-var checks.
 
 ### Debugging Config Resolution
 
