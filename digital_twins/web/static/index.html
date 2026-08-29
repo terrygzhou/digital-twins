@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>digital-twins — personal KB</title>
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">digital-twins</span>
+    <span id="session-user" class="session-user"></span>
+    <button id="signout-btn" class="btn ghost" hidden>Sign out</button>
+  </header>
+
+  <!-- ===================== auth section ===================== -->
+  <main id="auth-view">
+    <div class="card">
+      <h2>Sign in</h2>
+      <form id="signin-form">
+        <label>Email
+          <input type="email" id="signin-email" required autocomplete="username">
+        </label>
+        <label>Password
+          <input type="password" id="signin-password" required autocomplete="current-password">
+        </label>
+        <button type="submit" class="btn primary">Sign in</button>
+        <p id="signin-error" class="error" role="alert"></p>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Sign up <small>(first-time users)</small></h2>
+      <p class="hint">The first account created becomes the admin.</p>
+      <form id="signup-form">
+        <label>Email
+          <input type="email" id="signup-email" required autocomplete="username">
+        </label>
+        <label>Password
+          <input type="password" id="signup-password" required autocomplete="new-password">
+        </label>
+        <button type="submit" class="btn primary">Sign up</button>
+        <p id="signup-error" class="error" role="alert"></p>
+      </form>
+    </div>
+  </main>
+
+  <!-- ===================== main KB view ===================== -->
+  <main id="kb-view" hidden>
+    <section class="card kb-panel">
+      <h2>Knowledge base</h2>
+      <p class="hint">
+        Point count: <strong id="point-count">…</strong>
+        <button id="refresh-points-btn" class="btn ghost small">Refresh</button>
+      </p>
+
+      <div class="row">
+        <input type="search" id="search-query"
+               placeholder="Search your KB…" aria-label="Search query">
+        <button id="search-btn" class="btn primary">Search</button>
+      </div>
+      <p id="search-error" class="error" role="alert"></p>
+      <div id="search-results" class="results"></div>
+
+      <hr>
+
+      <div class="row">
+        <label class="inline">Source
+          <select id="ingest-source" aria-label="Source to ingest">
+            <option value="all">All enabled sources</option>
+          </select>
+        </label>
+        <button id="ingest-btn" class="btn primary">Trigger ingestion</button>
+      </div>
+      <p id="ingest-error" class="error" role="alert"></p>
+      <p id="ingest-result" class="hint"></p>
+
+      <hr>
+
+      <h3>Last run (audit)</h3>
+      <p id="audit-error" class="error" role="alert"></p>
+      <div id="audit-row" class="audit-row">No runs yet.</div>
+    </section>
+
+    <section class="card chat-panel">
+      <h2>Chat</h2>
+      <p class="hint">Chat requires an LLM endpoint; until then the server returns 501 not_implemented.</p>
+      <div class="row">
+        <input type="text" id="chat-query"
+               placeholder="Ask your KB…" aria-label="Chat query">
+        <button id="chat-btn" class="btn primary">Send</button>
+      </div>
+      <p id="chat-error" class="error" role="alert"></p>
+      <div id="chat-answer" class="results"></div>
+    </section>
+  </main>
+
+  <script>
+  (function () {
+    "use strict";
+
+    var TOKEN_KEY = "digital_twins.session_token";
+    var token = null;
+    var me = null;
+
+    // ---- helpers ------------------------------------------------------------
+
+    function el(id) { return document.getElementById(id); }
+
+    function showError(id, res) {
+      var node = el(id);
+      if (!node) return;
+      if (res && res.error) {
+        node.textContent = res.error;
+      } else if (res && res.message) {
+        node.textContent = res.message;
+      } else {
+        node.textContent = "";
+      }
+    }
+
+    function authHeaders() {
+      var h = { "Content-Type": "application/json" };
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+
+    // Every /api/* call is a direct fetch() below — the static UI drives the
+    // REST surface only, no parallel client-side logic (SC-006).
+
+    // ---- view switching -----------------------------------------------------
+
+    function showAuthView() {
+      el("auth-view").hidden = false;
+      el("kb-view").hidden = true;
+      el("signout-btn").hidden = true;
+      el("session-user").textContent = "";
+    }
+
+    function showKbView() {
+      el("auth-view").hidden = true;
+      el("kb-view").hidden = false;
+      el("signout-btn").hidden = false;
+      el("session-user").textContent =
+        me ? me.email + " (" + me.role + ")" : "";
+      refreshPoints();
+      refreshAudit();
+    }
+
+    // ---- data loads ---------------------------------------------------------
+
+    function refreshPoints() {
+      fetch("/api/kb/points", { headers: authHeaders() })
+        .then(function (r) { return r.json().catch(function () { return null; }); })
+        .then(function (data) {
+          var ok = data && !data.error;
+          el("point-count").textContent =
+            ok ? String(data.count) : "unavailable";
+          if (!ok && data && data.error) {
+            showError("search-error", data);
+          }
+        });
+    }
+
+    function refreshAudit() {
+      fetch("/api/audit/recent", { headers: authHeaders() })
+        .then(function (r) { return r.json().catch(function () { return null; }); })
+        .then(function (data) {
+          var node = el("audit-row");
+          if (!data || data.error) {
+            showError("audit-error", data);
+            node.textContent = "Unavailable.";
+            return;
+          }
+          // Most recent first, so the last run is rows[0].
+          var rows = data.rows || [];
+          if (!rows.length) {
+            node.textContent = "No runs yet.";
+            return;
+          }
+          var r = rows[0];
+          node.textContent = [
+            r.status, r.trigger, r.scheduled_by, r.started_at, r.completed_at
+          ].filter(Boolean).join(" · ");
+        });
+    }
+
+    // ---- actions ------------------------------------------------------------
+
+    function doSignin(event) {
+      event.preventDefault();
+      el("signin-error").textContent = "";
+      var body = JSON.stringify({
+        email: el("signin-email").value,
+        password: el("signin-password").value
+      });
+      fetch("/api/auth/signin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: body
+      }).then(function (r) {
+        return r.json().catch(function () { return null; });
+      }).then(function (data) {
+        if (!data || data.error) {
+          showError("signin-error", data);
+          return;
+        }
+        token = data.session_token;
+        try { localStorage.setItem(TOKEN_KEY, token); } catch (e) {}
+        bootstrap();
+      });
+    }
+
+    function doSignup(event) {
+      event.preventDefault();
+      el("signup-error").textContent = "";
+      var body = JSON.stringify({
+        email: el("signup-email").value,
+        password: el("signup-password").value
+      });
+      fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: body
+      }).then(function (r) {
+        return r.json().catch(function () { return null; });
+      }).then(function (data) {
+        if (!data || data.error) {
+          showError("signup-error", data);
+          return;
+        }
+        // Auto sign-in after a successful sign-up (the first account is admin).
+        doSignin({ preventDefault: function () {} });
+      });
+    }
+
+    function doSignout() {
+      fetch("/api/auth/signout", {
+        method: "POST",
+        headers: authHeaders(),
+        body: "{}"
+      }).then(function () {
+        token = null;
+        me = null;
+        try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+        showAuthView();
+      });
+    }
+
+    function doSearch(event) {
+      event.preventDefault();
+      var q = el("search-query").value.trim();
+      if (!q) return;
+      showError("search-error", null);
+      el("search-results").textContent = "Searching…";
+      fetch("/api/kb/search", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ query: q })
+      }).then(function (r) {
+        return r.json().catch(function () { return null; });
+      }).then(function (data) {
+        if (!data || data.error) {
+          showError("search-error", data);
+          el("search-results").textContent = "";
+          return;
+        }
+        var results = data.results || [];
+        var out = el("search-results");
+        if (!results.length) {
+          out.textContent = "No results.";
+          return;
+        }
+        out.innerHTML = "";
+        results.forEach(function (row) {
+          var div = document.createElement("div");
+          div.className = "result";
+          var score = document.createElement("span");
+          score.className = "score";
+          score.textContent = typeof row.score === "number"
+            ? row.score.toFixed(3) : String(row.score);
+          div.appendChild(score);
+          var text = document.createElement("p");
+          text.textContent = row.text || "";
+          div.appendChild(text);
+          var meta = document.createElement("small");
+          meta.textContent = [row.source, row.source_url,
+            "chunk " + (row.chunk_index == null ? "" : row.chunk_index)]
+            .filter(Boolean).join(" · ");
+          div.appendChild(meta);
+          out.appendChild(div);
+        });
+      });
+    }
+
+    function doIngest() {
+      var source = el("ingest-source").value;
+      showError("ingest-error", null);
+      el("ingest-result").textContent = "Running…";
+      var payload = source === "all" ? {} : { source: source };
+      fetch("/api/ingest/run", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(payload)
+      }).then(function (r) {
+        return r.json().catch(function () { return null; });
+      }).then(function (data) {
+        if (!data || data.error) {
+          showError("ingest-error", data);
+          el("ingest-result").textContent = "";
+          return;
+        }
+        el("ingest-result").textContent =
+          "Run " + data.run_id + " → " + data.status;
+        refreshPoints();
+        refreshAudit();
+      });
+    }
+
+    function doChat() {
+      var q = el("chat-query").value.trim();
+      if (!q) return;
+      showError("chat-error", null);
+      el("chat-answer").textContent = "…";
+      fetch("/api/kb/chat", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ query: q })
+      }).then(function (r) {
+        return r.json().catch(function () { return null; });
+      }).then(function (data) {
+        if (!data || (data.error || data.code) || !data.answer) {
+          // 006 ships the chat surface only: without an LLM endpoint the
+          // server returns 501 not_implemented with a remediation hint.
+          showError("chat-error", {
+            error: data && (data.remediation || data.message || data.error)
+          });
+          el("chat-answer").textContent = "";
+          return;
+        }
+        el("chat-answer").textContent = data.answer;
+      });
+    }
+
+    // ---- boot ---------------------------------------------------------------
+
+    function bootstrap() {
+      fetch("/api/me", { headers: authHeaders() })
+        .then(function (r) { return r.json().catch(function () { return null; }); })
+        .then(function (data) {
+          if (!data || data.error) {
+            token = null;
+            try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+            showAuthView();
+            return;
+          }
+          me = data;
+          showKbView();
+        });
+    }
+
+    // ---- wiring -------------------------------------------------------------
+
+    el("signin-form").addEventListener("submit", doSignin);
+    el("signup-form").addEventListener("submit", doSignup);
+    el("signout-btn").addEventListener("click", doSignout);
+    el("refresh-points-btn").addEventListener("click", refreshPoints);
+    el("search-btn").addEventListener("click", doSearch);
+    el("search-query").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); doSearch(e); }
+    });
+    el("ingest-btn").addEventListener("click", doIngest);
+    el("chat-btn").addEventListener("click", doChat);
+    el("chat-query").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); doChat(); }
+    });
+
+    // On page load: check for a stored token, validate it against /api/me.
+    // If valid → main UI; otherwise → sign-in / sign-up forms.
+    try { token = localStorage.getItem(TOKEN_KEY); } catch (e) {}
+    bootstrap();
+  })();
+  </script>
+</body>
+</html>
