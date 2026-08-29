@@ -23,43 +23,91 @@ _ENV_EXAMPLE = _REPO_ROOT / ".env.example"
 _ENV_COMMENT_BARE = re.compile(r"#\s*env:\s*(KB_[A-Z0-9_]+)")
 # config.example.yml: `(env: KB_FOO)` (parenthesized, e.g. embedding.device)
 _ENV_COMMENT_PAREN = re.compile(r"\(env:\s*(KB_[A-Z0-9_]+)\)")
-# .env.example: lines like `#KB_FOO=` or `KB_FOO=`
-_ENV_ENTRY = re.compile(r"^#?(KB_[A-Z0-9_]+)=")
+# config.example.yml active knob line:  `    key: value  # env: KB_FOO`
+_KNOB_LINE = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
+# config.example.yml commented-out knob line: `# key: value  # env: KB_FOO`
+# Uses the brief's exact regex. Header lines like `# Precedence: ...` are
+# matched but excluded by the is_section check (they have a value that is
+# not a config value). The `# mytool:` block (no value) is also excluded.
+_KNOB_LINE_COMMENTED = re.compile(r"^#\s*(\s*)([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
+# .env.example: lines like `#KB_FOO=`, `#YMAIL_APP_PASSWORD=`, `MYTOOL_TOKEN=`
+# — matches any UPPER_CASE var, not just KB_-prefixed (catches credentials)
+_ENV_ENTRY = re.compile(r"^#?([A-Z][A-Z0-9_]+)=")
 
 
 def _parse_config_example(path: Path) -> dict[str, dict]:
     """Extract documented knobs from config.example.yml.
 
+    Active and commented-out knob lines are both treated as documented.
+    Commented-out lines are matched with the brief's regex
+    `^#\\s*(\\s*)([A-Za-z_][A-Za-z0-9_]*):\\s*(.*)$`.
+
+    Commented-out *section headers* (e.g. `# mytool:`) must not corrupt the
+    active stack, so the parser tracks active and commented stacks separately:
+    - active stack drives path construction for active leaves
+    - commented leaves use the active stack at that line for their path
+      (commented lines in the file always sit at the same nesting level as
+       the section they belong to)
+
     Returns {dotted.path: {"value": str, "env": str | None}}.
     """
     text = path.read_text(encoding="utf-8")
     knobs: dict[str, dict] = {}
-    stack: list[tuple[int, str]] = []  # (indent, key)
+    stack: list[tuple[int, str]] = []  # active-only stack: (indent, key)
 
     for raw in text.splitlines():
         # Try both env-comment forms on the same line
         env_match = _ENV_COMMENT_BARE.search(raw) or _ENV_COMMENT_PAREN.search(raw)
         env = env_match.group(1) if env_match else None
 
-        m = re.match(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$", raw)
-        if not m:
-            continue
+        is_commented = False
+        m_active = _KNOB_LINE.match(raw)
+        if m_active:
+            m = m_active
+        else:
+            m_commented = _KNOB_LINE_COMMENTED.match(raw)
+            if not m_commented:
+                continue
+            m = m_commented
+            is_commented = True
+
         indent = len(m.group(1))
         key, rest = m.group(2), m.group(3).strip()
 
-        while stack and indent <= stack[-1][0]:
-            stack.pop()
+        if not is_commented:
+            # Active line: maintain the active stack
+            while stack and indent <= stack[-1][0]:
+                stack.pop()
 
         # Strip trailing comment to get the raw value
         val_m = re.match(r"^([^#]*)", rest)
         value = val_m.group(1).strip() if val_m else ""
 
-        # Section header (no value) — push onto stack
-        if value == "" or rest in ("[]", "{}") or rest.endswith(":"):
+        is_section = (value == "" or rest in ("[]", "{}") or rest.endswith(":"))
+
+        if not is_commented and is_section:
+            # Active section header — push onto active stack
             stack.append((indent, key))
             continue
 
-        # Leaf — record the knob
+        if is_commented:
+            if is_section:
+                # Commented-out section header (`# mytool:`) — skip
+                continue
+            # Commented-out line: only record as a documented knob if it has
+            # an env annotation. This excludes header prose like
+            # `# Precedence: env (incl. .env) > ...` (no env: annotation).
+            if not env:
+                continue
+            # Leaf — record the knob using the active stack for context
+            parts = [k for _, k in stack]
+            knob_path = ".".join(parts + [key])
+            entry: dict = {"value": value}
+            entry["env"] = env
+            knobs[knob_path] = entry
+            continue
+
+        # Active leaf — record the knob
         parts = [k for _, k in stack]
         knob_path = ".".join(parts + [key])
         entry: dict = {"value": value}
@@ -127,18 +175,23 @@ class TestKnobRegistryStructure:
                 )
 
     @pytest.mark.skipif(KNOBS is None, reason="KNOBS not yet created (T028)")
-    def test_env_var_names_are_valid(self):
-        """Every env var in KNOBS must start with KB_ or be a credential var."""
+    def test_env_var_names_are_valid(self, env_vars):
+        """Every env var in KNOBS must be a valid name, and credential vars
+        (non-KB_) must be documented in .env.example."""
+        documented_envs = set(env_vars)
         for path, entry in KNOBS.items():
             env = entry.get("env")
             if env is None:
                 continue
-            # KB_ prefix knobs, or credential env vars (YMAIL_, GMAIL_, MYTOOL_)
-            assert env.startswith("KB_") or env in (
-                "YMAIL_APP_PASSWORD", "GMAIL_APP_PASSWORD",
-            ), (
-                f"{path}: env var {env!r} is not a KB_ var or known credential"
+            # KB_ prefix knobs, or UPPER_CASE credential env vars
+            assert env.startswith("KB_") or re.match(r"^[A-Z][A-Z0-9_]+$", env), (
+                f"{path}: env var {env!r} is not a KB_ var or valid credential name"
             )
+            # Credential vars must be documented in .env.example
+            if not env.startswith("KB_"):
+                assert env in documented_envs, (
+                    f"{path}: credential env var {env!r} not in .env.example"
+                )
 
 
 class TestKnobsDocumentedInConfigExample:
