@@ -132,12 +132,15 @@ def _validate(source: object, name: str, entrypoint: str) -> None:
             )
 
 
-class _CredentialGuard:
+class _CredentialGuard(Source):
     """Wrapper adding a credential env-var check to ``prerequisites()``.
 
     The custom source's own ``prerequisites()`` is still called; a missing
     credential var is reported in addition. ``read`` and ``close`` are
     delegated unchanged.
+
+    Note: the factory should NOT check its own credential env var; the
+    config ``credential`` field is the single source of truth.
     """
 
     def __init__(self, source: Source, credential: str):

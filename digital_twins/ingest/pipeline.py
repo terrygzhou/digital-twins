@@ -68,18 +68,29 @@ def _cursor(db, source: str):
 
 
 def _ensure_collection(client, dim: int) -> None:
-    """Create the collection if missing; verify dimension if it exists.
+    """Create the collection at `dim` if missing.
 
-    Raises DimensionMismatchError if the existing collection's dimension
-    does not match `dim` (the pinned model's vector size).
+    The dimension guard (verify existing collection == pinned dim, raise
+    DimensionMismatchError) is the caller's responsibility: see
+    `assert_dimension` below. `_ensure_collection` only handles the
+    not-yet-created case so callers that pre-check can stay minimal.
     """
     if not client.collection_exists(QDRANT_COLLECTION):
         client.create_collection(
             QDRANT_COLLECTION,
             vectors_config=qm.VectorParams(size=dim, distance=qm.Distance.COSINE),
         )
+
+
+def assert_dimension(client, dim: int) -> None:
+    """Guard: existing collection dimension must equal the pinned `dim`.
+
+    Raises DimensionMismatchError (naming both dimensions + remediation)
+    if the collection exists at a different size. No-op when the
+    collection does not exist yet (it is created at `dim` on first run).
+    """
+    if not client.collection_exists(QDRANT_COLLECTION):
         return
-    # Collection exists — verify its dimension matches the pinned model
     info = client.get_collection(QDRANT_COLLECTION)
     vectors = info.config.params.vectors
     if hasattr(vectors, "size"):  # single-vector collection
@@ -135,8 +146,10 @@ def run_pipeline(
         client = None
         if not dry_run:
             client = qdrant() if callable(qdrant) and not hasattr(qdrant, "upsert") else qdrant
-            _ensure_collection(client, model_dimension(
-                get(cfg, "embedding.model") or DEFAULT_MODEL))
+            expected_dim = model_dimension(
+                get(cfg, "embedding.model") or DEFAULT_MODEL)
+            assert_dimension(client, expected_dim)
+            _ensure_collection(client, expected_dim)
 
         total_points = 0
         for name, source in built:

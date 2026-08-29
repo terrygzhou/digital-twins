@@ -138,7 +138,7 @@ def run(source_names: tuple, max_items: int, dry_run: bool) -> None:
             PrerequisiteError,
             run_pipeline,
         )
-        from digital_twins.sources import UnknownSourceError
+        from digital_twins.sources import CustomSourceError, UnknownSourceError
         try:
             summary = run_pipeline(
                 cfg, db, qdrant, embedder,
@@ -150,7 +150,7 @@ def run(source_names: tuple, max_items: int, dry_run: bool) -> None:
         except DimensionMismatchError as exc:
             click.echo(f"dimension mismatch: {exc}", err=True)
             raise SystemExit(1)
-        except (ConfigError, UnknownSourceError) as exc:
+        except (ConfigError, UnknownSourceError, CustomSourceError) as exc:
             raise SystemExit(f"config error: {exc}")
 
         for name in sorted(summary.counts):

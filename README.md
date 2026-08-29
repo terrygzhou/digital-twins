@@ -194,8 +194,9 @@ class MyToolSource(Source):
         return missing
 
     def read(self, since):
-        # Replace with your actual fetch logic.
         # `since` is the last high-water cursor (ISO-8601 string or None).
+        # Replace the body with your actual fetch logic; yield dicts with
+        # at least "id", "text", and "updated_at".
         for item in self._fetch(since):
             yield IngestItem(
                 key=item["id"],
@@ -203,6 +204,11 @@ class MyToolSource(Source):
                 ts=item["updated_at"],
                 metadata={"author": item.get("author")},
             )
+
+    def _fetch(self, since):
+        # Replace with your actual fetch logic. Return an iterable of dicts,
+        # each with "id" (str), "text" (str), "updated_at" (ISO-8601 str).
+        return []
 
     def close(self):
         pass  # nothing to release
