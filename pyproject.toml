@@ -22,6 +22,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# MCP SDK is an OPTIONAL extra (research D2): the 004 server speaks raw
+# JSON over stdio/HTTP, so it runs WITHOUT the mcp SDK. Clients that want
+# a real MCP client stack install the extra.
+mcp = ["mcp>=1.2,<2"]
 
 [project.scripts]
 digital-twins = "digital_twins.cli:main"

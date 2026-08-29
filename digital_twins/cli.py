@@ -531,6 +531,70 @@ def serve(port: int, tick_seconds: float) -> None:
     click.echo("serve: stopped (clean shutdown)")
 
 
+@cli.command("serve-mcp")
+@click.option("--transport",
+              type=click.Choice(["stdio", "http"], case_sensitive=False),
+              default="stdio", show_default=True,
+              help="MCP transport to run.")
+@click.option("--port", type=int, default=None,
+              help="Port for the http transport. Defaults to the "
+                   "mcp.port knob; ignored for stdio.")
+def serve_mcp(transport: str, port: int) -> None:
+    """Start the MCP server (serve-mcp).
+
+    Runs the MCP tool server on the chosen transport:
+
+    - ``stdio`` — newline-delimited JSON on stdin/stdout. The process-owner
+      credential (DT_SERVICE_TOKEN / DT_PERSONAL_TOKEN) identifies the
+      caller for every request.
+    - ``http`` — a minimal HTTP server on 127.0.0.1:<port> that accepts
+      ``POST /mcp`` with a JSON body; per-request auth via the
+      ``Authorization: Bearer`` header (service / personal / session
+      token, in that order).
+
+    The transport is a thin adapter: all logic (role-gate, owner-scope,
+    tool bodies, audit) lives in ``digital_twins.mcp.dispatch``. R7 parity
+    across transports holds by construction.
+    """
+    cfg = load()
+    state_dir = Path(cfg["state_dir"])
+    state_dir.mkdir(parents=True, exist_ok=True)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+        from digital_twins.config.schema import get as _get
+        service_account_email = _get(cfg, "mcp.service_account_email")
+
+        if transport == "stdio":
+            from digital_twins.mcp import stdio
+            click.echo("serve-mcp: stdio transport ready (stdin/stdout)",
+                       err=True)
+            try:
+                stdio.main(db, service_account_email=service_account_email)
+            finally:
+                click.echo("serve-mcp: stdio transport stopped", err=True)
+        else:  # http
+            mcp_port = port if port is not None else _get(cfg, "mcp.port")
+            if mcp_port <= 0:
+                click.echo(
+                    f"serve-mcp: --port must be > 0 for the http transport "
+                    f"(got {mcp_port})", err=True)
+                raise SystemExit(2)
+            from digital_twins.mcp import http as mcp_http
+            click.echo(
+                f"serve-mcp: http transport listening on 127.0.0.1:{mcp_port}",
+                err=True)
+            try:
+                mcp_http.main(db, service_account_email=service_account_email,
+                              port=mcp_port)
+            except KeyboardInterrupt:
+                pass
+            finally:
+                click.echo("serve-mcp: http transport stopped", err=True)
+    finally:
+        db.close()
+
+
 # --- schedule group (T012, US3/US4 — 003 role-checked CRUD) -----------------
 #
 # 003 post-auth role check (C-2): every schedule subcommand authenticates
