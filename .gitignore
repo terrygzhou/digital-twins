@@ -59,6 +59,9 @@ docker-compose.override.yml
 .DS_Store
 Thumbs.db
 
+# --- Superpowers execution artifacts (task briefs, reports, review diffs) ---
+.superpowers/
+
 # --- Logs / scratch ---
 *.log
 logs/

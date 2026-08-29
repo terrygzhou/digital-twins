@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "digital-twins"
+dynamic = ["version"]
+description = "Environment-portable KB ingestion: layered config, fail-fast named sources, deterministic dedup-safe ingest into user-supplied Qdrant/Neo4j."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "Terry Zhou" }]
+dependencies = [
+  "click>=8.1",
+  "PyYAML>=6.0",
+  "python-dotenv>=1.0",
+  "qdrant-client>=1.7",
+  "neo4j>=5.0",
+  "sentence-transformers>=3.0",
+  "torch>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+digital-twins = "digital_twins.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["digital_twins"]
+
+[tool.hatch.version]
+path = "digital_twins/__init__.py"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "live: tests that require real external services (opt-in via env)",
+]

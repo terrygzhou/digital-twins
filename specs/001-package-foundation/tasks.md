@@ -23,11 +23,11 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 **Purpose**: Project initialization and basic structure
 
-- [ ] T001 Create package scaffold: `pyproject.toml` (hatchling; deps click, PyYAML, python-dotenv, qdrant-client, neo4j, sentence-transformers, torch; `requires-python = ">=3.11"`; console script `digital-twins` → `digital_twins.cli:main`; MIT `LICENSE`) in `pyproject.toml`
-- [ ] T002 [P] Create package skeleton: `__version__` single-sourced in `digital_twins/__init__.py`, `python -m` entry in `digital_twins/__main__.py`, click group with `--version` in `digital_twins/cli.py`
-- [ ] T003 [P] Create shipped config examples — every knob documented, grouped, all sources `enabled: false` — in `config.example.yml` and `.env.example`
-- [ ] T004 [P] Create test scaffold: shared fixtures (in-memory/local Qdrant, stubbed Neo4j + LLM transports) in `tests/conftest.py`; empty `tests/unit/` and `tests/integration/`
-- [ ] T005 [P] Create initial `CHANGELOG.md` (0.1.0) and `README.md` skeleton (title, install, command list, config-reference placeholder)
+- [x] T001 Create package scaffold: `pyproject.toml` (hatchling; deps click, PyYAML, python-dotenv, qdrant-client, neo4j, sentence-transformers, torch; `requires-python = ">=3.11"`; console script `digital-twins` → `digital_twins.cli:main`; MIT `LICENSE`) in `pyproject.toml`
+- [x] T002 [P] Create package skeleton: `__version__` single-sourced in `digital_twins/__init__.py`, `python -m` entry in `digital_twins/__main__.py`, click group with `--version` in `digital_twins/cli.py`
+- [x] T003 [P] Create shipped config examples — every knob documented, grouped, all sources `enabled: false` — in `config.example.yml` and `.env.example`
+- [x] T004 [P] Create test scaffold: shared fixtures (in-memory/local Qdrant, stubbed Neo4j + LLM transports) in `tests/conftest.py`; empty `tests/unit/` and `tests/integration/`
+- [x] T005 [P] Create initial `CHANGELOG.md` (0.1.0) and `README.md` skeleton (title, install, command list, config-reference placeholder)
 
 ---
 
@@ -37,13 +37,13 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T006 [P] Write portability invariant test — automated scan of shipped code, config defaults, and docs for host paths/usernames/install locations (SC-003, NFR-13) in `tests/integration/test_portability.py` (FAILS until the package exists to scan; must stay green in every later phase)
-- [ ] T007 Implement typed config model + validation for the full knob surface in `digital_twins/config/schema.py` (per `contracts/config-schema.md`)
-- [ ] T008 Implement four-layer config loader — env (incl. `.env`) → `kb.local.yml` → `kb.yml` → built-in defaults, deep-merge, env wins; `KB_CONFIG_DIR`/`KB_STATE_DIR` path resolution — in `digital_twins/config/loader.py`
-- [ ] T009 Implement state layer: sqlite (WAL) connect + state-dir resolution in `digital_twins/state/db.py`; tables `accounts`, `highwater(source, item_key, last_key, updated_at)`, `audit_runs` in `digital_twins/state/models.py`
-- [ ] T010 Implement `PRAGMA user_version` migration runner that completes before any command in `digital_twins/state/migrations.py`; wire into the CLI entry path in `digital_twins/cli.py`
-- [ ] T011 Implement deterministic point-ID scheme (prefix + item key + content hash) in `digital_twins/ingest/ids.py` and config-driven chunking in `digital_twins/ingest/chunking.py`
-- [ ] T012 [P] Implement pinned `BAAI/bge-small-en-v1.5` embedding loader with `embedding.device` knob (`auto|cpu|cuda`) and model-dimension accessor in `digital_twins/ingest/embedding.py`
+- [x] T006 [P] Write portability invariant test — automated scan of shipped code, config defaults, and docs for host paths/usernames/install locations (SC-003, NFR-13) in `tests/integration/test_portability.py` (FAILS until the package exists to scan; must stay green in every later phase)
+- [x] T007 Implement typed config model + validation for the full knob surface in `digital_twins/config/schema.py` (per `contracts/config-schema.md`)
+- [x] T008 Implement four-layer config loader — env (incl. `.env`) → `kb.local.yml` → `kb.yml` → built-in defaults, deep-merge, env wins; `KB_CONFIG_DIR`/`KB_STATE_DIR` path resolution — in `digital_twins/config/loader.py`
+- [x] T009 Implement state layer: sqlite (WAL) connect + state-dir resolution in `digital_twins/state/db.py`; tables `accounts`, `highwater(source, item_key, last_key, updated_at)`, `audit_runs` in `digital_twins/state/models.py`
+- [x] T010 Implement `PRAGMA user_version` migration runner that completes before any command in `digital_twins/state/migrations.py`; wire into the CLI entry path in `digital_twins/cli.py`
+- [x] T011 Implement deterministic point-ID scheme (prefix + item key + content hash) in `digital_twins/ingest/ids.py` and config-driven chunking in `digital_twins/ingest/chunking.py`
+- [x] T012 [P] Implement pinned `BAAI/bge-small-en-v1.5` embedding loader with `embedding.device` knob (`auto|cpu|cuda`) and model-dimension accessor in `digital_twins/ingest/embedding.py`
 
 **Checkpoint**: Foundation ready — config resolves, state migrates, pipeline primitives exist. User story implementation can now begin.
 
@@ -59,14 +59,14 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T013 [P] [US1] Write init behavior tests — creates starter `kb.local.yml` with every source disabled, creates state dir + `state.db`, idempotent re-run, interrupted-init resume (edge case) — in `tests/unit/test_init.py`
-- [ ] T014 [P] [US1] Write validate tests — healthy against in-memory Qdrant + stubs, per-endpoint pass/fail + remediation hint, exit codes 0/1 — in `tests/integration/test_validate.py`
+- [x] T013 [P] [US1] Write init behavior tests — creates starter `kb.local.yml` with every source disabled, creates state dir + `state.db`, idempotent re-run, interrupted-init resume (edge case) — in `tests/unit/test_init.py`
+- [x] T014 [P] [US1] Write validate tests — healthy against in-memory Qdrant + stubs, per-endpoint pass/fail + remediation hint, exit codes 0/1 — in `tests/integration/test_validate.py`
 
 ### Implementation for User Story 1
 
-- [ ] T015 [US1] Implement endpoint health checks (Qdrant reachable + collection check, Neo4j reachable + auth, LLM endpoint reachable) with remediation hints in `digital_twins/health.py`
-- [ ] T016 [US1] Implement `init` command — prompt or read endpoints from config/env, `--yes` flag, create config dir + starter `kb.local.yml` (all sources disabled), create state dir + DB, run validation, idempotent/resumable — in `digital_twins/cli.py` (depends on T008, T009, T015)
-- [ ] T017 [US1] Implement `validate` command — health table (endpoint, ok/fail, detail, remediation), exit 0 only when all configured checks pass — in `digital_twins/cli.py` (depends on T015)
+- [x] T015 [US1] Implement endpoint health checks (Qdrant reachable + collection check, Neo4j reachable + auth, LLM endpoint reachable) with remediation hints in `digital_twins/health.py`
+- [x] T016 [US1] Implement `init` command — prompt or read endpoints from config/env, `--yes` flag, create config dir + starter `kb.local.yml` (all sources disabled), create state dir + DB, run validation, idempotent/resumable — in `digital_twins/cli.py` (depends on T008, T009, T015)
+- [x] T017 [US1] Implement `validate` command — health table (endpoint, ok/fail, detail, remediation), exit 0 only when all configured checks pass — in `digital_twins/cli.py` (depends on T015)
 
 **Checkpoint**: US1 fully functional — clean-host install → init → passing validation, independently testable (quickstart S1–S2).
 
@@ -80,17 +80,17 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T018 [P] [US2] Write idempotency invariant test — ingest, re-ingest, assert exactly one point per item + high-water marks + audit rows (the one-record-not-N invariant) — in `tests/integration/test_idempotency.py`
-- [ ] T019 [P] [US2] Write fail-fast tests — enabled source with missing prerequisite fails at enable-time and run-time, exit 2, error names source + missing prerequisite + where to set it; nothing ingested; failed run still audited — in `tests/integration/test_failfast.py`
+- [x] T018 [P] [US2] Write idempotency invariant test — ingest, re-ingest, assert exactly one point per item + high-water marks + audit rows (the one-record-not-N invariant) — in `tests/integration/test_idempotency.py`
+- [x] T019 [P] [US2] Write fail-fast tests — enabled source with missing prerequisite fails at enable-time and run-time, exit 2, error names source + missing prerequisite + where to set it; nothing ingested; failed run still audited — in `tests/integration/test_failfast.py`
 
 ### Implementation for User Story 2
 
-- [ ] T020 [US2] Implement source contract — `Capability` (runtime, credential, prefix), `Source` (`prerequisites()`, `read(since)`, `close()`), built-in registry — in `digital_twins/sources/base.py` (per `contracts/source.md`)
-- [ ] T021 [P] [US2] Implement `fs` directory-of-files source (demo/test double) in `digital_twins/sources/fs.py` (depends on T020)
-- [ ] T022 [P] [US2] Implement session-store sources `hermes`, `pi`, `dsh` — reimplemented inside the package (baseline scripts are reference only), each `enabled: false` by default with declared prerequisites — in `digital_twins/sources/hermes.py`, `digital_twins/sources/pi.py`, `digital_twins/sources/dsh.py` (depends on T020)
-- [ ] T023 [P] [US2] Implement `paperclip` PG chat source in `digital_twins/sources/paperclip.py` and shared IMAP source with `yahoo`/`gmail` instances + credential capability — in `digital_twins/sources/imap_mail.py` (depends on T020)
-- [ ] T024 [US2] Implement ingestion pipeline — read → chunk → embed → upsert Qdrant (deterministic IDs) + Neo4j nodes/links → high-water marks → one audit row per run — in `digital_twins/ingest/pipeline.py` (depends on T011, T012, T020, T021)
-- [ ] T025 [US2] Implement `run` command — enable-time + run-time prerequisite fail-fast (exit 2, names the prerequisite), `--source`, `--max-items`, `--dry-run`, per-source counts + `run_id` output, audit row written regardless of outcome — in `digital_twins/cli.py` (depends on T024)
+- [x] T020 [US2] Implement source contract — `Capability` (runtime, credential, prefix), `Source` (`prerequisites()`, `read(since)`, `close()`), built-in registry — in `digital_twins/sources/base.py` (per `contracts/source.md`)
+- [x] T021 [P] [US2] Implement `fs` directory-of-files source (demo/test double) in `digital_twins/sources/fs.py` (depends on T020)
+- [x] T022 [P] [US2] Implement session-store sources `hermes`, `pi`, `dsh` — reimplemented inside the package (baseline scripts are reference only), each `enabled: false` by default with declared prerequisites — in `digital_twins/sources/hermes.py`, `digital_twins/sources/pi.py`, `digital_twins/sources/dsh.py` (depends on T020)
+- [x] T023 [P] [US2] Implement `paperclip` PG chat source in `digital_twins/sources/paperclip.py` and shared IMAP source with `yahoo`/`gmail` instances + credential capability — in `digital_twins/sources/imap_mail.py` (depends on T020)
+- [x] T024 [US2] Implement ingestion pipeline — read → chunk → embed → upsert Qdrant (deterministic IDs) + Neo4j nodes/links → high-water marks → one audit row per run — in `digital_twins/ingest/pipeline.py` (depends on T011, T012, T020, T021)
+- [x] T025 [US2] Implement `run` command — enable-time + run-time prerequisite fail-fast (exit 2, names the prerequisite), `--source`, `--max-items`, `--dry-run`, per-source counts + `run_id` output, audit row written regardless of outcome — in `digital_twins/cli.py` (depends on T024)
 
 **Checkpoint**: US1 + US2 both functional — the tool configures, refuses cleanly, and ingests dedup-safe with audit.
 
@@ -104,8 +104,8 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T026 [P] [US3] Write precedence tests — env > `kb.local.yml` > `kb.yml` > built-in, deterministic, debug layer-wins report (edge: conflicting layers) — in `tests/unit/test_config_precedence.py`
-- [ ] T027 [P] [US3] Write knob-doc sync test — example files ↔ `knobs.py` registry, zero undocumented knobs (SC-002) — in `tests/unit/test_knob_docs.py`
+- [x] T026 [P] [US3] Write precedence tests — env > `kb.local.yml` > `kb.yml` > built-in, deterministic, debug layer-wins report (edge: conflicting layers) — in `tests/unit/test_config_precedence.py`
+- [x] T027 [P] [US3] Write knob-doc sync test — example files ↔ `knobs.py` registry, zero undocumented knobs (SC-002) — in `tests/unit/test_knob_docs.py`
 
 ### Implementation for User Story 3
 
