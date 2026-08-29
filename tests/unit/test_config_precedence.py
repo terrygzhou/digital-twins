@@ -11,11 +11,6 @@ import pytest
 from digital_twins.config import ConfigError, SchemaError, env_var_for, get, load
 
 
-@pytest.fixture(autouse=True)
-def _clean_env(monkeypatch):
-    """Start every test from a known (KB-free) environment."""
-    for name in [n for n in os.environ if n.startswith("KB_")]:
-        monkeypatch.delenv(name, raising=False)
 
 
 KB_YAML = """

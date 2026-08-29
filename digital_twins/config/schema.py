@@ -267,9 +267,9 @@ def validate(cfg: dict) -> dict:
     # cross-field check
     max_chars = get(out, "chunking.max_chars")
     overlap = get(out, "chunking.overlap")
-    if max_chars is not None and overlap is not None and overlap > max_chars:
+    if max_chars is not None and overlap is not None and overlap >= max_chars:
         raise SchemaError(
-            f"chunking.overlap ({overlap}) must not exceed "
+            f"chunking.overlap ({overlap}) must be less than "
             f"chunking.max_chars ({max_chars})"
         )
     return out
