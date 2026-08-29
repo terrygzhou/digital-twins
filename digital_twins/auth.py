@@ -25,6 +25,20 @@ format (used by tests and by future password-setting, out of scope for 002).
 - ``revoke_personal_token(db, token_id)``: flips ``revoked=1`` on that
   row only (US3 S3: revocation isolation).
 
+003 multi-user sessions (R4 / data-model):
+- ``create_session(db, account_email) -> (plaintext, expires_at)``:
+  generates a 32-byte token, stores only the pbkdf2 hash, sets
+  ``expires_at = created_at + SESSION_TTL_HOURS`` (default 8 h — a
+  module constant, not a config knob; A2: the UI is minimal, so the
+  TTL is fixed), returns the plaintext once.
+- ``verify_session(db, plaintext) -> account_email | None``:
+  single pbkdf2 re-derivation + ``hmac.compare_digest``; rejects when
+  ``expires_at < now`` (expired) or ``revoked = 1`` (revoked) or the
+  token is unknown; returns the account email on a live, un-revoked
+  session.
+- ``revoke_session(db, session_token)``: flips ``revoked=1`` on the
+  matching row (per-row revocation, mirroring personal-token isolation).
+
 The 001 test seed string ``pbkdf2:abc123`` (``tests/integration/test_upgrade.py``)
 is a test fixture for the 001 upgrade path only — not a shipped format.
 """
@@ -34,11 +48,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 _HASH_PREFIX = "pbkdf2"
 _ITERS = 100_000
 _SALT_BYTES = 16
+# 003 R4 / data-model: web-UI session TTL. A module constant, NOT a config
+# knob (A2: the UI is minimal, so the TTL is fixed at 8 hours).
+SESSION_TTL_HOURS = 8
 
 
 def hash_password(password: str) -> str:
@@ -186,6 +203,99 @@ def revoke_personal_token(db, token_id: int) -> None:
     db.commit()
 
 
+def create_session(db, account_email: str) -> tuple[str, str]:
+    """Create a web-UI sign-in session for ``account_email`` (R4).
+
+    Generates a 32-byte ``os.urandom(32).hex()`` token (64 hex chars,
+    256-bit entropy), stores only its pbkdf2 hash in
+    ``sessions.session_token``, and returns ``(plaintext, expires_at)``.
+    ``expires_at`` is ``created_at + SESSION_TTL_HOURS`` (default 8 h) —
+    a module constant, not a config knob (A2: the UI is minimal, so the
+    TTL is fixed). The plaintext is shown to the UI once and never stored.
+    """
+    plaintext = os.urandom(32).hex()
+    stored = hash_password(plaintext)
+    created_at = _now_iso()
+    expires_at = (
+        datetime.fromisoformat(created_at)
+        + timedelta(hours=SESSION_TTL_HOURS)
+    ).isoformat(timespec="seconds")
+    db.execute(
+        "INSERT INTO sessions (session_token, account_email, created_at, "
+        "expires_at, revoked) VALUES (?, ?, ?, ?, 0)",
+        (stored, account_email, created_at, expires_at),
+    )
+    db.commit()
+    return (plaintext, expires_at)
+
+
 def verify_session(db, session_token: str) -> str | None:
-    """Look up a session token; return the account email or None (R4). Stub — T006+."""
-    raise NotImplementedError("verify_session: 003 T006")
+    """Look up a session token; return the account email or None (R4).
+
+    Re-derives the pbkdf2 hash from the plaintext with the stored salt,
+    constant-time compares with ``hmac.compare_digest``, and returns the
+    account email on a live, un-revoked session. Returns None when the
+    token is unknown, ``revoked = 1`` (revoked), or ``expires_at < now``
+    (expired) — the auth_checker (R8) rejects it on either condition.
+    """
+    rows = db.execute(
+        "SELECT account_email, session_token, created_at, expires_at, revoked "
+        "FROM sessions"
+    ).fetchall()
+    for row in rows:
+        account_email, stored, _created, expires_at, revoked = row
+        if revoked:
+            continue
+        if not stored:
+            continue
+        parts = stored.split("$")
+        if len(parts) != 3 or parts[0] != _HASH_PREFIX:
+            continue
+        try:
+            salt = bytes.fromhex(parts[1])
+            expected = parts[2]
+        except ValueError:
+            continue
+        derived = hashlib.pbkdf2_hmac(
+            "sha256", session_token.encode("utf-8"), salt, _ITERS)
+        if not hmac.compare_digest(derived.hex(), expected):
+            continue
+        # live + un-revoked: check the TTL (R4: short-lived and revocable)
+        now = _now_iso()
+        if expires_at < now:
+            continue
+        return account_email
+    return None
+
+
+def revoke_session(db, session_token: str) -> None:
+    """Flip ``revoked=1`` on the session row matching ``session_token`` (R4).
+
+    The lookup re-derives the pbkdf2 hash from the plaintext (the DB only
+    stores the hash). A no-op if the token does not exist (defensive:
+    stale token from a previously-revoked or deleted row).
+    """
+    rows = db.execute(
+        "SELECT session_token FROM sessions"
+    ).fetchall()
+    for row in rows:
+        stored = row[0]
+        if not stored:
+            continue
+        parts = stored.split("$")
+        if len(parts) != 3 or parts[0] != _HASH_PREFIX:
+            continue
+        try:
+            salt = bytes.fromhex(parts[1])
+            expected = parts[2]
+        except ValueError:
+            continue
+        derived = hashlib.pbkdf2_hmac(
+            "sha256", session_token.encode("utf-8"), salt, _ITERS)
+        if hmac.compare_digest(derived.hex(), expected):
+            db.execute(
+                "UPDATE sessions SET revoked=1 WHERE session_token=?",
+                (stored,),
+            )
+            db.commit()
+            return
