@@ -327,5 +327,85 @@ def init(yes: bool) -> None:
     raise SystemExit(_exit_code(results))
 
 
+@cli.command()
+@click.option("--port", type=int, default=None,
+              help="Override the status port. Defaults to the "
+                   "scheduler.status_port knob; 0 disables the status "
+                   "endpoint entirely.")
+@click.option("--tick-seconds", type=float, default=None,
+              help="Override the loop cadence (default from the loop "
+                   "module; 5.0 is the documented default).")
+def serve(port: int, tick_seconds: float) -> None:
+    """Start the long-running scheduler (serve).
+
+    Loads config, runs 001's health preconditions, connects and migrates
+    the state DB, then hands off to run_serve (T007).
+
+    --port overrides scheduler.status_port; --port 0 disables the status
+    endpoint entirely (no socket bound). Fails fast with exit code 2 if a
+    required endpoint fails 001's health preconditions at startup, or if
+    another live serve holds the pidfile (run_serve raises that; the CLI
+    maps it to exit 2). SIGTERM/SIGINT -> clean shutdown (handled by
+    run_serve).
+    """
+    cfg = load()
+
+    # Determine the status port: --port if given, else the knob default.
+    status_port = port if port is not None else get(cfg, "scheduler.status_port")
+
+    # Health preconditions: match 001's `run`/`validate` gate — a required
+    # endpoint unreachable at startup fails fast (exit 2) with the named
+    # error. run_serve would not gate on this; the CLI does, at startup only.
+    results = health.run_health_checks(cfg)
+    if any(not r.ok for r in results):
+        _print_report(results)
+        click.echo("serve: required endpoint(s) failed health preconditions",
+                   err=True)
+        raise SystemExit(2)
+
+    state_dir = Path(cfg["state_dir"])
+    state_dir.mkdir(parents=True, exist_ok=True)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+
+        from digital_twins.scheduler.loop import run_serve
+
+        # Build the status server only if the port is > 0 AND T017 has
+        # landed. status.py is an empty skeleton until T017; the lazy
+        # import + try/except lets serve work with --port 0 (or any port)
+        # before T017 lands, and warn rather than crash.
+        status_server = None
+        if status_port > 0:
+            try:
+                from digital_twins.scheduler.status import StatusServer
+                status_server = StatusServer(status_port)
+            except ImportError:
+                click.echo(
+                    f"serve: status server not yet available (port "
+                    f"{status_port}); the status endpoint will be "
+                    f"unavailable until T017 lands", err=True)
+
+        try:
+            run_serve(
+                db, cfg, status_port,
+                status_server=status_server,
+                tick_seconds=(5.0 if tick_seconds is None else tick_seconds),
+            )
+        except SystemExit as exc:
+            # run_serve raises SystemExit with a message (not an int code)
+            # on the pidfile guard (R4: "serve already running: pid N holds
+            # <lock>"). Map that to exit 2 (the fail-fast code) with the
+            # message echoed to stderr.
+            if exc.code is not None and exc.code != 0:
+                click.echo(str(exc.code), err=True)
+                raise SystemExit(2)
+            raise
+    finally:
+        db.close()
+
+    click.echo("serve: stopped (clean shutdown)")
+
+
 def main() -> None:
     cli()
