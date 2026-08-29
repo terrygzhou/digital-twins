@@ -779,40 +779,63 @@ def _count_accounts(db) -> int:
 #   must own the token (or be admin).
 
 
-def _token_authenticate(db) -> tuple[str, str]:
-    """Authenticate the caller via DT_PERSONAL_TOKEN.
+def _token_authenticate(db, as_user: str = None) -> tuple[str, str]:
+    """Authenticate the caller via DT_PERSONAL_TOKEN or DT_USER_PASSWORD + --as.
 
     Returns ``(account_email, role)`` on success. Exits 2 with a named
     reason on failure.
+
+    Auth path:
+    - ``DT_PERSONAL_TOKEN`` set: verify the token → resolve account_email + role.
+    - Else if ``as_user`` is provided: ``--as USER`` + ``DT_USER_PASSWORD``
+      → authenticate against the accounts store, then resolve the role.
+    - Else: exit 2 with a named reason (no credentials).
     """
     from digital_twins.auth import verify_personal_token
     from digital_twins.accounts import get_role
 
     token = os.environ.get("DT_PERSONAL_TOKEN")
-    if not token:
-        click.echo(
-            "authentication failed: DT_PERSONAL_TOKEN not set "
-            "(export DT_PERSONAL_TOKEN=<token> to authenticate)",
-            err=True)
-        raise SystemExit(2)
+    if token:
+        account_email = verify_personal_token(db, token)
+        if account_email is None:
+            click.echo(
+                "authentication failed: DT_PERSONAL_TOKEN is invalid, "
+                "revoked, or unknown", err=True)
+            raise SystemExit(2)
+        role = get_role(db, account_email)
+        if role is None:
+            # Token verified but account no longer exists (race: account
+            # deleted between token creation and now).
+            click.echo(
+                "authentication failed: account no longer exists",
+                err=True)
+            raise SystemExit(2)
+        return account_email, role
 
-    account_email = verify_personal_token(db, token)
-    if account_email is None:
-        click.echo(
-            "authentication failed: DT_PERSONAL_TOKEN is invalid, "
-            "revoked, or unknown", err=True)
-        raise SystemExit(2)
+    if as_user is not None:
+        password = os.environ.get("DT_USER_PASSWORD")
+        if password is None:
+            click.echo(
+                "DT_USER_PASSWORD not set", err=True)
+            raise SystemExit(2)
+        from digital_twins.auth import authenticate
+        ok = authenticate(db, as_user, password)
+        if not ok:
+            click.echo(f"authentication failed for '{as_user}'", err=True)
+            raise SystemExit(2)
+        role = get_role(db, as_user)
+        if role is None:
+            click.echo(
+                "authentication failed: account no longer exists",
+                err=True)
+            raise SystemExit(2)
+        return as_user, role
 
-    role = get_role(db, account_email)
-    if role is None:
-        # Token verified but account no longer exists (race: account
-        # deleted between token creation and now).
-        click.echo(
-            "authentication failed: account no longer exists",
-            err=True)
-        raise SystemExit(2)
-
-    return account_email, role
+    click.echo(
+        "authentication failed: DT_PERSONAL_TOKEN not set "
+        "(export DT_PERSONAL_TOKEN=<token> to authenticate)",
+        err=True)
+    raise SystemExit(2)
 
 
 @cli.group()
@@ -847,7 +870,7 @@ def token_create(as_user: str) -> None:
     db = connect(state_dir)
     try:
         migrate(db)
-        caller_email, caller_role = _token_authenticate(db)
+        caller_email, caller_role = _token_authenticate(db, as_user)
 
         if as_user is not None:
             # --as USER: admin-only
@@ -907,7 +930,7 @@ def token_list(as_user: str) -> None:
     db = connect(state_dir)
     try:
         migrate(db)
-        caller_email, caller_role = _token_authenticate(db)
+        caller_email, caller_role = _token_authenticate(db, as_user)
 
         if as_user is not None:
             # --as USER: admin-only
@@ -965,7 +988,9 @@ def token_list(as_user: str) -> None:
 @token.command("revoke")
 @click.option("--id", "token_id", type=int, required=True,
               help="Token id to revoke.")
-def token_revoke(token_id: int) -> None:
+@click.option("--as", "as_user", default=None,
+              help="Account to authenticate as. Requires DT_USER_PASSWORD.")
+def token_revoke(token_id: int, as_user: str) -> None:
     """Revoke a personal token by id.
 
     Self: own tokens only; admin: any. Flips ``revoked=1`` on that row
@@ -983,7 +1008,7 @@ def token_revoke(token_id: int) -> None:
     db = connect(state_dir)
     try:
         migrate(db)
-        caller_email, caller_role = _token_authenticate(db)
+        caller_email, caller_role = _token_authenticate(db, as_user)
 
         # Check the token exists and determine its owner
         # Scope the query to the caller's tokens for non-admins to avoid
@@ -1049,17 +1074,20 @@ def account() -> None:
     """
 
 
-def _account_authenticate(db) -> tuple[str, str]:
+def _account_authenticate(db, as_user: str = None) -> tuple[str, str]:
     """Authenticate the caller for account commands.
 
     Returns ``(account_email, role)`` on success. Exits 2 with a named
-    reason on failure. Reuses the token-group's authentication helper.
+    reason on failure. Supports both DT_PERSONAL_TOKEN and
+    DT_USER_PASSWORD + --as (via the shared token-group helper).
     """
-    return _token_authenticate(db)
+    return _token_authenticate(db, as_user)
 
 
 @account.command("list")
-def account_list() -> None:
+@click.option("--as", "as_user", default=None,
+              help="Account to authenticate as. Requires DT_USER_PASSWORD.")
+def account_list(as_user: str) -> None:
     """List all accounts: email, role, created_at, last_active (admin only)."""
     from digital_twins.accounts import require_capability, RoleDenied
 
@@ -1072,7 +1100,7 @@ def account_list() -> None:
     db = connect(state_dir)
     try:
         migrate(db)
-        caller_email, caller_role = _account_authenticate(db)
+        caller_email, caller_role = _account_authenticate(db, as_user)
 
         try:
             require_capability(
@@ -1108,7 +1136,9 @@ def account_list() -> None:
               help="Account email address.")
 @click.option("--role", type=click.Choice(["admin", "scheduler", "reader"]),
               required=True, help="New role.")
-def account_set_role(email: str, role: str) -> None:
+@click.option("--as", "as_user", default=None,
+              help="Account to authenticate as. Requires DT_USER_PASSWORD.")
+def account_set_role(email: str, role: str, as_user: str) -> None:
     """Change an account's role (admin only; last-admin guard SC-002)."""
     from digital_twins.accounts import (
         LastAdminError, get_role, require_capability, RoleDenied, set_role)
@@ -1122,7 +1152,7 @@ def account_set_role(email: str, role: str) -> None:
     db = connect(state_dir)
     try:
         migrate(db)
-        caller_email, caller_role = _account_authenticate(db)
+        caller_email, caller_role = _account_authenticate(db, as_user)
 
         try:
             require_capability(
@@ -1160,7 +1190,9 @@ def account_set_role(email: str, role: str) -> None:
 @account.command("delete")
 @click.option("--email", required=True,
               help="Account email address to delete.")
-def account_delete(email: str) -> None:
+@click.option("--as", "as_user", default=None,
+              help="Account to authenticate as. Requires DT_USER_PASSWORD.")
+def account_delete(email: str, as_user: str) -> None:
     """Delete an account (admin only; last-admin guard SC-002).
 
     Cascades to ``personal_tokens`` and ``sessions`` via FK
@@ -1179,7 +1211,7 @@ def account_delete(email: str) -> None:
     db = connect(state_dir)
     try:
         migrate(db)
-        caller_email, caller_role = _account_authenticate(db)
+        caller_email, caller_role = _account_authenticate(db, as_user)
 
         try:
             require_capability(
@@ -1214,7 +1246,9 @@ def account_delete(email: str) -> None:
 
 
 @account.command("whoami")
-def account_whoami() -> None:
+@click.option("--as", "as_user", default=None,
+              help="Account to authenticate as. Requires DT_USER_PASSWORD.")
+def account_whoami(as_user: str) -> None:
     """Print the caller's identity + role (authenticated, any role)."""
     cfg = load()
     state_dir = Path(cfg["state_dir"])
@@ -1225,7 +1259,7 @@ def account_whoami() -> None:
     db = connect(state_dir)
     try:
         migrate(db)
-        caller_email, caller_role = _account_authenticate(db)
+        caller_email, caller_role = _account_authenticate(db, as_user)
         click.echo(f"account: {caller_email}")
         click.echo(f"role: {caller_role}")
     finally:
