@@ -16,6 +16,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CONFIG_EXAMPLE = _REPO_ROOT / "config.example.yml"
 _ENV_EXAMPLE = _REPO_ROOT / ".env.example"
+_CONFIGURATION_DOC = _REPO_ROOT / "docs" / "configuration.md"
 
 # --- parsers ---------------------------------------------------------------
 
@@ -395,4 +396,137 @@ class TestSchedulerStatusPort:
         """KB_SCHEDULER__STATUS_PORT must appear in .env.example."""
         assert "KB_SCHEDULER__STATUS_PORT" in env_vars, (
             "KB_SCHEDULER__STATUS_PORT is not in .env.example"
+        )
+
+
+# --- docs/configuration.md (SC-003, contract C-2) ---------------------------
+
+
+def _literalize_default(raw: str):
+    """Turn a docs cell into the value type the registry stores.
+
+    Registry defaults are Python literals: ``None``, ``True``/``False``,
+    int for integers, str otherwise. The docs use a single neutral
+    placeholder for "no default" (the registry's ``None``); bare values
+    are compared as strings.
+    """
+    text = raw.strip()
+    if text in ("~", "(none)", "(no default)", "—"):
+        return None
+    if text == "true":
+        return True
+    if text == "false":
+        return False
+    if re.fullmatch(r"-?\d+", text):
+        return int(text)
+    return text
+
+
+def _parse_configuration_doc(path: Path) -> dict[str, dict]:
+    """Extract documented knobs from docs/configuration.md.
+
+    Every Markdown table with a ``| knob | type | default | env var |
+    notes |`` header row is treated as a knob table. Each data row yields
+    ``{dotted.knob: {"type": str, "default": object, "env": str | None}}``.
+    Column order is resolved from the header, so a table may omit a column
+    only if that column is also dropped from the data rows.
+    """
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    knobs: dict[str, dict] = {}
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not (line.startswith("|") and line.endswith("|")):
+            i += 1
+            continue
+        header_cells = [c.strip() for c in line[1:-1].split("|")]
+        cols = {name: idx for idx, name in enumerate(header_cells)}
+        if "knob" not in cols:
+            i += 1
+            continue
+        # skip the |---|---| separator row
+        j = i + 1
+        if j < len(lines) and re.match(
+            r"^\|[\s:\-|]+\|$", lines[j].strip()
+        ):
+            j += 1
+        while j < len(lines):
+            row = lines[j].strip()
+            if not row.startswith("|") or not row.endswith("|"):
+                break
+            cells = [c.strip() for c in row[1:-1].split("|")]
+            if len(cells) != len(header_cells):
+                raise AssertionError(
+                    f"docs/configuration.md line {j + 1}: knob table row has "
+                    f"{len(cells)} cells, header has {len(header_cells)}: "
+                    f"{row!r}"
+                )
+            knob = cells[cols["knob"]]
+            knobs[knob] = {
+                "type": cells[cols["type"]],
+                "default": _literalize_default(cells[cols["default"]]),
+                "env": cells[cols["env var"]] if "env var" in cols else None,
+            }
+            j += 1
+        i = j
+    return knobs
+
+
+@pytest.fixture(scope="module")
+def configuration_doc() -> dict[str, dict]:
+    """Parsed docs/configuration.md knob rows.
+
+    Fails when the doc is missing (the RED state for T001/T002).
+    """
+    assert _CONFIGURATION_DOC.is_file(), (
+        f"docs/configuration.md is missing at {_CONFIGURATION_DOC} "
+        "(T002 has not landed yet)"
+    )
+    return _parse_configuration_doc(_CONFIGURATION_DOC)
+
+
+class TestKnobsDocumentedInConfigurationDoc:
+    """docs/configuration.md must mirror the KNOBS registry exactly (C-2)."""
+
+    @pytest.mark.skipif(KNOBS is None, reason="KNOBS not yet created (T028)")
+    def test_every_knob_documented(self, configuration_doc):
+        """(a) 100% coverage: every KNOBS key has a doc row."""
+        missing = [k for k in KNOBS if k not in configuration_doc]
+        assert not missing, (
+            f"Knobs in KNOBS but missing from docs/configuration.md: {missing}"
+        )
+
+    @pytest.mark.skipif(KNOBS is None, reason="KNOBS not yet created (T028)")
+    def test_no_phantom_knob(self, configuration_doc):
+        """(b) No doc row names a knob absent from KNOBS."""
+        phantoms = [k for k in configuration_doc if k not in KNOBS]
+        assert not phantoms, (
+            f"docs/configuration.md rows absent from KNOBS: {phantoms}"
+        )
+
+    @pytest.mark.skipif(KNOBS is None, reason="KNOBS not yet created (T028)")
+    def test_env_var_and_default_match_registry(self, configuration_doc):
+        """(c) Each row's env var and default match the registry entry."""
+        mismatches: list[str] = []
+        for knob_path, entry in KNOBS.items():
+            doc = configuration_doc.get(knob_path)
+            if doc is None:
+                continue  # reported by test_every_knob_documented
+            expected_env = entry["env"] or "~"
+            if doc["env"] != expected_env:
+                mismatches.append(
+                    f"{knob_path}: doc env {doc['env']!r} != "
+                    f"registry {expected_env!r}"
+                )
+            expected_default = entry["default"]
+            if doc["default"] != expected_default:
+                mismatches.append(
+                    f"{knob_path}: doc default {doc['default']!r} != "
+                    f"registry {expected_default!r}"
+                )
+        assert not mismatches, (
+            "docs/configuration.md rows out of sync with KNOBS: "
+            + "; ".join(mismatches)
         )
