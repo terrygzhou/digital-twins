@@ -15,6 +15,12 @@ def env_dirs(tmp_path, monkeypatch):
     state_dir = tmp_path / "state"
     monkeypatch.setenv("KB_CONFIG_DIR", str(config_dir))
     monkeypatch.setenv("KB_STATE_DIR", str(state_dir))
+    # 003 first-admin step (T008/C-4): init reads the first-admin
+    # credentials from these auth-only env vars (never argv/prompt when
+    # set).  Every init test in this file supplies them so the tests
+    # stay deterministic and non-interactive.
+    monkeypatch.setenv("INIT_ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setenv("INIT_ADMIN_PASSWORD", "admin-pw")
     monkeypatch.chdir(tmp_path)  # keep .env resolution away from the repo
     return config_dir, state_dir
 

@@ -116,6 +116,10 @@ class TestScenario1_CleanHostInit:
         state_dir = tmp_path / "state"
         monkeypatch.setenv("KB_CONFIG_DIR", str(config_dir))
         monkeypatch.setenv("KB_STATE_DIR", str(state_dir))
+        # 003 first-admin step (T008): init creates the first admin from
+        # these auth-only env vars when the accounts table is empty.
+        monkeypatch.setenv("INIT_ADMIN_EMAIL", "admin@example.com")
+        monkeypatch.setenv("INIT_ADMIN_PASSWORD", "admin-pw")
         monkeypatch.chdir(tmp_path)
         _stub_health(monkeypatch)
 
@@ -137,6 +141,9 @@ class TestScenario1_CleanHostInit:
         state_dir = tmp_path / "state"
         monkeypatch.setenv("KB_CONFIG_DIR", str(config_dir))
         monkeypatch.setenv("KB_STATE_DIR", str(state_dir))
+        # 003 first-admin step (T008): credentials via env, not prompts.
+        monkeypatch.setenv("INIT_ADMIN_EMAIL", "admin@example.com")
+        monkeypatch.setenv("INIT_ADMIN_PASSWORD", "admin-pw")
         monkeypatch.chdir(tmp_path)
         _stub_health(monkeypatch)
 
@@ -165,6 +172,10 @@ class TestScenario1_CleanHostInit:
         state_dir = tmp_path / "state"
         monkeypatch.setenv("KB_CONFIG_DIR", str(config_dir))
         monkeypatch.setenv("KB_STATE_DIR", str(state_dir))
+        # 003 first-admin step (T008): credentials via env, not prompts.
+        # The re-run asserts idempotency: no second admin is created.
+        monkeypatch.setenv("INIT_ADMIN_EMAIL", "admin@example.com")
+        monkeypatch.setenv("INIT_ADMIN_PASSWORD", "admin-pw")
         monkeypatch.chdir(tmp_path)
         _stub_health(monkeypatch)
 
@@ -204,6 +215,9 @@ class TestScenario1_CleanHostInit:
         state_dir = tmp_path / "state"
         monkeypatch.setenv("KB_CONFIG_DIR", str(config_dir))
         monkeypatch.setenv("KB_STATE_DIR", str(state_dir))
+        # 003 first-admin step (T008): credentials via env, not prompts.
+        monkeypatch.setenv("INIT_ADMIN_EMAIL", "admin@example.com")
+        monkeypatch.setenv("INIT_ADMIN_PASSWORD", "admin-pw")
         monkeypatch.chdir(tmp_path)
         _stub_health(monkeypatch, ok=False)
 

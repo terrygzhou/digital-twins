@@ -51,6 +51,45 @@ def pre_command() -> None:
             conn.close()
 
 
+def _ensure_first_admin(conn) -> None:
+    """Create the first admin account if the accounts table is empty (C-4/R7).
+
+    003's first-admin step: called by ``init`` after the state DB is
+    migrated, so the ``accounts`` table exists.  Idempotent — a re-run of
+    ``init`` never creates a second admin (US1 S1):
+
+    - ``accounts`` empty: read ``INIT_ADMIN_EMAIL`` /
+      ``INIT_ADMIN_PASSWORD`` (auth-only env vars, same pattern as 002's
+      ``DT_USER_PASSWORD``: read from ``os.environ`` directly, never a
+      config knob, never in argv, never echoed to logs) and, if the env
+      vars are missing, prompt interactively for email + password.
+      Create the first account via the shared ``create_account`` helper
+      (R7: first row in ``accounts`` -> ``admin``).  Echo
+      "created first admin account ``<email>``".
+    - ``accounts`` non-empty: create nothing; echo
+      "admin already exists: ``<first-email>``" and skip.
+    """
+    from digital_twins.accounts import create_account
+
+    first = conn.execute(
+        "SELECT email FROM accounts ORDER BY rowid LIMIT 1").fetchone()
+    if first is not None:
+        click.echo(f"admin already exists: `{first[0]}`")
+        return
+
+    email = os.environ.get("INIT_ADMIN_EMAIL")
+    password = os.environ.get("INIT_ADMIN_PASSWORD")
+    if email is None:
+        email = click.prompt("First admin email")
+    if password is None:
+        password = click.prompt("First admin password", hide_input=True)
+    if not email or not password:
+        click.echo("first admin credentials must be non-empty", err=True)
+        raise SystemExit(2)
+    create_account(conn, email, password)
+    click.echo(f"created first admin account `{email}`")
+
+
 def _print_report(results) -> None:
     for r in results:
         line = f"{r.endpoint:<9} {'ok' if r.ok else 'FAIL':<5} {r.detail}"
@@ -324,6 +363,10 @@ def init(yes: bool) -> None:
     conn = connect(state_dir)
     try:
         migrate(conn)
+        # 003 first-admin step (C-4/R7): after the state DB is migrated,
+        # create the first admin account if accounts is empty; idempotent
+        # (a re-run of init never creates a second admin).
+        _ensure_first_admin(conn)
     finally:
         conn.close()
 
