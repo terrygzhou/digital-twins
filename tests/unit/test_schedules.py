@@ -218,3 +218,351 @@ def test_preset_check_constraint_rejects_invalid(tmp_path, bad_preset):
         _insert_schedule(conn, owner="a@b.c", source="fs",
                          preset=bad_preset, param=None, fire_time="03:00")
     conn.close()
+
+
+# ============================================================================
+# T005 — CRUD + due filtering + claim_and_advance (contracts/scheduler.md)
+# ============================================================================
+#
+# Time handling (data-model.md + brief ruling): the db stores AWARE UTC
+# ISO-8601 strings for created_at / updated_at / next_fire_at. `expand_next`
+# (T003) is pure local-time, so schedules.py converts to naive local ONLY at
+# the expand_next boundary. Tests compare aware-UTC next_fire_at values
+# directly (expand_next returns naive; the module wraps it back to aware UTC).
+
+from datetime import datetime, timedelta as _timedelta, timezone
+
+from digital_twins.scheduler import schedules
+from digital_twins.scheduler.presets import expand_next
+
+
+def _utc_iso(dt):
+    """Render a naive-or-aware datetime as aware-UTC ISO-8601 (seconds),
+    matching 001's _now() / the stored next_fire_at format."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.isoformat(timespec="seconds")
+
+
+def _naive_utc(dt):
+    """Strip tzinfo from an aware-UTC datetime -> naive (for expand_next input)."""
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _now_utc():
+    return datetime.now(timezone.utc)
+
+
+# --- create_schedule --------------------------------------------------------
+
+def test_create_schedule_inserts_row(tmp_path):
+    """create_schedule stores owner/source/preset; next_fire_at is a valid
+    ISO-8601 aware-UTC string >= now; acl == 'owner'; enabled == 1;
+    param NULL for daily."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)
+
+    now = _now_utc()
+    row = schedules.create_schedule(conn, "a@b.c", "fs", "daily",
+                                    now=now)
+    conn.commit()
+
+    assert row["owner"] == "a@b.c"
+    assert row["source"] == "fs"
+    assert row["preset"] == "daily"
+    assert row["param"] is None          # daily carries no param
+    assert row["fire_time"] == "03:00"
+    assert row["enabled"] == 1
+    assert row["acl"] == "owner"
+
+    # next_fire_at: valid aware-UTC ISO, strictly in the future.
+    parsed = datetime.fromisoformat(row["next_fire_at"])
+    assert parsed.tzinfo is not None, "next_fire_at must be aware-UTC"
+    assert parsed >= now, "next_fire_at must be >= creation time"
+
+    # The row is persisted in the table.
+    assert conn.execute(
+        "SELECT COUNT(*) FROM schedules").fetchone()[0] == 1
+    conn.close()
+
+
+def test_create_schedule_upsert_is_noop(tmp_path):
+    """Re-adding the same (owner, source, preset, param, fire_time) returns
+    the EXISTING row (same id), no duplicate, and does NOT reset
+    next_fire_at."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)
+
+    now = _now_utc()
+    row1 = schedules.create_schedule(conn, "a@b.c", "fs", "daily",
+                                     now=now)
+    conn.commit()
+
+    # Simulate the existing row having advanced (as claim_and_advance would).
+    conn.execute(
+        "UPDATE schedules SET next_fire_at = ?, updated_at = ? "
+        "WHERE id = ?",
+        ("2030-01-01T03:00:00+00:00", "2030-01-01T03:00:00+00:00", row1["id"]))
+    conn.commit()
+
+    row2 = schedules.create_schedule(conn, "a@b.c", "fs", "daily",
+                                     now=now)
+    conn.commit()
+
+    # Exactly one row; the second call returns the existing row.
+    assert conn.execute(
+        "SELECT COUNT(*) FROM schedules").fetchone()[0] == 1
+    assert row2["id"] == row1["id"]
+    assert row2["next_fire_at"] == "2030-01-01T03:00:00+00:00", (
+        "upsert must NOT reset next_fire_at (existing schedule keeps timing)")
+    conn.close()
+
+
+def test_create_schedule_invalid_preset(tmp_path):
+    """A preset outside the 5-value set fails fast with ValueError."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)
+    with pytest.raises(ValueError):
+        schedules.create_schedule(conn, "a@b.c", "fs", "cron")
+    conn.close()
+
+
+def test_create_schedule_param_rules(tmp_path):
+    """param rules: 'daily' with param -> ValueError; 'every-N-hours' with
+    param=0 or param=None -> ValueError; param=2 -> OK."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)
+
+    with pytest.raises(ValueError):
+        schedules.create_schedule(conn, "a@b.c", "fs", "daily", param=1)
+
+    with pytest.raises(ValueError):
+        schedules.create_schedule(conn, "a@b.c", "fs", "every-N-hours",
+                                  param=0)
+
+    with pytest.raises(ValueError):
+        schedules.create_schedule(conn, "a@b.c", "fs", "every-N-hours",
+                                  param=None)
+
+    ok = schedules.create_schedule(conn, "a@b.c", "fs", "every-N-hours",
+                                   param=2)
+    assert ok["param"] == 2
+    conn.close()
+
+
+# --- list_schedules ---------------------------------------------------------
+
+def test_list_schedules_filters_by_owner(tmp_path):
+    """list(owner='a') returns only a's schedules; list() returns all."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)
+
+    schedules.create_schedule(conn, "a@b.c", "fs", "daily")
+    schedules.create_schedule(conn, "b@b.c", "fs", "daily")
+    conn.commit()
+
+    only_a = schedules.list_schedules(conn, owner="a@b.c")
+    assert len(only_a) == 1
+    assert only_a[0]["owner"] == "a@b.c"
+
+    all_rows = schedules.list_schedules(conn)
+    assert len(all_rows) == 2
+    assert {r["owner"] for r in all_rows} == {"a@b.c", "b@b.c"}
+    conn.close()
+
+
+# --- update_schedule --------------------------------------------------------
+
+def test_update_schedule_recomputes_next_fire(tmp_path):
+    """Changing fire_time from 03:00 to 05:00 recomputes next_fire_at from
+    the ACTUAL now (clock-skew guard, R3) — NOT from the old next_fire_at —
+    and bumps updated_at. Pin the guard: pre-set next_fire_at to a far-past
+    value; after the update it must reflect the next 05:00 from now, not the
+    stale value."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)
+
+    now = _now_utc()
+    row = schedules.create_schedule(conn, "a@b.c", "fs", "daily", now=now)
+    conn.commit()
+
+    # Stale next_fire_at (as if the clock jumped backward) and an older
+    # updated_at so the bump is unambiguous within a same-second window.
+    stale = "2020-01-01T03:00:00+00:00"
+    old_updated = "2020-01-01T03:00:00+00:00"
+    conn.execute(
+        "UPDATE schedules SET next_fire_at = ?, updated_at = ? WHERE id = ?",
+        (stale, old_updated, row["id"]))
+    conn.commit()
+
+    updated = schedules.update_schedule(conn, row["id"], fire_time="05:00")
+    conn.commit()
+
+    assert updated["fire_time"] == "05:00"
+    # Recomputed from actual now, not the stale 2020 value.
+    expected = _utc_iso(expand_next(
+        "daily", None, "05:00", _naive_utc(now),
+        _naive_utc(datetime.fromisoformat(row["created_at"]))))
+    assert updated["next_fire_at"] == expected, (
+        f"expected next 05:00 from now ({expected}), got "
+        f"{updated['next_fire_at']!r} (stale={stale!r})")
+    assert updated["next_fire_at"] != stale, "stale next_fire_at was reused"
+    # updated_at bumped.
+    assert updated["updated_at"] > old_updated
+    conn.close()
+
+
+def test_update_schedule_invalid_preset(tmp_path):
+    """Updating to an unknown preset fails fast with ValueError; the row is
+    unchanged."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)
+    row = schedules.create_schedule(conn, "a@b.c", "fs", "daily")
+    conn.commit()
+
+    with pytest.raises(ValueError):
+        schedules.update_schedule(conn, row["id"], preset="cron")
+    conn.close()
+
+
+# --- delete_schedule --------------------------------------------------------
+
+def test_delete_schedule_removes_row(tmp_path):
+    """delete_schedule removes the row (no row left; id absent)."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)
+    row = schedules.create_schedule(conn, "a@b.c", "fs", "daily")
+    conn.commit()
+    assert conn.execute(
+        "SELECT COUNT(*) FROM schedules").fetchone()[0] == 1
+
+    schedules.delete_schedule(conn, row["id"])
+    conn.commit()
+    assert conn.execute(
+        "SELECT COUNT(*) FROM schedules").fetchone()[0] == 0
+    conn.close()
+
+
+# --- due_schedules ----------------------------------------------------------
+
+def test_due_schedules_filters_enabled_and_overdue(tmp_path):
+    """Only enabled AND next_fire_at <= now schedules are due; a disabled due
+    schedule and an enabled not-yet-due schedule are both excluded."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)
+
+    now = _now_utc()
+    # A: enabled, due (next_fire_at in the past).
+    a = schedules.create_schedule(conn, "a@b.c", "fs", "daily", now=now)
+    # B: enabled, not due (next_fire_at far in the future).
+    b = schedules.create_schedule(conn, "b@b.c", "fs", "daily", now=now)
+    # C: disabled, due.
+    c = schedules.create_schedule(conn, "c@b.c", "fs", "daily", now=now)
+
+    past = "2000-01-01T00:00:00+00:00"
+    future = "2100-01-01T00:00:00+00:00"
+    conn.execute("UPDATE schedules SET next_fire_at = ? WHERE id = ?",
+                 (past, a["id"]))
+    conn.execute("UPDATE schedules SET next_fire_at = ? WHERE id = ?",
+                 (future, b["id"]))
+    conn.execute("UPDATE schedules SET next_fire_at = ? WHERE id = ?",
+                 (past, c["id"]))
+    conn.execute("UPDATE schedules SET enabled = 0 WHERE id = ?", (c["id"],))
+    conn.commit()
+
+    due = schedules.due_schedules(conn, now=now)
+    assert [r["id"] for r in due] == [a["id"]], (
+        f"only the enabled+due schedule (a={a['id']}) must be returned, "
+        f"got {[r['id'] for r in due]}")
+    conn.close()
+
+
+def test_due_schedules_ordering(tmp_path):
+    """Ordering: oldest next_fire_at first; on a tie, lower id first
+    (ruling R-11)."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)
+
+    now = _now_utc()
+    s1 = schedules.create_schedule(conn, "a@b.c", "fs", "daily", now=now)
+    s2 = schedules.create_schedule(conn, "b@b.c", "fs", "daily", now=now)
+    s3 = schedules.create_schedule(conn, "c@b.c", "fs", "daily", now=now)
+
+    # s3 oldest, s1 and s2 tied (s1 lower id -> s1 before s2).
+    conn.execute("UPDATE schedules SET next_fire_at = ? WHERE id = ?",
+                 ("2000-01-01T03:00:00+00:00", s3["id"]))
+    conn.execute("UPDATE schedules SET next_fire_at = ? WHERE id = ?",
+                 ("2000-01-02T03:00:00+00:00", s1["id"]))
+    conn.execute("UPDATE schedules SET next_fire_at = ? WHERE id = ?",
+                 ("2000-01-02T03:00:00+00:00", s2["id"]))
+    conn.commit()
+
+    due = schedules.due_schedules(conn, now=now)
+    assert [r["id"] for r in due] == [s3["id"], s1["id"], s2["id"]], (
+        f"expected oldest-first, tie-break by id asc: "
+        f"{[s3['id'], s1['id'], s2['id']]}, got {[r['id'] for r in due]}")
+    conn.close()
+
+
+# --- claim_and_advance ------------------------------------------------------
+
+def test_claim_and_advance_moves_next_fire(tmp_path):
+    """claim_and_advance sets next_fire_at = expand_next(preset, param,
+    fire_time, fired_at, anchor=created_at) and bumps updated_at."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)
+
+    now = _now_utc()
+    row = schedules.create_schedule(conn, "a@b.c", "fs", "daily", now=now)
+    conn.commit()
+
+    fired_at = now + _timedelta(hours=5)
+    old_next = row["next_fire_at"]
+    old_updated = "2020-01-01T03:00:00+00:00"
+    conn.execute(
+        "UPDATE schedules SET updated_at = ? WHERE id = ?",
+        (old_updated, row["id"]))
+    conn.commit()
+
+    schedules.claim_and_advance(conn, row["id"], fired_at)
+    conn.commit()
+
+    anchor = datetime.fromisoformat(row["created_at"])
+    expected = _utc_iso(expand_next(
+        "daily", None, "03:00", _naive_utc(fired_at), _naive_utc(anchor)))
+    got = conn.execute(
+        "SELECT next_fire_at, updated_at FROM schedules WHERE id = ?",
+        (row["id"],)).fetchone()
+    assert got[0] == expected, f"expected {expected!r}, got {got[0]!r}"
+    assert got[1] > old_updated, "updated_at must be bumped"
+    # (No "must differ from old_next" assertion: a daily 03:00 fired at
+    # now+5h where 03:00 already passed today legitimately lands on the same
+    # next day-03:00 that creation computed. The equality-with-expand_next
+    # formula above is the meaningful check.)
+    conn.close()
+
+
+def test_claim_and_advance_hourly(tmp_path):
+    """hourly: fired at T -> next_fire_at == T + 1h (param/anchor
+    irrelevant for hourly)."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)
+
+    now = _now_utc()
+    row = schedules.create_schedule(conn, "a@b.c", "fs", "hourly", now=now)
+    conn.commit()
+
+    fired_at = now + _timedelta(hours=5)
+    schedules.claim_and_advance(conn, row["id"], fired_at)
+    conn.commit()
+
+    expected = _utc_iso(_naive_utc(fired_at) + _timedelta(hours=1))
+    got = conn.execute(
+        "SELECT next_fire_at FROM schedules WHERE id = ?",
+        (row["id"],)).fetchone()[0]
+    assert got == expected, f"expected {expected!r}, got {got!r}"
+    conn.close()
