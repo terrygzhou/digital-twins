@@ -8,6 +8,8 @@ lock-step with the shipped example files (config.example.yml, .env.example).
 
 from __future__ import annotations
 
+from .schema import BUILTIN_SOURCES
+
 # --- groups ------------------------------------------------------------------
 
 GROUP_GLOBAL = "Global"
@@ -24,11 +26,6 @@ GROUP_SOURCES = "Sources"
 #   default: built-in default (None = optional/unset)
 #   env:     environment variable name, or None when no env mapping exists
 #   group:   documentation group (config.example.yml section)
-
-# built-in source names (kept in sync with schema.BUILTIN_SOURCES)
-_BUILTIN_SOURCES = (
-    "hermes", "pi", "dsh", "paperclip", "yahoo", "gmail", "fs",
-)
 
 KNOBS: dict[str, dict] = {
     # --- Global ---
@@ -126,7 +123,7 @@ KNOBS: dict[str, dict] = {
     # --- Sources (per built-in source: enabled / max_items / timeout_s) ---
 }
 
-for _name in _BUILTIN_SOURCES:
+for _name in BUILTIN_SOURCES:
     KNOBS[f"sources.{_name}.enabled"] = {
         "type": "bool",
         "default": False,
