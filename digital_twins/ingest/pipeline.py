@@ -113,6 +113,7 @@ def run_pipeline(
     dry_run: bool = False,
     trigger: str = "manual",
     scheduled_by: str = "system",
+    owner: str | None = None,
 ) -> RunSummary:
     """Run one ingestion pass over the enabled (or named) sources.
 
@@ -125,6 +126,14 @@ def run_pipeline(
     CLI one-shot, 'schedule' for serve fires). `scheduled_by` records the
     owning user ('system' when run --once has no --as; T011 sets the owner
     user later).
+
+    `owner` (R6/003): when set, each point's Qdrant payload gains
+    `"owner": owner` and `"owner_tag": f"{owner}-ingest"` (the query-time
+    filter for per-user scoping, SC-005). When `None` (the default), the
+    payload is unchanged (001/002 behavior). The owner tag is a payload
+    field only — it does NOT enter the deterministic point ID, so the
+    one-record dedup invariant (NFR-1) is preserved: the same content
+    ingested by two different owners still yields one point.
     """
     run_id = str(uuid.uuid4())
     built: list = []
@@ -184,17 +193,27 @@ def run_pipeline(
                 vectors = embedder([text for *_, text in chunks])
                 points = []
                 for (pid, i, item, text), vector in zip(chunks, vectors):
+                    payload = {
+                        "source": name,
+                        "source_url": f"{source.capability.prefix}{item.key}",
+                        "item_key": item.key,
+                        "chunk_index": i,
+                        "ts": item.ts,
+                        "text": text,
+                    }
+                    # R6 (003 multi-user): stamp the owner + owner_tag on the
+                    # point payload when owner is set (query-time filter for
+                    # per-user scoping, SC-005). When owner is None the
+                    # payload is unchanged (001/002 behavior).
+                    # The owner tag is a payload field only — it does NOT
+                    # enter the point ID (dedup is content-level, NFR-1).
+                    if owner is not None:
+                        payload["owner"] = owner
+                        payload["owner_tag"] = f"{owner}-ingest"
                     points.append(qm.PointStruct(
                         id=pid,
                         vector=vector,
-                        payload={
-                            "source": name,
-                            "source_url": f"{source.capability.prefix}{item.key}",
-                            "item_key": item.key,
-                            "chunk_index": i,
-                            "ts": item.ts,
-                            "text": text,
-                        },
+                        payload=payload,
                     ))
                 client.upsert(QDRANT_COLLECTION, points=points, wait=True)
                 total_points += len(points)
