@@ -72,6 +72,22 @@ def db(tmp_path):
     conn.close()
 
 
+class _StubModel:
+    """Mimics the sentence-transformers model shape that run_pipeline expects:
+    ``.encode(list[str])`` -> object with ``.tolist()`` -> list of vectors."""
+
+    def encode(self, texts):
+        return _StubVectors([[0.5] * 384 for _ in texts])
+
+
+class _StubVectors:
+    def __init__(self, data):
+        self._data = data
+
+    def tolist(self):
+        return self._data
+
+
 @pytest.fixture
 def stub_pipeline(monkeypatch):
     """Replace the tick's qdrant factory + embedder with in-memory stubs.
@@ -87,10 +103,6 @@ def stub_pipeline(monkeypatch):
         "qdrant_client.QdrantClient",
         lambda *a, **kw: in_memory,
     )
-
-    class _StubModel:
-        def encode(self, texts):
-            return [[0.5] * 384 for _ in texts]
 
     monkeypatch.setattr(
         "digital_twins.ingest.embedding.load_embedder",
