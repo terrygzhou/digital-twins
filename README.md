@@ -130,6 +130,11 @@ Two shipped example files document every knob: [`config.example.yml`](config.exa
 Precedence: **env (incl. `.env`) → `kb.local.yml` → `kb.yml` → built-in defaults**.
 All sources are disabled by default.
 
+## Scheduling
+
+Preset cadences, the `digital-twins serve` process, and the one-shot host-cron
+alternative: [`docs/scheduling.md`](docs/scheduling.md).
+
 ## Configuration Reference
 
 Authoritative schema: [`specs/001-package-foundation/contracts/config-schema.md`](specs/001-package-foundation/contracts/config-schema.md).
