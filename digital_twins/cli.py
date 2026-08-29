@@ -404,5 +404,116 @@ def serve(port: int, tick_seconds: float) -> None:
     click.echo("serve: stopped (clean shutdown)")
 
 
+# --- schedule group (T012, US3 — FR-3 v1 CRUD) -----------------------------
+#
+# Ruling R-12: ``--as`` on schedule commands is an OWNER LABEL, not an auth
+# requirement. No DT_USER_PASSWORD, no accounts check, no credential
+# prompt. Auth via DT_USER_PASSWORD is T011 and lives on ``run --once``
+# only.
+
+
+def _open_schedules_db() -> "sqlite3.Connection":
+    """Load config, connect + migrate the state DB.
+
+    Fresh install (no state dir yet) gets created here so a first
+    ``schedule add`` on a clean install works without a prior ``init``.
+    """
+    cfg = load()
+    state_dir = Path(cfg["state_dir"])
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return connect(state_dir)
+
+
+@cli.group()
+def schedule() -> None:
+    """Manage scheduled runs (v1: add / list / remove)."""
+
+
+@schedule.command("add")
+@click.option("--source", required=True,
+              help="Source name (must exist in config).")
+@click.option("--preset", required=True,
+              help="Cadence preset: daily, hourly, weekly, monthly, "
+                   "every-N-hours.")
+@click.option("--param", type=int, default=None,
+              help="N hours for every-N-hours. Required for that preset; "
+                   "ignored (and rejected) for all others.")
+@click.option("--fire-time", default="03:00", show_default=True,
+              help="Local time of day (HH:MM) to fire.")
+@click.option("--as", "as_user", default="system", show_default=True,
+              help="Owner label (R-12: a label, not an auth check).")
+def schedule_add(source: str, preset: str, param: int, fire_time: str,
+                 as_user: str) -> None:
+    """Add a schedule (upserts on the 5-field key)."""
+    import sqlite3 as _sqlite3
+    db = _open_schedules_db()
+    try:
+        from digital_twins.scheduler.schedules import create_schedule
+        try:
+            row = create_schedule(db, as_user, source, preset,
+                                  param, fire_time)
+        except ValueError as exc:
+            # Config-class error (FR-8): exit 2, list the valid presets so
+            # the user can self-correct without consulting docs.
+            from digital_twins.scheduler.presets import preset_values
+            valid = ", ".join(preset_values())
+            click.echo(f"invalid schedule: {exc}", err=True)
+            click.echo(f"valid presets: {valid}", err=True)
+            raise SystemExit(2)
+        db.commit()  # the CLI is the transaction boundary (T012)
+        click.echo(f"schedule id={row['id']} next_fire_at={row['next_fire_at']}")
+    finally:
+        db.close()
+
+
+@schedule.command("list")
+@click.option("--as", "as_user", default=None,
+              help="Filter by owner label. Default: all owners.")
+def schedule_list(as_user: str) -> None:
+    """List schedules. ``--as`` filters by owner label (R-12)."""
+    db = _open_schedules_db()
+    try:
+        from digital_twins.scheduler.schedules import list_schedules
+        rows = list_schedules(db, as_user)
+        if not rows:
+            click.echo("no schedules")
+            return
+        header = ("id", "owner", "source", "preset", "param",
+                  "fire_time", "next_fire_at", "enabled")
+        widths = [max(len(h), *(len(str(r[c]) if r[c] is not None else "-")
+                                 for r in rows)) for h, c in
+                  zip(header, ("id", "owner", "source", "preset", "param",
+                               "fire_time", "next_fire_at", "enabled"))]
+        click.echo("  ".join(h.ljust(w) for h, w in zip(header, widths)))
+        for r in rows:
+            cells = [str(r[c]) if r[c] is not None else "-"
+                     for c in ("id", "owner", "source", "preset", "param",
+                               "fire_time", "next_fire_at", "enabled")]
+            click.echo("  ".join(c.ljust(w) for c, w in zip(cells, widths)))
+    finally:
+        db.close()
+
+
+@schedule.command("remove")
+@click.option("--id", "schedule_id", type=int, required=True,
+              help="Schedule id to remove.")
+def schedule_remove(schedule_id: int) -> None:
+    """Remove a schedule by id. Exit 1 if the id does not exist."""
+    db = _open_schedules_db()
+    try:
+        from digital_twins.scheduler.schedules import delete_schedule
+        existing = db.execute(
+            "SELECT 1 FROM schedules WHERE id = ?", (schedule_id,)).fetchone()
+        if existing is None:
+            click.echo(
+                f"schedule id {schedule_id} not found", err=True)
+            raise SystemExit(1)
+        delete_schedule(db, schedule_id)
+        db.commit()  # the CLI is the transaction boundary (T012)
+        click.echo(f"removed schedule id={schedule_id}")
+    finally:
+        db.close()
+
+
 def main() -> None:
     cli()
