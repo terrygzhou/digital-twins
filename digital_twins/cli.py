@@ -545,55 +545,9 @@ def _open_schedules_db() -> "sqlite3.Connection":
 def _schedule_authenticate(db, as_user: str) -> tuple[str, str]:
     """Authenticate the caller for schedule commands and resolve their role.
 
-    Returns ``(account_email, role)`` on success. Exits 2 with a named
-    reason on failure.
-
-    Auth path:
-    - ``DT_PERSONAL_TOKEN`` set: verify the token → resolve account_email + role.
-    - Else: ``--as USER`` + ``DT_USER_PASSWORD`` → authenticate against the
-      accounts store, then resolve the role.
+    Delegates to :func:`_token_authenticate` (the shared 003 auth helper).
     """
-    token = os.environ.get("DT_PERSONAL_TOKEN")
-    if token:
-        from digital_twins.auth import verify_personal_token
-        from digital_twins.accounts import get_role
-        account_email = verify_personal_token(db, token)
-        if account_email is None:
-            click.echo(
-                "authentication failed: DT_PERSONAL_TOKEN is invalid, "
-                "revoked, or unknown", err=True)
-            raise SystemExit(2)
-        role = get_role(db, account_email)
-        if role is None:
-            click.echo(
-                "authentication failed: account no longer exists", err=True)
-            raise SystemExit(2)
-        return account_email, role
-
-    if as_user is None:
-        click.echo(
-            "authentication failed: no credentials — set DT_PERSONAL_TOKEN "
-            "or pass --as with DT_USER_PASSWORD", err=True)
-        raise SystemExit(2)
-
-    password = os.environ.get("DT_USER_PASSWORD")
-    if password is None:
-        click.echo("DT_USER_PASSWORD not set", err=True)
-        raise SystemExit(2)
-
-    from digital_twins.auth import authenticate
-    ok = authenticate(db, as_user, password)
-    if not ok:
-        click.echo(f"authentication failed for '{as_user}'", err=True)
-        raise SystemExit(2)
-
-    from digital_twins.accounts import get_role
-    role = get_role(db, as_user)
-    if role is None:
-        click.echo(
-            "authentication failed: account no longer exists", err=True)
-        raise SystemExit(2)
-    return as_user, role
+    return _token_authenticate(db, as_user)
 
 
 @cli.group()
@@ -1282,55 +1236,9 @@ def account_whoami(as_user: str) -> None:
 def _config_authenticate(db, as_user: str) -> tuple[str, str]:
     """Authenticate the caller for config commands and resolve their role.
 
-    Returns ``(caller_email, caller_role)`` on success. Exits 2 with a
-    named reason on failure.
-
-    Auth path:
-    - ``DT_PERSONAL_TOKEN`` set: verify the token → resolve account_email + role.
-    - Else: ``--as USER`` + ``DT_USER_PASSWORD`` → authenticate against the
-      accounts store, then resolve the role.
+    Delegates to :func:`_token_authenticate` (the shared 003 auth helper).
     """
-    token = os.environ.get("DT_PERSONAL_TOKEN")
-    if token:
-        from digital_twins.auth import verify_personal_token
-        from digital_twins.accounts import get_role
-        caller_email = verify_personal_token(db, token)
-        if caller_email is None:
-            click.echo(
-                "authentication failed: DT_PERSONAL_TOKEN is invalid, "
-                "revoked, or unknown", err=True)
-            raise SystemExit(2)
-        role = get_role(db, caller_email)
-        if role is None:
-            click.echo(
-                "authentication failed: account no longer exists", err=True)
-            raise SystemExit(2)
-        return caller_email, role
-
-    if as_user is None:
-        click.echo(
-            "authentication failed: no credentials — set DT_PERSONAL_TOKEN "
-            "or pass --as with DT_USER_PASSWORD", err=True)
-        raise SystemExit(2)
-
-    password = os.environ.get("DT_USER_PASSWORD")
-    if password is None:
-        click.echo("DT_USER_PASSWORD not set", err=True)
-        raise SystemExit(2)
-
-    from digital_twins.auth import authenticate
-    ok = authenticate(db, as_user, password)
-    if not ok:
-        click.echo(f"authentication failed for '{as_user}'", err=True)
-        raise SystemExit(2)
-
-    from digital_twins.accounts import get_role
-    role = get_role(db, as_user)
-    if role is None:
-        click.echo(
-            "authentication failed: account no longer exists", err=True)
-        raise SystemExit(2)
-    return as_user, role
+    return _token_authenticate(db, as_user)
 
 
 def _config_check_target(

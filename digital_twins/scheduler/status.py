@@ -300,7 +300,7 @@ def _open_same_db(db, check_same_thread: bool = False):
     from threads other than the one that opened it (default: False, so
     handler threads can query it). In-memory databases (no file) cannot be
     reopened from another thread, so the original connection is returned as
-   -is — the caller must have opened it with ``check_same_thread=False``.
+    is — the caller must have opened it with ``check_same_thread=False``.
     """
     # The db file path: derive it from the caller's connection via the
     # main database entry in PRAGMA database_list.

@@ -118,8 +118,15 @@ def require_capability(role: str, capability: str,
 
 
 def owner_tag_for(email: str) -> str:
-    """Return the owner tag for an account (R6). Stub — T007+."""
-    raise NotImplementedError("owner_tag_for: 003 T007")
+    """Return the owner tag for an account (R6).
+
+    The tag is ``f"{email}-ingest"`` — the stable, query-time filter value
+    stamped on every Qdrant point the account ingests (T016).  The pipeline
+    builds the tag inline (``f"{owner}-ingest"``); this helper is the
+    single-source for callers outside the pipeline (e.g. the "mine" filter
+    in T019's ``list_runs``) so the tag format is defined in one place.
+    """
+    return f"{email}-ingest"
 
 
 class DuplicateEmailError(Exception):
