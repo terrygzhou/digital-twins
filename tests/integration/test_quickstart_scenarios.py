@@ -717,14 +717,11 @@ class TestScenario7_UpgradePreservation:
 
     def test_seed_data_survives_version_bumped_migration(
             self, tmp_path, monkeypatch):
-        """All v1 rows intact after a v1->v2 upgrade."""
+        """All v1 rows intact after a v1->v3 upgrade."""
         from digital_twins.state import migrations, models
 
-        def _apply_v2_noop(conn):
-            pass
-
         conn = connect(tmp_path)
-        migrations.migrate(conn)
+        migrations.migrate(conn)  # create the base schema
         # seed
         conn.execute(
             "INSERT INTO accounts (email, role, password_hash) "
@@ -747,12 +744,8 @@ class TestScenario7_UpgradePreservation:
                 "SELECT * FROM audit_runs ORDER BY run_id").fetchall(),
         }
 
-        monkeypatch.setattr(migrations, "MIGRATIONS", [
-            (1, models.apply_v1),
-            (2, _apply_v2_noop),
-        ])
         v = migrations.migrate(conn)
-        assert v == 2
+        assert v == 3
 
         after = {
             "accounts": conn.execute(
@@ -772,7 +765,7 @@ class TestScenario7_UpgradePreservation:
         conn = connect(tmp_path)
         v1 = migrations.migrate(conn)
         v2 = migrations.migrate(conn)
-        assert v1 == v2 == 2
+        assert v1 == v2 == 3
         conn.close()
 
     def test_existing_upgrade_tests_pass(self, tmp_path, monkeypatch):
@@ -783,8 +776,8 @@ class TestScenario7_UpgradePreservation:
         v1 = migrations.migrate(conn)
         v2 = migrations.migrate(conn)
         v3 = migrations.migrate(conn)
-        assert v1 == v2 == v3 == 2
-        assert migrations.user_version(conn) == 2
+        assert v1 == v2 == v3 == 3
+        assert migrations.user_version(conn) == 3
         conn.close()
 
 

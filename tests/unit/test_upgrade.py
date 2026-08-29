@@ -54,6 +54,30 @@ def _schedules_rows(conn):
     return conn.execute("SELECT * FROM schedules ORDER BY id").fetchall()
 
 
+def _seed_v2(conn):
+    """Populate the v2 `schedules` table with a representative row.
+
+    Mirrors test_schedules.py's insert so the v2→v3 "no data loss" invariant
+    covers the v2 table with real content, not just an empty table.
+    """
+    conn.execute(
+        "INSERT INTO schedules "
+        "(owner, source, preset, param, fire_time, enabled, next_fire_at, "
+        " created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("alice@example.com", "fs", "daily", None, "03:00", 1,
+         "2026-01-02T03:00:00+00:00",
+         "2026-01-01T00:00:00+00:00",
+         "2026-01-01T00:00:00+00:00"),
+    )
+    conn.commit()
+
+
+def _table_names(conn):
+    return {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+
+
 def _pin_v1(conn):
     """Force the database to user_version 1 (v1-only state).
 
@@ -96,19 +120,19 @@ def _seed_v1(conn):
 # 1 ------------------------------------------------------------------------
 
 def test_seed_data_survives_version_bumped_migration(tmp_path):
-    """All v1 rows are intact after a v1→v2 upgrade (S7, NFR-15)."""
+    """All v1 rows are intact after a full migrate() to v3 (S7, NFR-15)."""
     conn = connect(tmp_path)
     _pin_v1(conn)
     _seed_v1(conn)
     before = _snapshot_all(conn)
 
     v = migrations.migrate(conn)
-    assert v == 2, "user_version must advance to 2"
+    assert v == 3, "user_version must advance to 3"
 
     after = _snapshot_all(conn)
     for table in ("accounts", "highwater", "audit_runs", "schedules"):
         assert after[table] == before[table], (
-            f"{table} rows changed after v2 migration"
+            f"{table} rows changed after migration to v3"
         )
     conn.close()
 
@@ -221,23 +245,23 @@ def test_migration_is_idempotent(tmp_path):
     v1 = migrations.migrate(conn)
     v2 = migrations.migrate(conn)
     v3 = migrations.migrate(conn)
-    assert v1 == v2 == v3 == 2
-    assert migrations.user_version(conn) == 2
+    assert v1 == v2 == v3 == 3
+    assert migrations.user_version(conn) == 3
     conn.close()
 
 
 def test_migration_is_idempotent_after_upgrade(tmp_path):
-    """After a v1→v2 upgrade, re-running migrate() is a no-op."""
+    """After a v1→v3 upgrade, re-running migrate() is a no-op."""
     conn = connect(tmp_path)
     _pin_v1(conn)
     _seed_v1(conn)
 
     v = migrations.migrate(conn)
-    assert v == 2
+    assert v == 3
 
     v_again = migrations.migrate(conn)
-    assert v_again == 2, "re-running migrate() must not advance version"
-    assert migrations.user_version(conn) == 2
+    assert v_again == 3, "re-running migrate() must not advance version"
+    assert migrations.user_version(conn) == 3
 
     # data still intact
     assert len(conn.execute("SELECT * FROM accounts").fetchall()) == 2
@@ -258,11 +282,11 @@ def test_migrations_apply_in_order(tmp_path, monkeypatch):
 
     def apply_v2_track(conn_):
         applied.append("v2")
-        _apply_v2_marker_table(conn_)
+        models.apply_v2(conn_)
 
     def apply_v3_track(conn_):
         applied.append("v3")
-        _apply_v3_noop(conn_)
+        models.apply_v3(conn_)
 
     monkeypatch.setattr(migrations, "MIGRATIONS", [
         (2, apply_v2_track),
@@ -272,11 +296,10 @@ def test_migrations_apply_in_order(tmp_path, monkeypatch):
     assert v == 3, "user_version must advance to 3"
     assert applied == ["v2", "v3"], "migrations must apply in order"
 
-    # v2 marker table exists with expected content
-    marker = conn.execute(
-        "SELECT id FROM v2_marker ORDER BY id"
-    ).fetchall()
-    assert marker == [(1,)], "v2 marker table must exist with one row"
+    # v2 table exists; v3 tables exist
+    tables = _table_names(conn)
+    assert "schedules" in tables, "v2 schedules table must exist"
+    assert {"personal_tokens", "user_config", "sessions"} <= tables
 
     # all v1 data intact
     assert len(conn.execute("SELECT * FROM accounts").fetchall()) == 2
@@ -287,6 +310,145 @@ def test_migrations_apply_in_order(tmp_path, monkeypatch):
     v_again = migrations.migrate(conn)
     assert v_again == 3
     assert applied == ["v2", "v3"], "no re-application on re-run"
+    conn.close()
+
+
+# T002: v2 → v3 migration (personal_tokens, user_config, sessions + 2
+# accounts columns). Mirrors the 001/002 test_upgrade.py pattern (S7,
+# NFR-15) — additive-only, no data loss, idempotent.
+
+def _pin_v2(conn):
+    """Force the database to user_version 2 (v2-only state).
+
+    A plain `migrate()` now lands on v3 (T002), so these tests exercise a
+    v2→v3 upgrade: apply v1 + v2 explicitly, then rewind user_version to 2.
+    """
+    models.apply_v1(conn)
+    models.apply_v2(conn)
+    conn.execute("PRAGMA user_version=2")
+    conn.commit()
+
+
+def test_v3_adds_new_tables_and_version(tmp_path):
+    """v2→v3 creates personal_tokens/user_config/sessions; user_version=3."""
+    conn = connect(tmp_path)
+    _pin_v2(conn)
+
+    v = migrations.migrate(conn)
+    assert v == 3, "user_version must advance to 3"
+    assert migrations.user_version(conn) == 3
+
+    tables = _table_names(conn)
+    assert {"personal_tokens", "user_config", "sessions"} <= tables, (
+        f"v3 tables missing: {sorted(tables)}"
+    )
+    conn.close()
+
+
+def test_v3_accounts_columns_with_empty_defaults(tmp_path):
+    """v2→v3 adds accounts.created_at / last_active, NOT NULL DEFAULT ''."""
+    conn = connect(tmp_path)
+    _pin_v2(conn)
+    _seed_v1(conn)
+
+    migrations.migrate(conn)
+
+    cols = {r[1]: (r[2], r[3], r[4]) for r in conn.execute(
+        "PRAGMA table_info(accounts)")}
+    assert cols.get("created_at") == ("TEXT", 1, "''"), (
+        f"created_at: got {cols.get('created_at')}")
+    assert cols.get("last_active") == ("TEXT", 1, "''"), (
+        f"last_active: got {cols.get('last_active')}")
+
+    # Legacy v1/v2 rows gain the '' sentinel for both new columns.
+    for email in ("alice@example.com", "bob@example.com"):
+        row = conn.execute(
+            "SELECT created_at, last_active FROM accounts WHERE email=?",
+            (email,)).fetchone()
+        assert row == ("", ""), f"legacy row {email} not defaulted: {row}"
+    conn.close()
+
+
+def test_v2_seeded_rows_survive_v3(tmp_path):
+    """All v1 + v2 rows are byte-identical after the v2→v3 upgrade (NFR-15)."""
+    conn = connect(tmp_path)
+    _pin_v2(conn)
+    _seed_v1(conn)
+    _seed_v2(conn)
+
+    accounts_before = conn.execute(
+        "SELECT id, email, role, password_hash FROM accounts ORDER BY id"
+    ).fetchall()
+    highwater_before = conn.execute(
+        "SELECT * FROM highwater ORDER BY source, item_key").fetchall()
+    audit_before = conn.execute(
+        "SELECT * FROM audit_runs ORDER BY run_id").fetchall()
+    schedules_before = conn.execute(
+        "SELECT * FROM schedules ORDER BY id").fetchall()
+
+    assert len(accounts_before) == 2
+    assert len(highwater_before) == 3
+    assert len(audit_before) == 2
+    assert len(schedules_before) == 1, "precondition: one schedule seeded"
+
+    v = migrations.migrate(conn)
+    assert v == 3
+
+    assert conn.execute(
+        "SELECT id, email, role, password_hash FROM accounts ORDER BY id"
+    ).fetchall() == accounts_before, "accounts rows changed"
+    assert conn.execute(
+        "SELECT * FROM highwater ORDER BY source, item_key"
+    ).fetchall() == highwater_before, "highwater rows changed"
+    assert conn.execute(
+        "SELECT * FROM audit_runs ORDER BY run_id"
+    ).fetchall() == audit_before, "audit_runs rows changed"
+    assert conn.execute(
+        "SELECT * FROM schedules ORDER BY id"
+    ).fetchall() == schedules_before, "schedules rows changed"
+    conn.close()
+
+
+def test_v3_is_idempotent(tmp_path):
+    """Applying v3 twice is a no-op: no error, no duplicate tables/columns."""
+    conn = connect(tmp_path)
+    _pin_v2(conn)
+    _seed_v1(conn)
+    _seed_v2(conn)
+
+    v1 = migrations.migrate(conn)
+    assert v1 == 3
+    tables_after_first = _table_names(conn)
+    acct_cols_after_first = {r[1] for r in conn.execute(
+        "PRAGMA table_info(accounts)")}
+
+    # Second full migrate() must not error nor duplicate anything.
+    v2 = migrations.migrate(conn)
+    assert v2 == 3, "re-run must not advance user_version past 3"
+    assert migrations.user_version(conn) == 3
+
+    assert _table_names(conn) == tables_after_first, (
+        "re-running v3 changed the table set")
+    acct_cols_after_second = {r[1] for r in conn.execute(
+        "PRAGMA table_info(accounts)")}
+    assert acct_cols_after_second == acct_cols_after_first, (
+        "re-running v3 changed the accounts columns")
+
+    # calling apply_v3 directly a second time is also a no-op (additive DDL).
+    models.apply_v3(conn)
+    conn.close()
+
+
+def test_fresh_install_migrates_to_v3(tmp_path):
+    """Fresh db: migrate() runs v1→v2→v3 and lands on v3 with all tables."""
+    conn = connect(tmp_path)
+    v = migrations.migrate(conn)
+    assert v == 3
+    assert migrations.SCHEMA_VERSION == 3
+
+    tables = _table_names(conn)
+    assert {"accounts", "highwater", "audit_runs", "schedules",
+            "personal_tokens", "user_config", "sessions"} <= tables
     conn.close()
 
 
@@ -343,9 +505,9 @@ def test_failed_migration_step_rolls_back(tmp_path, monkeypatch):
     assert len(conn.execute("SELECT * FROM accounts").fetchall()) == 2
 
     # Now restore the real MIGRATIONS (undo the failing-v2 patch): the
-    # now-working v2 step should apply cleanly (v1 already applied,
-    # user_version at 1).
+    # pending v2 + v3 steps should apply cleanly (v1 already applied,
+    # user_version at 1). A full migrate() now lands on v3.
     monkeypatch.undo()
     v = migrations.migrate(conn)
-    assert v == 2, "a subsequent migrate() must apply the now-working step"
+    assert v == 3, "a subsequent migrate() must apply the now-working steps"
     conn.close()

@@ -8,12 +8,13 @@ changes are rolled back, and `user_version` only advances after the step
 commits. A subsequent `migrate()` call re-runs the failed step from scratch.
 """
 
-from .models import apply_v1, apply_v2
+from .models import apply_v1, apply_v2, apply_v3
 
 MIGRATIONS = [
     # (target user_version, apply function)
     (1, apply_v1),
     (2, apply_v2),
+    (3, apply_v3),
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

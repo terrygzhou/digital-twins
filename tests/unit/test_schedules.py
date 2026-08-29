@@ -60,12 +60,15 @@ def _insert_schedule(conn, *, owner="alice@example.com", source="fs",
 # 1 — clean apply -----------------------------------------------------------
 
 def test_migration_v2_applies_cleanly(tmp_path):
-    """Fresh db → migrate() lands on SCHEMA_VERSION 2 with the exact
+    """Fresh db → apply v1 then v2 lands on user_version 2 with the exact
     schedules column set (name, type, notnull, default, pk)."""
     conn = connect(tmp_path)
-    v = migrations.migrate(conn)
-    assert v == 2
-    assert migrations.SCHEMA_VERSION == 2
+    models.apply_v1(conn)
+    models.apply_v2(conn)
+    conn.execute("PRAGMA user_version=2")
+    conn.commit()
+    assert migrations.user_version(conn) == 2
+    assert migrations.SCHEMA_VERSION == 3
 
     cols = _table_info(conn)
     assert cols, "schedules table must exist after v2 migration"
@@ -84,20 +87,20 @@ def test_migration_v2_applies_cleanly(tmp_path):
 # 2 — idempotency -----------------------------------------------------------
 
 def test_migration_v2_idempotent(tmp_path):
-    """Apply migrate() twice → no error AND schema stable (table_info
+    """Apply v2 twice → no error AND schema stable (table_info
     identical; not just 'no exception')."""
     conn = connect(tmp_path)
-    migrations.migrate(conn)
+    models.apply_v1(conn)
+    models.apply_v2(conn)
+    conn.execute("PRAGMA user_version=2")
+    conn.commit()
     first = _table_info(conn)
-    assert first, "precondition: schedules table present after first migrate"
+    assert first, "precondition: schedules table present after first apply_v2"
 
-    # re-run: must be a no-op
-    v = migrations.migrate(conn)
-    assert v == 2
+    # re-run apply_v2: must be a no-op
+    models.apply_v2(conn)
     second = _table_info(conn)
-    assert second == first, "schema changed on re-migrate (not idempotent)"
-    # user_version must not advance past 2
-    assert migrations.user_version(conn) == 2
+    assert second == first, "schema changed on re-apply (not idempotent)"
     conn.close()
 
 
@@ -127,9 +130,10 @@ def test_migration_v2_preserves_v1_data(tmp_path):
     acct_before = conn.execute(
         "SELECT email, role FROM accounts").fetchall()
 
-    # Now run the full migration (v1 already applied; only v2 is pending).
-    v = migrations.migrate(conn)
-    assert v == 2
+    # Now run the v2 step (v1 already applied; only v2 is pending).
+    models.apply_v2(conn)
+    conn.execute("PRAGMA user_version=2")
+    conn.commit()
 
     # v1 data must be intact
     assert conn.execute(
