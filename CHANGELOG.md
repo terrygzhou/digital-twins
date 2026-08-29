@@ -3,6 +3,85 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [0.3.0] - 2026-08-29
+
+### Added
+
+- **Multi-user surface** (003 slice) — three legal roles, personal tokens,
+  per-user config, and owner-tagged points, so the same content yields one
+  point whether ingested by admin, scheduler, or reader (NFR-1, NFR-14):
+  - **Three roles** (Q3, locked): `admin` (every capability, including
+    cross-user account management and all-user run-history viewing),
+    `scheduler` (manage schedules + trigger runs + own run history; cannot
+    reconfigure endpoints, manage accounts, or edit global config; can
+    manage its own personal tokens and config), and `reader` (pure query;
+    mutating routes denied with 403). Role is a data value on
+    `accounts.role`, not a schema enum (v3 migration is additive-only).
+  - **Personal tokens** (C-1): separate `personal_tokens` table; a user can
+    hold multiple tokens, each independently revocable. Tokens are stored as
+    pbkdf2 hashes (`pbkdf2$salt_hex$hash_hex`), never plaintext. The CLI
+    reads `DT_PERSONAL_TOKEN` to authenticate a command with a token instead
+    of the password (`DT_USER_PASSWORD`). A personal token and a password are
+    alternatives; the CLI uses the token when set, else the password.
+  - **Per-user config** (R5/SC-003): `user_config` table stores per-user
+    config overrides. The config loader merges user overrides on top of the
+    global config layer (env → kb.local.yml → kb.yml → user overrides →
+    built-in defaults). `digital-twins config set|list|unset` manages
+    per-user overrides.
+  - **Owner-tagged points** (R6/SC-005): `run_pipeline` accepts an `owner=`
+    kwarg that is stored as a payload field on the point, not a dedup key.
+    The same content ingested by two different owners still yields one
+    point (NFR-1 one-record dedup invariant preserved).
+  - **Owner-filtered run history** (T019): `list_runs` filters run history
+    by owner; non-admin users see only their own runs.
+  - **Web UI signup/signin** (T014): `/signup` and `/signin` endpoints on
+    the web server, with session tokens (pbkdf2-hashed, stored in `sessions`
+    table).
+  - **Status endpoint auth gate** (C-5/R8): `serve` now accepts an
+    `auth_checker` that gates `/status` with the BR-10 shared service token
+    (`DT_SERVICE_TOKEN` env var).
+
+- `digital_twins/state/models.py`: v3 migration (additive-only) adding
+  `personal_tokens`, `user_config`, and `sessions` tables.
+- `digital_twins/state/user_config.py`: per-user config merge logic.
+- `docs/multi-user.md`: operator-facing multi-user guide (role capability
+  matrix, credential env vars, owner-filter queries, first-admin / sign-up
+  flow, per-user config merge precedence). Now covered by the portability
+  guard (SC-006).
+- `tests/integration/test_serve_once_multi_user.py`: multi-user serve tick
+  integration tests.
+- `tests/integration/test_owner_isolation.py`: SC-005 owner-isolation +
+  NFR-1 dedup invariant tests.
+- `tests/integration/test_pipeline_owner.py`: R6 owner-kwarg dedup invariant
+  tests.
+
+### Changed
+
+- `state/migrations.py`: `SCHEMA_VERSION` bumped 2 → 3 (v3 migration is
+  additive-only; no data migration required).
+- `cli.py`: new `account` command group (list, set-role, delete, whoami),
+  new `token` command group (create, list, revoke), new `config` command
+  group (set, list, unset). `run --once --as` and `schedule` commands now
+  perform post-auth role checks. All mutating CLI commands accept both
+  `DT_USER_PASSWORD` and `DT_PERSONAL_TOKEN` for authentication.
+- `cli.py`: `list_runs` now filters by owner (non-admin users see only
+  their own runs).
+- `scheduler/loop.py`: `serve_once_tick` now accepts an `owner` parameter
+  and passes it through to `run_pipeline`.
+- `web/server.py`: new `/signup` and `/signin` endpoints; session token
+  management.
+- `test_knob_docs.py` guard extended with an explicit allow-list for
+  multi-user auth-only env vars (`DT_PERSONAL_TOKEN`, `DT_SERVICE_TOKEN`)
+  so the knob-doc sync test does not flag them as missing knobs.
+
+### Test suite
+
+- Suite grows 289 (v0.2.0) → 536 (v0.3.0): multi-user serve tick
+  integration tests, SC-005 owner-isolation + NFR-1 dedup invariant tests,
+  R6 owner-kwarg dedup invariant tests, v2→v3 upgrade preservation tests,
+  per-user config merge tests, personal token lifecycle tests, role
+  capability matrix tests, and the quickstart scenario e2e.
+
 ## [0.2.0] - 2026-09-01
 
 ### Added
