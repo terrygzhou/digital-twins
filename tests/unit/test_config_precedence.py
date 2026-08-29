@@ -159,3 +159,108 @@ def test_bootstrap_uses_env_config_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("KB_CONFIG_DIR", str(user))
     cfg = load(cwd=tmp_path)
     assert get(cfg, "qdrant.url") == "https://from-kb-local:6333"
+
+
+# --- explicit env-parameter tests (brief items 4 & 5) -----------------------
+
+
+def test_env_param_overrides_kb_yaml(tmp_path):
+    """env (via explicit dict) overrides kb.yml — no kb.local.yml involved."""
+    write(tmp_path / "kb.yml", KB_YAML)
+    cfg = load(cwd=tmp_path, config_dir=tmp_path,
+               env={"KB_QDRANT__URL": "https://from-env-param:6333"})
+    assert get(cfg, "qdrant.url") == "https://from-env-param:6333"
+
+
+def test_env_param_overrides_kb_local_yaml(tmp_path):
+    """env (via explicit dict) overrides kb.local.yml."""
+    write(tmp_path / "kb.local.yml", LOCAL_YAML)
+    cfg = load(cwd=tmp_path, config_dir=tmp_path,
+               env={"KB_QDRANT__URL": "https://from-env-param:6333"})
+    assert get(cfg, "qdrant.url") == "https://from-env-param:6333"
+
+
+# --- determinism (brief item 6) --------------------------------------------
+
+
+def test_deterministic_repeated_load(tmp_path):
+    """Same layers, same result: two consecutive loads are identical."""
+    write(tmp_path / "kb.yml", KB_YAML)
+    write(tmp_path / "kb.local.yml", LOCAL_YAML)
+    env = {"KB_EMBEDDING__DEVICE": "cpu"}
+    cfg_a = load(cwd=tmp_path, config_dir=tmp_path, env=env)
+    cfg_b = load(cwd=tmp_path, config_dir=tmp_path, env=env)
+    assert cfg_a == cfg_b
+
+
+def test_deterministic_cross_run(tmp_path):
+    """A fourth load after modifying nothing yields the same winner."""
+    write(tmp_path / "kb.yml", "chunking:\n  max_chars: 1234\n")
+    results = set()
+    for _ in range(4):
+        cfg = load(cwd=tmp_path, config_dir=tmp_path,
+                   env={"KB_EMBEDDING__MODEL": "test-model"})
+        results.add(get(cfg, "chunking.max_chars"))
+    assert results == {1234}
+
+
+# --- all four layers conflict (brief item 7) --------------------------------
+
+
+def test_all_four_layers_conflict(tmp_path):
+    """All four layers set to different values: env > local > yml > default."""
+    write(tmp_path / "kb.yml", "chunking:\n  max_chars: 1000\n")
+    write(tmp_path / "kb.local.yml", "chunking:\n  max_chars: 2000\n")
+    cfg = load(cwd=tmp_path, config_dir=tmp_path,
+               env={"KB_CHUNKING__MAX_CHARS": "3000"})
+    assert get(cfg, "chunking.max_chars") == 3000  # env wins
+
+
+def test_all_four_layers_no_env(tmp_path):
+    """Three layers (no env): kb.local.yml > kb.yml > default."""
+    write(tmp_path / "kb.yml", "chunking:\n  max_chars: 1000\n")
+    write(tmp_path / "kb.local.yml", "chunking:\n  max_chars: 2000\n")
+    cfg = load(cwd=tmp_path, config_dir=tmp_path, env={})
+    assert get(cfg, "chunking.max_chars") == 2000  # local wins
+
+
+def test_all_four_layers_no_env_no_local(tmp_path):
+    """Two layers (no env, no local): kb.yml > default."""
+    write(tmp_path / "kb.yml", "chunking:\n  max_chars: 1000\n")
+    cfg = load(cwd=tmp_path, config_dir=tmp_path, env={})
+    assert get(cfg, "chunking.max_chars") == 1000  # yml wins
+
+
+# --- debug layer-wins report (brief item 8) ---------------------------------
+#
+# The loader does not yet expose a debug/layer-wins API. These tests
+# define the expected interface: a `load_debug()` function (or
+# `load(debug=True)`) that returns a mapping of knob → winning layer name.
+# Expected to FAIL until T028/T029 implements the capability.
+#
+
+@pytest.mark.xfail(reason="loader has no debug layer-wins API yet (T028/T029)",
+                  strict=True)
+def test_debug_layer_wins_report_exists(tmp_path):
+    """A debug capability must exist on the loader."""
+    from digital_twins.config import loader as _loader
+    assert hasattr(_loader, "load_debug"), (
+        "loader must expose load_debug() or an equivalent debug API")
+
+
+@pytest.mark.xfail(reason="loader has no debug layer-wins API yet (T028/T029)",
+                  strict=True)
+def test_debug_reports_winner_per_knob(tmp_path):
+    """load_debug() maps each set knob to its winning layer name."""
+    from digital_twins.config import loader as _loader
+
+    write(tmp_path / "kb.yml", "chunking:\n  max_chars: 1000\n")
+    write(tmp_path / "kb.local.yml", "chunking:\n  max_chars: 2000\n")
+    result = _loader.load_debug(
+        cwd=tmp_path, config_dir=tmp_path,
+        env={"KB_EMBEDDING__DEVICE": "cpu"},
+    )
+    # result must expose per-knob winner layer
+    assert result["chunking.max_chars"] == "kb.local.yml"
+    assert result["embedding.device"] == "env"
+    assert result["embedding.model"] == "defaults"
