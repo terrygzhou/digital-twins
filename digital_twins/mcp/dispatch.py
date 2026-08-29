@@ -56,6 +56,18 @@ def _stub_body(name: str) -> dict:
     return {"ok": True, "tool": name}
 
 
+def _to_r2(schedule: dict) -> dict:
+    """Map a raw schedules-row dict to the R2 MCP-facing shape.
+
+    The raw 002/003 helper returns the DB column name ``id``; the R2
+    contract (004 contracts/scheduler.md, mirroring 003) exposes it as
+    ``schedule_id``.  All other field names are already R2-compatible.
+    """
+    result = dict(schedule)
+    result["schedule_id"] = result.pop("id")
+    return result
+
+
 def _kb_schedule_list_body(ctx: MCPContext, args: dict) -> dict:
     """List schedules: own scope by default; all_users=True is admin-only.
 
@@ -94,12 +106,61 @@ def _kb_schedule_list_body(ctx: MCPContext, args: dict) -> dict:
         if can_access_schedule(s, ctx.caller_email, ctx.caller_role)
     ]
 
-    return {"ok": True, "data": {"schedules": schedules}}
+    # R2: expose the id as schedule_id (contract field name).
+    return {"ok": True, "data": {"schedules": [_to_r2(s) for s in schedules]}}
+
+
+def _kb_schedule_create_body(ctx: MCPContext, args: dict) -> dict:
+    """Create a schedule for the caller (owner = caller_email, R5).
+
+    Delegates to ``scheduler.schedules.create_schedule`` (002 helper).
+    The caller's email is the owner (v1: caller-scoped, R5).  The ``acl``
+    argument is passed through to ``create_schedule`` (default ``"owner"``).
+
+    R11: no audit_runs row (a CRUD mutation is not a run).
+    """
+    from ..scheduler.schedules import create_schedule
+
+    source = args.get("source")
+    preset = args.get("preset")
+    param = args.get("param")
+    fire_time = args.get("fire_time", "03:00")
+    acl = args.get("acl", "owner")
+
+    try:
+        schedule = create_schedule(
+            ctx.db,
+            owner=ctx.caller_email,
+            source=source,
+            preset=preset,
+            param=param,
+            fire_time=fire_time,
+            acl=acl,
+        )
+    except ValueError as exc:
+        # Map the 002 preset/param validation errors to the R4 error codes.
+        if "unknown preset" in str(exc):
+            return {
+                "ok": False,
+                "error": {
+                    "code": "invalid_preset",
+                    "message": str(exc),
+                },
+            }
+        return {
+            "ok": False,
+            "error": {
+                "code": "invalid_param",
+                "message": str(exc),
+            },
+        }
+
+    return {"ok": True, "data": {"schedule": _to_r2(schedule)}}
 
 
 TOOL_BODIES: dict[str, Callable[..., dict]] = {
     "kb_schedule_list": _kb_schedule_list_body,
-    "kb_schedule_create": lambda ctx, args: _stub_body("kb_schedule_create"),
+    "kb_schedule_create": _kb_schedule_create_body,
     "kb_schedule_update": lambda ctx, args: _stub_body("kb_schedule_update"),
     "kb_schedule_delete": lambda ctx, args: _stub_body("kb_schedule_delete"),
     "kb_schedule_run": lambda ctx, args: _stub_body("kb_schedule_run"),

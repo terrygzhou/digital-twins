@@ -108,6 +108,7 @@ def create_schedule(
     param: int | None = None,
     fire_time: str = "03:00",
     now: datetime | None = None,
+    acl: str = "owner",
 ) -> dict:
     """Create a schedule; upsert on the UNIQUE (owner, source, preset, param,
     fire_time) key.
@@ -117,7 +118,9 @@ def create_schedule(
     its timing). Preset/param are validated fail-fast (ValueError naming the
     problem). ``now`` defaults to the actual now (UTC); ``next_fire_at`` is
     computed with ``expand_next(preset, param, fire_time, now, anchor=now)``
-    (creation time is the initial anchor).
+    (creation time is the initial anchor). ``acl`` defaults to ``"owner"``
+    (004 MCP create passes through the caller's acl argument; 002 callers
+    that omit it get the original ``"owner"`` default).
 
     Returns the schedule as a dict (see module docstring for keys).
     """
@@ -145,9 +148,10 @@ def create_schedule(
         "INSERT INTO schedules "
         "(owner, source, preset, param, fire_time, enabled, next_fire_at, "
         " acl, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, 1, ?, 'owner', ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
         (owner, source, preset, param, fire_time,
-         _next_fire_at_iso(preset, param, fire_time, ref, ref), ts, ts),
+         _next_fire_at_iso(preset, param, fire_time, ref, ref),
+         acl, ts, ts),
     )
     return _fetch_row(db, db.execute(
         "SELECT last_insert_rowid()"
@@ -184,10 +188,11 @@ def update_schedule(db, schedule_id: int, **fields) -> dict:
     """Update a schedule's fields and return the updated row.
 
     May change ``preset`` / ``param`` / ``fire_time`` / ``enabled`` /
-    ``owner`` / ``source``. When cadence fields (preset/param/fire_time)
-    change, recompute ``next_fire_at`` from the ACTUAL now — NOT from the old
-    ``next_fire_at`` (clock-skew guard, R3) — with ``anchor`` = the existing
-    ``created_at`` (preserves weekly/monthly anchoring). Bumps ``updated_at``.
+    ``owner`` / ``source`` / ``acl``. When cadence fields
+    (preset/param/fire_time) change, recompute ``next_fire_at`` from the
+    ACTUAL now — NOT from the old ``next_fire_at`` (clock-skew guard, R3) —
+    with ``anchor`` = the existing ``created_at`` (preserves weekly/monthly
+    anchoring). Bumps ``updated_at``.
 
     Invalid new preset/param -> ValueError (row unchanged).
     """
@@ -200,6 +205,7 @@ def update_schedule(db, schedule_id: int, **fields) -> dict:
     new_owner = fields.get("owner", current["owner"])
     new_source = fields.get("source", current["source"])
     new_enabled = fields.get("enabled", current["enabled"])
+    new_acl = fields.get("acl", current["acl"])
 
     cadence_changed = (
         new_preset != current["preset"]
@@ -220,10 +226,10 @@ def update_schedule(db, schedule_id: int, **fields) -> dict:
 
     db.execute(
         "UPDATE schedules SET owner = ?, source = ?, preset = ?, param = ?, "
-        "fire_time = ?, enabled = ?, next_fire_at = ?, updated_at = ? "
-        "WHERE id = ?",
+        "fire_time = ?, enabled = ?, next_fire_at = ?, acl = ?, "
+        "updated_at = ? WHERE id = ?",
         (new_owner, new_source, new_preset, new_param, new_fire_time,
-         new_enabled, next_fire, ts, schedule_id),
+         new_enabled, next_fire, new_acl, ts, schedule_id),
     )
     return _fetch_row(db, schedule_id)
 
