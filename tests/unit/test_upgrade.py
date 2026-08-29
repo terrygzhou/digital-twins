@@ -6,6 +6,8 @@ Constitution VI: migration completes before any new code runs.
 
 import json
 
+import pytest
+
 from digital_twins.state import migrations, models
 from digital_twins.state.db import connect
 
@@ -304,4 +306,50 @@ def test_config_file_survives_upgrade(tmp_path, monkeypatch):
 
     assert config.read_text() == original, "config file must not be modified"
     assert config.exists(), "config file must not be deleted"
+    conn.close()
+
+
+# T034: transaction safety — a failing migration step rolls back -----------
+
+def test_failed_migration_step_rolls_back(tmp_path, monkeypatch):
+    """A migration step that fails mid-transaction is rolled back:
+    user_version stays at the previous value, the partial changes are
+    reverted, and a subsequent migrate() re-runs the step."""
+    conn = connect(tmp_path)
+    migrations.migrate(conn)  # apply v1
+
+    def apply_v2_failing(conn_):
+        conn_.execute("CREATE TABLE IF NOT EXISTS v2_partial (id INTEGER PRIMARY KEY)")
+        conn_.execute("INSERT INTO v2_partial (id) VALUES (1)")
+        raise RuntimeError("simulated mid-step failure")
+
+    monkeypatch.setattr(migrations, "MIGRATIONS", [
+        (1, models.apply_v1),
+        (2, apply_v2_failing),
+    ])
+
+    # First attempt: v2 fails, transaction rolls back
+    with pytest.raises(RuntimeError, match="simulated mid-step failure"):
+        migrations.migrate(conn)
+
+    # user_version must still be 1 (the failed step did not advance it)
+    assert migrations.user_version(conn) == 1, (
+        "user_version must not advance on a failed migration step")
+
+    # The partial table must be gone (rolled back)
+    tables = [r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='v2_partial'"
+    ).fetchall()]
+    assert tables == [], "failed migration step must be fully rolled back"
+
+    # v1 data is intact
+    assert len(conn.execute("SELECT * FROM accounts").fetchall()) == 0
+
+    # Now replace with a working v2: it should apply cleanly
+    monkeypatch.setattr(migrations, "MIGRATIONS", [
+        (1, models.apply_v1),
+        (2, _apply_v2_noop),
+    ])
+    v = migrations.migrate(conn)
+    assert v == 2, "a subsequent migrate() must apply the now-working step"
     conn.close()

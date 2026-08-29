@@ -79,17 +79,26 @@ def _starter(overrides: dict, cfg: dict) -> dict:
     return data
 
 
-@click.group()
-@click.version_option(version=__version__)
-@click.option("--version-json", is_flag=True, hidden=True,
-              help="Print machine-readable version (JSON) and exit.")
-def cli(version_json: bool) -> None:
-    """Environment-portable KB ingestion: layered config, fail-fast sources, dedup-safe ingest."""
+def _cli_callback(ctx, version_json: bool) -> None:
+    """Group callback: handle --version-json before Click's version_option fires."""
     if version_json:
         import json
         click.echo(json.dumps({"name": "digital-twins", "version": __version__}))
-        raise SystemExit(0)
+        ctx.exit(0)
     pre_command()
+
+
+@click.group(invoke_without_command=True)
+@click.version_option(version=__version__)
+@click.option("--version-json", is_flag=True, default=False, hidden=True,
+              help="Print machine-readable version (JSON) and exit.")
+@click.pass_context
+def cli(ctx: click.Context, version_json: bool) -> None:
+    """Environment-portable KB ingestion: layered config, fail-fast sources, dedup-safe ingest."""
+    _cli_callback(ctx, version_json)
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+        raise SystemExit(0)
 
 
 @cli.command()
