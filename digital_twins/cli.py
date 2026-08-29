@@ -95,6 +95,78 @@ def validate() -> None:
 
 
 @cli.command()
+@click.option("--source", "source_names", multiple=True,
+              help="Only these source names (they must be enabled in config).")
+@click.option("--max-items", type=int, default=None,
+              help="Override the per-source item cap for this run.")
+@click.option("--dry-run", is_flag=True,
+              help="Count what would be ingested; write nothing.")
+def run(source_names: tuple, max_items: int, dry_run: bool) -> None:
+    """One-shot ingestion: read -> chunk -> embed -> upsert.
+
+    Fail-fast: a missing prerequisite exits 2 and names the source, the
+    prerequisite, and where to set it. An audit row is written regardless.
+    """
+    cfg = load()
+    state_dir = Path(cfg["state_dir"])
+    state_dir.mkdir(parents=True, exist_ok=True)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+        qdrant_url = get(cfg, "qdrant.url")
+
+        def qdrant_factory():
+            if not qdrant_url:
+                raise ConfigError(
+                    "qdrant.url is not set — run init or set KB_QDRANT__URL")
+            from qdrant_client import QdrantClient
+            return QdrantClient(
+                url=qdrant_url,
+                api_key=get(cfg, "qdrant.api_key") or None)
+
+        qdrant = None if dry_run else qdrant_factory
+        embedder = None if dry_run else _make_embedder(cfg)
+
+        from digital_twins.ingest.pipeline import (
+            PrerequisiteError,
+            run_pipeline,
+        )
+        from digital_twins.sources import UnknownSourceError
+        try:
+            summary = run_pipeline(
+                cfg, db, qdrant, embedder,
+                source_names=list(source_names) or None,
+                max_items=max_items, dry_run=dry_run)
+        except PrerequisiteError as exc:
+            click.echo(f"fail-fast: {exc}", err=True)
+            raise SystemExit(2)
+        except (ConfigError, UnknownSourceError) as exc:
+            raise SystemExit(f"config error: {exc}")
+
+        for name in sorted(summary.counts):
+            click.echo(f"{name}: {summary.counts[name]} item(s)")
+        mode = "would ingest" if dry_run else "ingested"
+        click.echo(f"{mode} {summary.points} point(s) — run_id {summary.run_id}")
+    finally:
+        db.close()
+
+
+def _make_embedder(cfg):
+    from digital_twins.ingest.embedding import load_embedder
+
+    state = {}
+
+    def embed(texts):
+        if "model" not in state:
+            state["model"] = load_embedder(
+                get(cfg, "embedding.model"),
+                get(cfg, "embedding.device") or "auto")
+        return state["model"].encode(list(texts)).tolist()
+
+    return embed
+
+
+@cli.command()
 @click.option(
     "--yes", is_flag=True,
     help="Do not prompt: keep existing values, leave missing endpoints unset.")

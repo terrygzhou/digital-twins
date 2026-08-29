@@ -80,17 +80,17 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T018 [P] [US2] Write idempotency invariant test — ingest, re-ingest, assert exactly one point per item + high-water marks + audit rows (the one-record-not-N invariant) — in `tests/integration/test_idempotency.py`
-- [ ] T019 [P] [US2] Write fail-fast tests — enabled source with missing prerequisite fails at enable-time and run-time, exit 2, error names source + missing prerequisite + where to set it; nothing ingested; failed run still audited — in `tests/integration/test_failfast.py`
+- [x] T018 [P] [US2] Write idempotency invariant test — ingest, re-ingest, assert exactly one point per item + high-water marks + audit rows (the one-record-not-N invariant) — in `tests/integration/test_idempotency.py`
+- [x] T019 [P] [US2] Write fail-fast tests — enabled source with missing prerequisite fails at enable-time and run-time, exit 2, error names source + missing prerequisite + where to set it; nothing ingested; failed run still audited — in `tests/integration/test_failfast.py`
 
 ### Implementation for User Story 2
 
-- [ ] T020 [US2] Implement source contract — `Capability` (runtime, credential, prefix), `Source` (`prerequisites()`, `read(since)`, `close()`), built-in registry — in `digital_twins/sources/base.py` (per `contracts/source.md`)
-- [ ] T021 [P] [US2] Implement `fs` directory-of-files source (demo/test double) in `digital_twins/sources/fs.py` (depends on T020)
+- [x] T020 [US2] Implement source contract — `Capability` (runtime, credential, prefix), `Source` (`prerequisites()`, `read(since)`, `close()`), built-in registry — in `digital_twins/sources/base.py` (per `contracts/source.md`)
+- [x] T021 [P] [US2] Implement `fs` directory-of-files source (demo/test double) in `digital_twins/sources/fs.py` (depends on T020)
 - [ ] T022 [P] [US2] Implement session-store sources `hermes`, `pi`, `dsh` — reimplemented inside the package (baseline scripts are reference only), each `enabled: false` by default with declared prerequisites — in `digital_twins/sources/hermes.py`, `digital_twins/sources/pi.py`, `digital_twins/sources/dsh.py` (depends on T020)
 - [ ] T023 [P] [US2] Implement `paperclip` PG chat source in `digital_twins/sources/paperclip.py` and shared IMAP source with `yahoo`/`gmail` instances + credential capability — in `digital_twins/sources/imap_mail.py` (depends on T020)
-- [ ] T024 [US2] Implement ingestion pipeline — read → chunk → embed → upsert Qdrant (deterministic IDs) + Neo4j nodes/links → high-water marks → one audit row per run — in `digital_twins/ingest/pipeline.py` (depends on T011, T012, T020, T021)
-- [ ] T025 [US2] Implement `run` command — enable-time + run-time prerequisite fail-fast (exit 2, names the prerequisite), `--source`, `--max-items`, `--dry-run`, per-source counts + `run_id` output, audit row written regardless of outcome — in `digital_twins/cli.py` (depends on T024)
+- [x] T024 [US2] Implement ingestion pipeline — read → chunk → embed → upsert Qdrant (deterministic IDs) + Neo4j nodes/links → high-water marks → one audit row per run — in `digital_twins/ingest/pipeline.py` (depends on T011, T012, T020, T021)
+- [x] T025 [US2] Implement `run` command — enable-time + run-time prerequisite fail-fast (exit 2, names the prerequisite), `--source`, `--max-items`, `--dry-run`, per-source counts + `run_id` output, audit row written regardless of outcome — in `digital_twins/cli.py` (depends on T024)
 
 **Checkpoint**: US1 + US2 both functional — the tool configures, refuses cleanly, and ingests dedup-safe with audit.
 
