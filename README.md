@@ -18,12 +18,110 @@ them, `--system-site-packages` avoids re-downloading.
 
 ## Commands
 
-| Command | Status |
+| Command | Flags | Description |
+|---|---|---|
+| `digital-twins --version` | | Print version and exit |
+| `digital-twins --version-json` | | Print machine-readable version (JSON) and exit |
+| `digital-twins init` | `--yes` | First-run setup: endpoints, starter `kb.local.yml`, state DB, health report |
+| `digital-twins validate` | | Health-check the configured endpoints; exits 0 only when all pass |
+| `digital-twins run` | `--source NAME`, `--max-items N`, `--dry-run` | One-shot ingestion: read → chunk → embed → upsert |
+
+All commands are implemented. The full flag set is verified against
+[`digital_twins/cli.py`](digital_twins/cli.py).
+
+## Quickstart
+
+### 1 — Install
+
+```bash
+pip install -e .
+```
+
+Requires Python ≥ 3.11. See [Install](#install) above for the
+`--system-site-packages` variant.
+
+### 2 — Initialise
+
+```bash
+digital-twins init        # prompts for qdrant.url, neo4j.url/user, llm.endpoint
+```
+
+**Expected**: config dir created with `kb.local.yml` (every source `enabled: false`);
+state dir + `state.db` created; health table printed; exit 0.
+Re-running `init` keeps existing values, prompts for nothing new, exits 0 (idempotent).
+
+### 3 — Validate
+
+```bash
+digital-twins validate
+```
+
+**Expected**: exit 0, all endpoints ok.
+Point `qdrant.url` at a collection with a different vector size →
+**hard error** naming the mismatch plus the remediation ("re-embed, or point at a new collection"), exit 1.
+
+### 4 — Ingest + idempotent re-run
+
+```bash
+# enable the fs source on a directory of two .md files in kb.local.yml:
+#   sources.fs: { enabled: true, extra: { dir: /tmp/kb-demo } }
+digital-twins run --source fs
+digital-twins run --source fs      # second run
+```
+
+**Expected**: run 1 → `fs: 2 item(s)`, audit row with `run_id` written;
+run 2 → `fs: 0 item(s)`; the collection still holds exactly 2 points.
+
+### 5 — Fail-fast prerequisite
+
+```bash
+# kb.local.yml: sources.hermes.enabled: true (no session store present on this host)
+digital-twins run --source hermes
+```
+
+**Expected**: exit **2**, message names the source + missing prerequisite + where to set it.
+Nothing ingested; the failed run is still audited.
+
+### 6 — Custom source without a package update
+
+```yaml
+# kb.local.yml
+sources.mytool:
+  enabled: true
+  entrypoint: mytool_kb:make_source     # user module on PYTHONPATH
+  credential: MYTOOL_TOKEN
+  prefix: "mytool:"
+```
+
+**Expected**: with `MYTOOL_TOKEN` set, `digital-twins run --source mytool` ingests;
+without it, fail-fast exit 2 naming the credential. No package reinstall involved.
+
+### 7 — Portability + knob-doc audit
+
+```bash
+pytest tests/integration/test_portability.py tests/unit/test_knob_docs.py
+```
+
+**Expected**: both pass — zero host-specific paths/usernames in shipped code, config, docs;
+zero undocumented knobs.
+
+## Validation Guide
+
+### Exit codes
+
+| Code | Meaning |
 |---|---|
-| `digital-twins --version` | ✅ |
-| `digital-twins init` | in progress (US1) |
-| `digital-twins validate` | in progress (US1) |
-| `digital-twins run` | in progress (US2) |
+| `0` | Success (all health checks pass; ingestion completed) |
+| `1` | Health check failure or Qdrant dimension mismatch |
+| `2` | Prerequisite failure (missing credential, missing source, etc.) |
+
+### Test commands
+
+```bash
+pytest tests/unit -q                       # hermetic default suite
+pytest tests/integration -q                # in-memory Qdrant + stubs
+KB_LIVE_QDRANT=... KB_LIVE_NEO4J=... pytest -m live   # opt-in real services
+```
 
 ## Configuration
 
