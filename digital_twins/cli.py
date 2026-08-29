@@ -605,5 +605,275 @@ def _count_accounts(db) -> int:
     return db.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
 
 
+# --- token group (T010, US3 — personal token self-service) -------------------
+#
+# All three subcommands (create, list, revoke) authenticate first via
+# DT_PERSONAL_TOKEN (the personal token resolves to an account_email +
+# role), then check the caller's role against R3 (manage_own_tokens).
+#
+# Authentication: DT_PERSONAL_TOKEN env var (auth-only, read from
+# os.environ, never in argv, never in logs). When set, the token is
+# verified via auth.verify_personal_token; the resolved account_email
+# becomes the caller's identity. If DT_PERSONAL_TOKEN is missing or
+# invalid, exit 2 with a named reason.
+#
+# Role checks (R3 / contracts/cli.md):
+# - token create (no --as): self-service; any authenticated role with
+#   manage_own_tokens (admin/scheduler/reader).
+# - token create --as USER: admin-only (manage_accounts-adjacent: create
+#   for another user). The caller must be admin; the target user must
+#   exist.
+# - token list (no --as): self: own tokens; admin: all.
+# - token list --as USER: admin-only: list a specific user's tokens.
+# - token revoke --id N: self: own tokens only; admin: any. The caller
+#   must own the token (or be admin).
+
+
+def _token_authenticate(db) -> tuple[str, str]:
+    """Authenticate the caller via DT_PERSONAL_TOKEN.
+
+    Returns ``(account_email, role)`` on success. Exits 2 with a named
+    reason on failure.
+    """
+    from digital_twins.auth import verify_personal_token
+    from digital_twins.accounts import get_role
+
+    token = os.environ.get("DT_PERSONAL_TOKEN")
+    if not token:
+        click.echo(
+            "authentication failed: DT_PERSONAL_TOKEN not set "
+            "(export DT_PERSONAL_TOKEN=<token> to authenticate)",
+            err=True)
+        raise SystemExit(2)
+
+    account_email = verify_personal_token(db, token)
+    if account_email is None:
+        click.echo(
+            "authentication failed: DT_PERSONAL_TOKEN is invalid, "
+            "revoked, or unknown", err=True)
+        raise SystemExit(2)
+
+    role = get_role(db, account_email)
+    if role is None:
+        # Token verified but account no longer exists (race: account
+        # deleted between token creation and now).
+        click.echo(
+            "authentication failed: account no longer exists",
+            err=True)
+        raise SystemExit(2)
+
+    return account_email, role
+
+
+@cli.group()
+def token() -> None:
+    """Manage personal tokens (create / list / revoke).
+
+    All subcommands authenticate first via DT_PERSONAL_TOKEN, then check
+    the caller's role against R3.
+    """
+
+
+@token.command("create")
+@click.option("--as", "as_user", type=str, default=None,
+              help="Create a token for this user (admin-only). "
+                   "Without --as: the caller's own token.")
+def token_create(as_user: str) -> None:
+    """Create a personal token.
+
+    Without ``--as``: the caller's own token (self-service; any
+    authenticated role with manage_own_tokens). With ``--as USER``:
+    admin-only, create for another user. Prints the plaintext token once.
+    """
+    from digital_twins.auth import create_personal_token
+    from digital_twins.accounts import require_capability, RoleDenied
+
+    cfg = load()
+    state_dir = Path(cfg["state_dir"])
+    if not state_dir.is_dir():
+        click.echo(
+            "no state db — run 'digital-twins init' first", err=True)
+        raise SystemExit(2)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+        caller_email, caller_role = _token_authenticate(db)
+
+        if as_user is not None:
+            # --as USER: admin-only
+            try:
+                require_capability(
+                    caller_role, "manage_accounts",
+                    "create a token for another user")
+            except RoleDenied as exc:
+                click.echo(str(exc), err=True)
+                raise SystemExit(2)
+            target_email = as_user
+            # Verify the target user exists
+            from digital_twins.accounts import get_role as _get_role
+            target_role = _get_role(db, target_email)
+            if target_role is None:
+                click.echo(
+                    f"user `{target_email}` not found", err=True)
+                raise SystemExit(2)
+        else:
+            # Self-service: the caller's own token
+            target_email = caller_email
+            try:
+                require_capability(
+                    caller_role, "manage_own_tokens",
+                    "create a personal token")
+            except RoleDenied as exc:
+                click.echo(str(exc), err=True)
+                raise SystemExit(2)
+
+        token_id, plaintext = create_personal_token(db, target_email)
+        click.echo(plaintext)
+        click.echo(f"token id={token_id} created for `{target_email}` "
+                   f"(store it now — it will not be shown again)")
+    finally:
+        db.close()
+
+
+@token.command("list")
+@click.option("--as", "as_user", type=str, default=None,
+              help="List tokens for this user (admin-only). "
+                   "Without --as: the caller's own tokens.")
+def token_list(as_user: str) -> None:
+    """List personal tokens (metadata only; plaintext never re-displayed).
+
+    Without ``--as``: self: own tokens; admin: all. With ``--as USER``:
+    admin-only: list a specific user's tokens.
+    """
+    from digital_twins.auth import list_personal_tokens
+    from digital_twins.accounts import require_capability, RoleDenied, get_role
+
+    cfg = load()
+    state_dir = Path(cfg["state_dir"])
+    if not state_dir.is_dir():
+        click.echo(
+            "no state db — run 'digital-twins init' first", err=True)
+        raise SystemExit(2)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+        caller_email, caller_role = _token_authenticate(db)
+
+        if as_user is not None:
+            # --as USER: admin-only
+            try:
+                require_capability(
+                    caller_role, "manage_accounts",
+                    "list another user's tokens")
+            except RoleDenied as exc:
+                click.echo(str(exc), err=True)
+                raise SystemExit(2)
+            target_role = get_role(db, as_user)
+            if target_role is None:
+                click.echo(f"user `{as_user}` not found", err=True)
+                raise SystemExit(2)
+            rows = list_personal_tokens(db, as_user)
+        elif caller_role == "admin":
+            # Admin without --as: all tokens
+            rows = list_personal_tokens(db)
+        else:
+            # Non-admin without --as: own tokens only
+            try:
+                require_capability(
+                    caller_role, "manage_own_tokens",
+                    "list personal tokens")
+            except RoleDenied as exc:
+                click.echo(str(exc), err=True)
+                raise SystemExit(2)
+            rows = list_personal_tokens(db, caller_email)
+
+        if not rows:
+            click.echo("no tokens")
+            return
+
+        # Print a table: id, account_email, created_at, last_used_at, revoked
+        header = ("id", "account_email", "created_at", "last_used_at",
+                  "revoked")
+        col_keys = ("id", "account_email", "created_at", "last_used_at",
+                    "revoked")
+        widths = [
+            max(len(h), *(len(str(r[c]) if r[c] is not None else "-")
+                           for r in rows))
+            for h, c in zip(header, col_keys)
+        ]
+        click.echo("  ".join(h.ljust(w) for h, w in zip(header, widths)))
+        for r in rows:
+            cells = [
+                str(r[c]) if r[c] is not None else "-"
+                for c in col_keys
+            ]
+            click.echo("  ".join(c.ljust(w) for c, w in zip(cells, widths)))
+    finally:
+        db.close()
+
+
+@token.command("revoke")
+@click.option("--id", "token_id", type=int, required=True,
+              help="Token id to revoke.")
+def token_revoke(token_id: int) -> None:
+    """Revoke a personal token by id.
+
+    Self: own tokens only; admin: any. Flips ``revoked=1`` on that row
+    only (US3 S3: revocation isolation).
+    """
+    from digital_twins.auth import revoke_personal_token, list_personal_tokens
+    from digital_twins.accounts import require_capability, RoleDenied
+
+    cfg = load()
+    state_dir = Path(cfg["state_dir"])
+    if not state_dir.is_dir():
+        click.echo(
+            "no state db — run 'digital-twins init' first", err=True)
+        raise SystemExit(2)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+        caller_email, caller_role = _token_authenticate(db)
+
+        # Check the token exists and determine its owner
+        all_rows = list_personal_tokens(db)
+        target = None
+        for r in all_rows:
+            if r["id"] == token_id:
+                target = r
+                break
+        if target is None:
+            click.echo(
+                f"token id {token_id} not found", err=True)
+            raise SystemExit(1)
+
+        target_email = target["account_email"]
+        if target_email != caller_email:
+            # Revoking someone else's token: admin-only
+            try:
+                require_capability(
+                    caller_role, "manage_accounts",
+                    "revoke another user's token")
+            except RoleDenied as exc:
+                click.echo(str(exc), err=True)
+                raise SystemExit(2)
+
+        # Self: must have manage_own_tokens
+        if target_email == caller_email:
+            try:
+                require_capability(
+                    caller_role, "manage_own_tokens",
+                    "revoke a personal token")
+            except RoleDenied as exc:
+                click.echo(str(exc), err=True)
+                raise SystemExit(2)
+
+        revoke_personal_token(db, token_id)
+        click.echo(f"revoked token id={token_id} "
+                   f"(account: `{target_email}`)")
+    finally:
+        db.close()
+
+
 def main() -> None:
     cli()
