@@ -47,7 +47,7 @@ def _seed_account(db, email: str, password: str, salt: bytes | None = None) -> N
     salt = salt if salt is not None else os.urandom(16)
     db.execute(
         "INSERT INTO accounts (email, role, password_hash) VALUES (?, ?, ?)",
-        (email, "owner", _make_hash(password, salt)),
+        (email, "admin", _make_hash(password, salt)),
     )
     db.commit()
 

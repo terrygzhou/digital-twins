@@ -224,11 +224,28 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
         db = connect(state_dir)
         try:
             ok = authenticate(db, as_user, password)
+            if not ok:
+                click.echo(f"authentication failed for '{as_user}'", err=True)
+                raise SystemExit(2)
+            # 003 post-auth role check (C-2 / R3): after authentication,
+            # verify the caller's role permits trigger_run BEFORE any
+            # pipeline work. On denial: exit 2, named reason, no audit row,
+            # no Qdrant write, no high-water advance (same fail-fast
+            # contract as 002's bad-password path).
+            from digital_twins.accounts import get_role, require_capability, RoleDenied
+            caller_role = get_role(db, as_user)
+            if caller_role is None:
+                # Authenticated but the account no longer exists (race:
+                # account deleted between authenticate and get_role).
+                click.echo(f"authentication failed for '{as_user}'", err=True)
+                raise SystemExit(2)
+            try:
+                require_capability(caller_role, "trigger_run", "trigger a run")
+            except RoleDenied as exc:
+                click.echo(str(exc), err=True)
+                raise SystemExit(2)
         finally:
             db.close()
-        if not ok:
-            click.echo(f"authentication failed for '{as_user}'", err=True)
-            raise SystemExit(2)
         scheduled_by = as_user
     else:
         scheduled_by = "system"
@@ -453,12 +470,16 @@ def serve(port: int, tick_seconds: float) -> None:
     click.echo("serve: stopped (clean shutdown)")
 
 
-# --- schedule group (T012, US3 — FR-3 v1 CRUD) -----------------------------
+# --- schedule group (T012, US3/US4 — 003 role-checked CRUD) -----------------
 #
-# Ruling R-12: ``--as`` on schedule commands is an OWNER LABEL, not an auth
-# requirement. No DT_USER_PASSWORD, no accounts check, no credential
-# prompt. Auth via DT_USER_PASSWORD is T011 and lives on ``run --once``
-# only.
+# 003 post-auth role check (C-2): every schedule subcommand authenticates
+# first via DT_PERSONAL_TOKEN or DT_USER_PASSWORD + --as, then checks the
+# caller's role against R3 (schedule_crud: admin/scheduler yes, reader no).
+# On denial: exit 2, named reason, no schedule row written.
+#
+# --as semantics: for `add` and `remove`, --as names the account to
+# authenticate (and the owner label for `add`). For `list`, --as is an
+# optional filter (no auth required).
 
 
 def _open_schedules_db() -> "sqlite3.Connection":
@@ -474,6 +495,60 @@ def _open_schedules_db() -> "sqlite3.Connection":
     db = connect(state_dir)
     migrate(db)  # idempotent: no-op if already migrated
     return db
+
+
+def _schedule_authenticate(db, as_user: str) -> tuple[str, str]:
+    """Authenticate the caller for schedule commands and resolve their role.
+
+    Returns ``(account_email, role)`` on success. Exits 2 with a named
+    reason on failure.
+
+    Auth path:
+    - ``DT_PERSONAL_TOKEN`` set: verify the token → resolve account_email + role.
+    - Else: ``--as USER`` + ``DT_USER_PASSWORD`` → authenticate against the
+      accounts store, then resolve the role.
+    """
+    token = os.environ.get("DT_PERSONAL_TOKEN")
+    if token:
+        from digital_twins.auth import verify_personal_token
+        from digital_twins.accounts import get_role
+        account_email = verify_personal_token(db, token)
+        if account_email is None:
+            click.echo(
+                "authentication failed: DT_PERSONAL_TOKEN is invalid, "
+                "revoked, or unknown", err=True)
+            raise SystemExit(2)
+        role = get_role(db, account_email)
+        if role is None:
+            click.echo(
+                "authentication failed: account no longer exists", err=True)
+            raise SystemExit(2)
+        return account_email, role
+
+    if as_user is None:
+        click.echo(
+            "authentication failed: no credentials — set DT_PERSONAL_TOKEN "
+            "or pass --as with DT_USER_PASSWORD", err=True)
+        raise SystemExit(2)
+
+    password = os.environ.get("DT_USER_PASSWORD")
+    if password is None:
+        click.echo("DT_USER_PASSWORD not set", err=True)
+        raise SystemExit(2)
+
+    from digital_twins.auth import authenticate
+    ok = authenticate(db, as_user, password)
+    if not ok:
+        click.echo(f"authentication failed for '{as_user}'", err=True)
+        raise SystemExit(2)
+
+    from digital_twins.accounts import get_role
+    role = get_role(db, as_user)
+    if role is None:
+        click.echo(
+            "authentication failed: account no longer exists", err=True)
+        raise SystemExit(2)
+    return as_user, role
 
 
 @cli.group()
@@ -492,17 +567,32 @@ def schedule() -> None:
                    "ignored (and rejected) for all others.")
 @click.option("--fire-time", default="03:00", show_default=True,
               help="Local time of day (HH:MM) to fire.")
-@click.option("--as", "as_user", default="system", show_default=True,
-              help="Owner label (R-12: a label, not an auth check).")
+@click.option("--as", "as_user", default=None,
+              help="Account to authenticate as (and the owner label). "
+                   "Requires DT_USER_PASSWORD or DT_PERSONAL_TOKEN.")
 def schedule_add(source: str, preset: str, param: int, fire_time: str,
                  as_user: str) -> None:
-    """Add a schedule (upserts on the 5-field key)."""
+    """Add a schedule (upserts on the 5-field key).
+
+    003 post-auth role check: the caller must have the ``schedule_crud``
+    capability (R3: admin/scheduler yes, reader no). On denial: exit 2,
+    named reason, no schedule row written.
+    """
     import sqlite3 as _sqlite3
     db = _open_schedules_db()
     try:
+        # 003 post-auth role check (C-2 / R3)
+        from digital_twins.accounts import require_capability, RoleDenied
+        caller_email, caller_role = _schedule_authenticate(db, as_user)
+        try:
+            require_capability(caller_role, "schedule_crud", "manage schedules")
+        except RoleDenied as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2)
+
         from digital_twins.scheduler.schedules import create_schedule
         try:
-            row = create_schedule(db, as_user, source, preset,
+            row = create_schedule(db, caller_email, source, preset,
                                   param, fire_time)
         except ValueError as exc:
             # Config-class error (FR-8): exit 2, list the valid presets so
@@ -522,7 +612,7 @@ def schedule_add(source: str, preset: str, param: int, fire_time: str,
 @click.option("--as", "as_user", default=None,
               help="Filter by owner label. Default: all owners.")
 def schedule_list(as_user: str) -> None:
-    """List schedules. ``--as`` filters by owner label (R-12)."""
+    """List schedules. ``--as`` filters by owner label (filter only, no auth)."""
     db = _open_schedules_db()
     try:
         from digital_twins.scheduler.schedules import list_schedules
@@ -549,10 +639,25 @@ def schedule_list(as_user: str) -> None:
 @schedule.command("remove")
 @click.option("--id", "schedule_id", type=int, required=True,
               help="Schedule id to remove.")
-def schedule_remove(schedule_id: int) -> None:
-    """Remove a schedule by id. Exit 1 if the id does not exist."""
+@click.option("--as", "as_user", default=None,
+              help="Account to authenticate as. Requires DT_USER_PASSWORD "
+                   "or DT_PERSONAL_TOKEN.")
+def schedule_remove(schedule_id: int, as_user: str) -> None:
+    """Remove a schedule by id. Exit 1 if the id does not exist.
+
+    003 post-auth role check: the caller must have the ``schedule_crud``
+    capability (R3: admin/scheduler yes, reader no).
+    """
     db = _open_schedules_db()
     try:
+        from digital_twins.accounts import require_capability, RoleDenied
+        caller_email, caller_role = _schedule_authenticate(db, as_user)
+        try:
+            require_capability(caller_role, "schedule_crud", "manage schedules")
+        except RoleDenied as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2)
+
         from digital_twins.scheduler.schedules import delete_schedule
         existing = db.execute(
             "SELECT 1 FROM schedules WHERE id = ?", (schedule_id,)).fetchone()
