@@ -5,6 +5,7 @@ install locations — all such values resolve through the config layer at
 runtime. This test is a standing guard: it must stay green in every phase.
 """
 
+import os
 import re
 from pathlib import Path
 
@@ -56,6 +57,8 @@ SHIPPED_NON_PY = [
     "digital_twins/web/static/style.css",
     # 006 quickstart (shipped user-facing docs; NFR-13)
     "specs/006-web-app/quickstart.md",
+    # 008 US3 bootstrap script (T030): scanned for host paths + interpreter pins
+    "scripts/bootstrap-local.sh",
 ]
 
 
@@ -112,6 +115,18 @@ def test_no_interpreter_pins_in_shipped_surface():
                 hits.append(f"{f.relative_to(REPO)}:{lineno}: {line.strip()}")
     assert not hits, (
         "interpreter pins found in the shipped surface:\n" + "\n".join(hits)
+    )
+
+
+def test_bootstrap_script_in_shipped_scan():
+    """T030: scripts/bootstrap-local.sh exists, is executable, and is covered
+    by the portability scan (the two tests above sweep it via SHIPPED_NON_PY,
+    so its host-path and python3.N lines would fail there)."""
+    p = REPO / "scripts" / "bootstrap-local.sh"
+    assert p.is_file(), "scripts/bootstrap-local.sh is missing (T030)"
+    assert os.access(p, os.X_OK), "scripts/bootstrap-local.sh is not executable"
+    assert "scripts/bootstrap-local.sh" in SHIPPED_NON_PY, (
+        "scripts/bootstrap-local.sh not in SHIPPED_NON_PY — not being scanned"
     )
 
 
