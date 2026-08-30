@@ -35,11 +35,19 @@ class MCPContext:
     agent_kind:
         The client's declared kind (e.g. ``"hermes"``,
         ``"claude-desktop"``) or ``"unknown"`` when absent.
+    config:
+        The loaded config dict (feature 007, 007-R6). Both transports
+        (stdio + http) must populate it — ``stdio.main``/``http`` load it
+        via the config layer when the caller omits it. ``None`` is
+        allowed for callers that construct an ``MCPContext`` directly
+        (e.g. pre-007 tests); the KB tool bodies fail closed with
+        ``config_not_loaded`` when it is ``None`` (007-R6e).
     """
     db: Any
     caller_email: str
     caller_role: str
     agent_kind: str
+    config: Any = None
 
 
 # ---------------------------------------------------------------------------
