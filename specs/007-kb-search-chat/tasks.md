@@ -256,7 +256,7 @@ say "stub"; the `_stub_schema()` helper deleted.
   Wire into `TOOL_BODIES` (replace the lambda at line ~597). Verify:
   `pytest tests/unit/test_mcp_kb_health.py` GREEN.
 
-- [ ] T018 GREEN: delete the now-unused `_stub_schema()` — extend
+- [x] T018 GREEN: delete the now-unused `_stub_schema()` — extend
   `test_mcp_registry_schemas.py`: `hasattr(registry, "_stub_schema")` is
   `False` and `grep -c "_stub_schema" digital_twins/mcp/registry.py` is 0
   (no remaining callers after T009). RED if the helper still exists, then
@@ -271,7 +271,7 @@ say "stub"; the `_stub_schema()` helper deleted.
 **Purpose**: end-to-end proof across auth → dispatch → body → audit, and
 the two standing guards.
 
-- [ ] T019 RED: integration e2e — create
+- [x] T019 RED: integration e2e — create
   `tests/integration/test_mcp_kb_tools.py` (SC-001..SC-007, the brief's
   "Test surface" e2e line): against a migrated v3 state DB in
   `tmp_path` + a real account (created via `digital_twins.auth`) + tokens
@@ -297,7 +297,7 @@ the two standing guards.
   makes it pass (this task commits the test; implementation is done).
   Verify: GREEN.
 
-- [ ] T020 verify: portability guard — 007 adds **zero** shipped files
+- [x] T020 verify: portability guard — 007 adds **zero** shipped files
   (all changes are in existing `digital_twins/` modules; no new
   non-Python artifacts), so `tests/integration/test_portability.py`'s
   `SHIPPED`/`SHIPPED_NON_PY` lists are untouched — verify it stays green
@@ -305,13 +305,13 @@ the two standing guards.
   `pytest tests/integration/test_portability.py` and record the result in
   the SDD ledger (`.superpowers/sdd/007-kb-search-chat/progress.md`).
 
-- [ ] T021 verify: knob-docs guard — zero new knobs (007 reuses
+- [x] T021 verify: knob-docs guard — zero new knobs (007 reuses
   `qdrant.*`/`llm.*`/`embedding.*`/`sources.*`), so
   `tests/unit/test_knob_docs.py` must pass **unchanged** (constitution IV
   vacuous — spec "Constitution Compliance"). No red step; run
   `pytest tests/unit/test_knob_docs.py` and record green.
 
-- [ ] T022 verify: full suite green — run the **entire** `pytest` suite on
+- [x] T022 verify: full suite green — run the **entire** `pytest` suite on
   the worktree: all of `test_mcp_config_plumbing.py`,
   `test_mcp_registry_schemas.py`, `test_mcp_kb_search.py`,
   `test_mcp_kb_chat.py`, `test_mcp_kb_ingest.py`,
