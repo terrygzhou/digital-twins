@@ -20,11 +20,11 @@ RED commit failing before the GREEN commit, per task.
 
 ## Task 2 — D-007-2: keyed + locked qdrant client cache
 
-- [ ] T2 RED: new `tests/unit/test_mcp_qdrant_cache.py` — one construction
+- [x] T2 RED: new `tests/unit/test_mcp_qdrant_cache.py` — one construction
   per distinct config key; two configs differing only in an api-key-ish
   knob → two distinct clients; same config → same cached object.
   Verify: RED (cache is still flat/unkeyed).
-- [ ] T2 GREEN: `digital_twins/mcp/dispatch.py` — key
+- [x] T2 GREEN: `digital_twins/mcp/dispatch.py` — key
   `_qdrant_client_cache` on the hashable tuple of config-derived
   connection params; guard check-then-set with a `threading.Lock`.
   Verify: `pytest tests/unit/test_mcp_qdrant_cache.py
