@@ -17,6 +17,7 @@ The role-gate and owner-scope logic is what T009/T010 test.
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from typing import Any, Callable
 
@@ -605,6 +606,13 @@ def _fail_closed() -> dict:
     }
 
 
+# D-007-2: one client per distinct connection-param key, not one client per
+# process.  A second MCPContext (or owner) with the same qdrant.url but a
+# different qdrant.api_key must not silently share the first client.
+_QDRANT_CLIENT_CACHE_KEY = "_qdrant_client_cache"
+_qdrant_client_cache_lock = threading.Lock()
+
+
 def _resolve_qdrant_client(config) -> "QdrantClient":
     """Resolve the Qdrant client from the config layer (006 ``_qdrant_client``
     pattern, web/app.py lines 383–412).
@@ -614,22 +622,33 @@ def _resolve_qdrant_client(config) -> "QdrantClient":
     the body maps to ``qdrant_unavailable`` + the exact 006 remediation.
     The client is cached on the module so repeated calls don't reconstruct
     it (007-R1: a pooled client, not a per-request client).
+
+    D-007-2: the cache is keyed on the full tuple of config-derived
+    connection params the constructor consumes (url + api_key — every knob
+    the ``QdrantClient(...)`` call reads from config, so no silent sharing
+    across configs that differ in any of them), and the check-then-set is
+    guarded by ``_qdrant_client_cache_lock`` (atomic under concurrent first
+    calls; the lock is the pooled-embedder pool-style module-global guard).
     """
     # NOTE: the QdrantUnavailable reference in this docstring is defined
     # below the imports (above the body that raises it).
     url = _cfg_get(config, "qdrant.url")
     if not url:
         raise QdrantUnavailable("qdrant.url is not configured")
-    client = globals().get("_qdrant_client_cache")
-    if client is None:
-        try:
-            from qdrant_client import QdrantClient
-            client = QdrantClient(
-                url=url,
-                api_key=_cfg_get(config, "qdrant.api_key") or None)
-        except Exception as exc:  # construction/transport failure
-            raise QdrantUnavailable(str(exc)) from exc
-        globals()["_qdrant_client_cache"] = client
+    key = (url, _cfg_get(config, "qdrant.api_key") or None)
+    cache = globals().get(_QDRANT_CLIENT_CACHE_KEY)
+    if cache is None:
+        cache = {}
+        globals()[_QDRANT_CLIENT_CACHE_KEY] = cache
+    with _qdrant_client_cache_lock:
+        client = cache.get(key)
+        if client is None:
+            try:
+                from qdrant_client import QdrantClient
+                client = QdrantClient(url=url, api_key=key[1])
+            except Exception as exc:  # construction/transport failure
+                raise QdrantUnavailable(str(exc)) from exc
+            cache[key] = client
     return client
 
 
