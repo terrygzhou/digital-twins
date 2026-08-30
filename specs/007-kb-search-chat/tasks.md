@@ -86,7 +86,7 @@ changes yet.
 **Purpose**: full `inputSchema`s for the four tools; descriptions no longer
 say "stub"; the `_stub_schema()` helper deleted.
 
-- [ ] T005 RED: `_kb_search_schema()` builder — RED: extend
+- [x] T005 RED: `_kb_search_schema()` builder — RED: extend
   `tests/unit/test_mcp_config_plumbing.py` (or a new
   `tests/unit/test_mcp_registry_schemas.py` — create it):
   `registry._kb_search_schema()` returns an object-schema with
@@ -97,22 +97,22 @@ say "stub"; the `_stub_schema()` helper deleted.
   `digital_twins/mcp/registry.py` — add the builder (007-R1a). Verify:
   GREEN.
 
-- [ ] T006 RED: `_kb_chat_schema()` builder — RED: same file:
+- [x] T006 RED: `_kb_chat_schema()` builder — RED: same file:
   `_kb_chat_schema()` has `query` (string, required) + `agent_kind`.
   Verify: `pytest tests/unit/test_mcp_registry_schemas.py` RED. GREEN:
   add the builder (007-R2a). Verify: GREEN.
 
-- [ ] T007 RED: `_kb_ingest_schema()` builder — RED: same file:
+- [x] T007 RED: `_kb_ingest_schema()` builder — RED: same file:
   `_kb_ingest_schema()` has `source` (string, **optional** — omitted/`"all"`
   runs all enabled, mirroring 006 web + `run --once`) + `agent_kind`;
   `required: []`. Verify: RED. GREEN: add the builder (007-R3a). Verify:
   GREEN.
 
-- [ ] T008 RED: `_kb_health_schema()` builder — RED: same file:
+- [x] T008 RED: `_kb_health_schema()` builder — RED: same file:
   `_kb_health_schema()` has only `agent_kind`; `required: []`. Verify:
   RED. GREEN: add the builder (007-R4a). Verify: GREEN.
 
-- [ ] T009 GREEN: replace the four stub declarations in
+- [x] T009 GREEN: replace the four stub declarations in
   `build_tool_registry` — extend `test_mcp_registry_schemas.py`: the
   registry's four KB entries now carry the real schemas (query/limit/source
   properties present with the right required lists) and their
