@@ -32,7 +32,7 @@ files named in the plan is created or modified.
 populate it; the CLI threads its loaded `cfg`. No tool-body behavior
 changes yet.
 
-- [ ] T001 RED+GREEN: `MCPContext.config` field — RED: create
+- [x] T001 RED+GREEN: `MCPContext.config` field — RED: create
   `tests/unit/test_mcp_config_plumbing.py` asserting
   `MCPContext(db, "a@b", "reader", "stdio")` (4-arg positional, the 004
   call shape) still constructs with `config is None`, and
@@ -45,7 +45,7 @@ changes yet.
   populate it; KB tool bodies fail closed when it is `None` (007-R6a/R6e).
   Verify: the same command GREEN.
 
-- [ ] T002 RED+GREEN: stdio transport threads config — RED: extend
+- [x] T002 RED+GREEN: stdio transport threads config — RED: extend
   `test_mcp_config_plumbing.py`: `stdio.main`/`stdio.serve` accept a
   `config` kwarg; when omitted, `main` loads it via
   `digital_twins.config.loader.load()` (monkeypatch the loader); the
@@ -57,7 +57,7 @@ changes yet.
   None`; thread `config=config` into the `MCPContext(...)` construction.
   Verify: GREEN.
 
-- [ ] T003 RED+GREEN: http transport threads config — RED: extend
+- [x] T003 RED+GREEN: http transport threads config — RED: extend
   `test_mcp_config_plumbing.py`: `http.build_handler`/`http.serve`/
   `http.main`/`_build_handler_cls` accept a `config` kwarg (default: load
   from cwd via the config layer, monkeypatchable); the handler's
@@ -67,7 +67,7 @@ changes yet.
   all four functions; when `None`, load via `digital_twins.config.loader.
   load()`; thread it into `MCPContext(config=...)`. Verify: GREEN.
 
-- [ ] T004 RED+GREEN: `cli.serve_mcp` passes loaded cfg to both transports
+- [x] T004 RED+GREEN: `cli.serve_mcp` passes loaded cfg to both transports
   — RED: extend `test_mcp_config_plumbing.py`: with a tmp state dir +
   config, the `serve-mcp` click command (run in a subprocess with piped
   stdio, or the test seam it exposes) passes the **already-loaded** `cfg`
@@ -130,7 +130,7 @@ say "stub"; the `_stub_schema()` helper deleted.
 
 **Purpose**: the four real bodies in `dispatch.py`, each RED-first.
 
-- [ ] T010 RED: `kb_search` unit tests — create
+- [x] T010 RED: `kb_search` unit tests — create
   `tests/unit/test_mcp_kb_search.py` (007-R1, SC-001/SC-002/SC-007):
   (a) owner-scoped filter — a fake Qdrant client (seeded via the dispatch
   module's client seam) captures `query_points` args: the
@@ -153,7 +153,7 @@ say "stub"; the `_stub_schema()` helper deleted.
   (`not_implemented_yet`). Verify: `pytest tests/unit/test_mcp_kb_search.py`
   RED.
 
-- [ ] T011 GREEN: `_kb_search_body` + shared helpers + wiring — implement
+- [x] T011 GREEN: `_kb_search_body` + shared helpers + wiring — implement
   in `digital_twins/mcp/dispatch.py` (plan "kb_search body"):
   `_kb_search_body(ctx, args)` mirroring `web/app.py::_handle_kb_search`
   (lines 555–607) — fail-closed guard → query validation → limit clamp →
@@ -168,7 +168,7 @@ say "stub"; the `_stub_schema()` helper deleted.
   `kb_search` into `TOOL_BODIES` (replace the lambda at line ~573). Verify:
   `pytest tests/unit/test_mcp_kb_search.py` GREEN.
 
-- [ ] T012 RED: `kb_chat` unit tests — create
+- [x] T012 RED: `kb_chat` unit tests — create
   `tests/unit/test_mcp_kb_chat.py` (007-R2, SC-003): (a) the result is
   `{"ok": False, "error": {"code": "not_implemented", "remediation":
   "set llm.endpoint / llm.model to enable chat (007 ships the surface
@@ -183,7 +183,7 @@ say "stub"; the `_stub_schema()` helper deleted.
   record zero calls); (e) `config=None` → `config_not_loaded`. RED against
   the stub lambda. Verify: `pytest tests/unit/test_mcp_kb_chat.py` RED.
 
-- [ ] T013 GREEN: `_kb_chat_body` + wiring — implement
+- [x] T013 GREEN: `_kb_chat_body` + wiring — implement
   `_kb_chat_body(ctx, args)` in `dispatch.py` (plan "kb_chat body"):
   fail-closed guard → query validation → read
   `get(cfg, "llm.endpoint")` / `get(cfg, "llm.model")` (the only knob
@@ -192,7 +192,7 @@ say "stub"; the `_stub_schema()` helper deleted.
   Wire into `TOOL_BODIES` (replace the lambda at line ~581). Verify:
   `pytest tests/unit/test_mcp_kb_chat.py` GREEN.
 
-- [ ] T014 RED: `kb_ingest` unit tests — create
+- [x] T014 RED: `kb_ingest` unit tests — create
   `tests/unit/test_mcp_kb_ingest.py` (007-R3, SC-004): with a fake
   `run_pipeline` (monkeypatched on the `dispatch` module attribute so the
   hand-off is captured, 006's `_pipeline_mod.run_pipeline` pattern):
@@ -220,7 +220,7 @@ say "stub"; the `_stub_schema()` helper deleted.
   RED against the stub lambda. Verify:
   `pytest tests/unit/test_mcp_kb_ingest.py` RED.
 
-- [ ] T015 GREEN: `_kb_ingest_body` + wiring — implement
+- [x] T015 GREEN: `_kb_ingest_body` + wiring — implement
   `_kb_ingest_body(ctx, args)` in `dispatch.py` (plan "kb_ingest body"):
   mirror `web/app.py::_handle_ingest_run` (lines 611–746) order —
   fail-closed guard → `require_capability(ctx.caller_role, "trigger_run",
@@ -237,7 +237,7 @@ say "stub"; the `_stub_schema()` helper deleted.
   lambda at line ~589). Verify: `pytest tests/unit/test_mcp_kb_ingest.py`
   GREEN.
 
-- [ ] T016 RED: `kb_health` unit tests — create
+- [x] T016 RED: `kb_health` unit tests — create
   `tests/unit/test_mcp_kb_health.py` (007-R4, SC-005): with a monkeypatched
   `dispatch._health_mod.run_health_checks` returning fake
   `HealthResult(endpoint, ok, detail, remediation)` entries: result is
@@ -248,7 +248,7 @@ say "stub"; the `_stub_schema()` helper deleted.
   `config_not_loaded`. RED against the stub lambda. Verify:
   `pytest tests/unit/test_mcp_kb_health.py` RED.
 
-- [ ] T017 GREEN: `_kb_health_body` + wiring — implement
+- [x] T017 GREEN: `_kb_health_body` + wiring — implement
   `_kb_health_body(ctx, args)` in `dispatch.py` (plan "kb_health body"):
   fail-closed guard, then `checks = _health_mod.run_health_checks(ctx.config)`
   (module-attribute seam for the monkeypatch), map each `HealthResult` to
@@ -328,7 +328,7 @@ the two standing guards.
 **Purpose**: version + changelog (in-branch; the tag happens only after
 the merge gate — always stop and ask the owner before merging to main).
 
-- [ ] T023 GREEN: version bump + CHANGELOG entry — bump
+- [x] T023 GREEN: version bump + CHANGELOG entry — bump
   `digital_twins/__init__.py` `__version__` `0.6.0` → `0.7.0` (the single
   source of truth; `digital-twins --version` follows) and add a `0.7.0`
   section to `CHANGELOG.md` in Keep-a-Changelog style, host-neutral
@@ -341,7 +341,7 @@ the merge gate — always stop and ask the owner before merging to main).
   `pytest tests/unit/test_mcp_config_plumbing.py tests/integration/test_mcp_kb_tools.py`
   still green + `python -m digital_twins --version` prints 0.7.0.
 
-- [ ] T024 final whole-branch review — a separate subagent reviews the
+- [x] T024 final whole-branch review — a separate subagent reviews the
   whole `007-kb-search-chat` branch against spec.md/plan.md/007-brief.md
   (diff, test evidence, ledger). This task records the step only; the
   review happens as its own dispatch (R9: direct subagent, no workflow).
