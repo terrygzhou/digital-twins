@@ -430,7 +430,7 @@ def _resolve_llm_client(cfg):
 
 def test_endpoint_embedder_posts_to_v1_embeddings(monkeypatch):
     """With embedding.endpoint set, the embedder must POST to
-    {endpoint}/embeddings via urllib with Bearer embedding.api_key + the
+    {endpoint}/v1/embeddings via urllib with Bearer embedding.api_key + the
     pinned model in the payload, and return the response vectors.
 
     RED (pre-US2): no endpoint-aware embedder exists — the embedder is
@@ -461,8 +461,8 @@ def test_endpoint_embedder_posts_to_v1_embeddings(monkeypatch):
     )
     assert captured, "the endpoint embedder must make an HTTP request"
     req = captured[0]
-    assert req.full_url == EMB_ENDPOINT + "/embeddings", (
-        f"endpoint embedder must POST to {{endpoint}}/embeddings, got "
+    assert req.full_url == EMB_ENDPOINT + "/v1/embeddings", (
+        f"endpoint embedder must POST to {{endpoint}}/v1/embeddings, got "
         f"{req.full_url!r}"
     )
     assert req.get_header("Authorization") == f"Bearer {EMB_KEY}", (
