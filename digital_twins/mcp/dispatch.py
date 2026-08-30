@@ -1074,6 +1074,52 @@ def _pipeline_mod_run_defaults() -> dict:
     return dict(DEFAULTS)
 
 
+def _kb_health_body(ctx: MCPContext, args: dict) -> dict:
+    """Run the package's health checks (007-R4, mirrors 006's
+    ``_handle_health``).
+
+    Steps (007 plan "kb_health body"):
+
+    1. Fail-closed guard (``ctx.config is None`` → ``config_not_loaded``;
+       no other work).
+    2. ``checks = _health_mod.run_health_checks(ctx.config)`` — the
+       module-attribute seam (006's ``_health_mod`` pattern): the test
+       monkeypatches ``digital_twins.health.run_health_checks`` so the
+       body's read of ``_health_mod.run_health_checks`` sees the fake.
+       No other I/O: no qdrant / embedding / network call (the
+       function does all the I/O internally; the body just maps the
+       results).
+    3. Map each ``HealthResult`` to ``{endpoint, ok, detail,
+       remediation}`` → ``{"ok": True, "checks": [...]}`` — field
+       shape and order preserved (007-R4a).
+    """
+    # 1. Fail-closed guard (006 _fail_closed).
+    if ctx.config is None:
+        return _fail_closed()
+
+    # 2. The module-attribute seam — the test monkeypatches
+    #    digital_twins.health.run_health_checks so this read sees the
+    #    fake.  No other I/O: no qdrant / embedding / network call
+    #    (run_health_checks does all the I/O internally; the body just
+    #    maps the results).
+    from .. import health as _health_mod
+    checks = _health_mod.run_health_checks(ctx.config)
+
+    # 3. Map each HealthResult to the wire shape.
+    return {
+        "ok": True,
+        "checks": [
+            {
+                "endpoint": r.endpoint,
+                "ok": r.ok,
+                "detail": r.detail,
+                "remediation": r.remediation,
+            }
+            for r in checks
+        ],
+    }
+
+
 TOOL_BODIES: dict[str, Callable[..., dict]] = {
     "kb_schedule_list": _kb_schedule_list_body,
     "kb_schedule_create": _kb_schedule_create_body,
@@ -1085,14 +1131,7 @@ TOOL_BODIES: dict[str, Callable[..., dict]] = {
     "kb_search": _kb_search_body,
     "kb_chat": _kb_chat_body,
     "kb_ingest": _kb_ingest_body,
-    "kb_health": lambda ctx, args: {
-        "ok": False,
-        "error": {
-            "code": "not_implemented_yet",
-            "message": "kb_health is a BR-10 tool, a follow-up slice; "
-                       "not implemented in 004",
-        },
-    },
+    "kb_health": _kb_health_body,
 }
 
 
