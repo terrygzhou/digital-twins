@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-30
 
-**Status**: Draft
+**Status**: Complete
 
 **Input**: User description: "BRD slice BR-12 (requirement.md §2, v0.3, 2026-08-30): service dependencies & hosting modes — (1) Qdrant, Neo4j, LLM + embedding model are hard runtime service dependencies and must be configured to work; (2) services may be hosted externally (endpoints + access tokens configurable) or locally — Docker Compose is the preferred, supported local mode, and image pull + initial setup must be doable by running shipped scripts included in the codebase (Q11, DECIDED 2026-08-30)."
 
