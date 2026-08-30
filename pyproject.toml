@@ -40,4 +40,5 @@ path = "digital_twins/__init__.py"
 testpaths = ["tests"]
 markers = [
   "live: tests that require real external services (opt-in via env)",
+  "preflight_real: tests that run the real preflight gate (008 US1)",
 ]
