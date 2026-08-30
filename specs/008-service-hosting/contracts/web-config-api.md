@@ -32,7 +32,7 @@ Extends the feature-003 bearer-gated `/api/*` surface. Both routes require role 
 
 **Errors**:
 - 401 / 403 — as GET.
-- 404 `unknown service "x"` — service not one of qdrant/neo4j/llm/embedding.
+- 404 `unknown service "x"` — service not one of qdrant/neo4j/llm/embedding/chunking (chunking is the one non-service section the admin UI may write; see `test_post_config_services_schema_invalid_422` for a chunking write).
 - 422 `schema violation: <key>` — value fails config-layer validation (same validator as `load()`).
 - 409 `existing kb.local.yml is not parseable YAML` — no write performed.
 

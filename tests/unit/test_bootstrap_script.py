@@ -438,6 +438,47 @@ def test_healthy_rerun_zero_pulls_zero_writes(
         assert svc in combined, f"expected {svc} in status output; got: {combined!r}"
 
 
+def test_nogpu_healthy_rerun_zero_pulls_zero_writes(
+    fake_exec, exec_log, fake_config, kb_config_dir
+):
+    """Branch 7b: healthy re-run on a NO-GPU host.  The bundled llm service
+    is intentionally never started there, so its absent "running" state must
+    not trigger pulls or builds (FR-006 / SC-004).
+    """
+    # Pre-write a no-GPU kb.local.yml (no llm endpoint; in-process embedder).
+    kb = _kb_local(kb_config_dir)
+    kb.write_text(
+        "qdrant:\n  url: http://localhost:6333\n"
+        "neo4j:\n  url: bolt://localhost:7687\n",
+        encoding="utf-8",
+    )
+
+    _write_config(
+        fake_config,
+        {
+            # No llm line: the service is not started on this host.
+            "docker": {"exit": 0, "stdout": "qdrant: running\nneo4j: running\ndigital-twins: running\n"},
+            "nvidia-smi": 127,
+            "curl": {"exit": 0, "stdout": "healthy"},
+        },
+    )
+
+    result = _run_script(fake_exec, exec_log, fake_config, kb_config_dir)
+
+    assert result.returncode == 0, (
+        f"expected exit 0, got {result.returncode}; "
+        f"stdout={result.stdout!r}; stderr={result.stderr!r}"
+    )
+    entries = _exec_log_entries(exec_log)
+    pull_calls = [e for e in entries if "pull" in " ".join(e)]
+    assert not pull_calls, (
+        f"no pulls expected on healthy no-GPU re-run (llm intentionally "
+        f"skipped): {pull_calls}"
+    )
+    build_calls = [e for e in entries if "build" in " ".join(e)]
+    assert not build_calls, f"no builds expected: {build_calls}"
+
+
 def test_kb_local_yml_disagreeing_endpoints_untouched(
     fake_exec, exec_log, fake_config, kb_config_dir
 ):

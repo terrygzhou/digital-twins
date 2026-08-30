@@ -439,7 +439,7 @@ def test_endpoint_embedder_posts_to_v1_embeddings(monkeypatch):
     import urllib.request
 
     captured = []
-    vectors = [[0.1, 0.2], [0.3, 0.4]]
+    vectors = [[0.1] * 384, [0.3] * 384]
 
     def fake_open(req, timeout=None):
         captured.append(req)

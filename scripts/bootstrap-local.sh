@@ -266,7 +266,14 @@ HELP
   # each service and check whether docker has it.
   local need_pull=0
   local svc
-  for svc in qdrant neo4j llm; do
+  # FR-006: on no-GPU hosts the bundled llm service is intentionally never
+  # started — exclude it from the "already up" check, otherwise a healthy
+  # re-run would pull/build on every invocation.
+  local check_services="qdrant neo4j"
+  if [ "$gpu_present" -eq 1 ]; then
+    check_services="$check_services llm"
+  fi
+  for svc in $check_services; do
     # `docker compose images` lists the resolved image for each service.
     # If the image is already present locally, skip the pull for it.
     # The fake exec returns the canned "running" output for compose calls,
@@ -288,8 +295,13 @@ HELP
 
   # --- 6) pull public images + build digital-twins (only when needed) ---
   if [ "$need_pull" -eq 1 ]; then
-    # Pull the three public images by compose service name (no image refs).
-    run_cmd docker compose -f "$COMPOSE_FILE" pull qdrant neo4j llm
+    # Pull the public images by compose service name (no image refs);
+    # llm excluded on no-GPU hosts (never started there, see above).
+    local pull_targets="qdrant neo4j"
+    if [ "$gpu_present" -eq 1 ]; then
+      pull_targets="$pull_targets llm"
+    fi
+    run_cmd docker compose -f "$COMPOSE_FILE" pull $pull_targets
     # Build digital-twins from the in-repo Dockerfile (only when needed).
     run_cmd docker compose -f "$COMPOSE_FILE" build digital-twins
   fi

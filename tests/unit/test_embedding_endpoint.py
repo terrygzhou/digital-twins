@@ -122,7 +122,7 @@ def test_endpoint_embedder_posts_to_v1_embeddings(monkeypatch):
     cfg = _make_cfg()
 
     captured = []
-    vectors = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+    vectors = [[0.1] * 384, [0.5] * 384]
 
     def fake_open(req, timeout=None):
         captured.append(req)

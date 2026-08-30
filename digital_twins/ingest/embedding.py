@@ -109,21 +109,11 @@ def build_endpoint_embedder(cfg):
         data = _json.loads(raw.decode("utf-8"))
         vectors = [d["embedding"] for d in data.get("data", [])]
         # Dimension guard (FR-010): when the pinned model has a *known*
-        # dimension, the endpoint must return vectors of that dim.  The
-        # guard raises only when the mismatch is "plausible" (>= 32 dim),
-        # so the 2-dim test stub in test_endpoint_embedder_posts_to_v1_
-        # embeddings (test_config_credentials.py:431) passes through while
-        # real-world mismatches (e.g. a 256-dim response against a 384-dim
-        # pinned model) raise.  KNOWN LIMITATION: a real endpoint returning
-        # <32-dim vectors would pass this guard and only fail later at the
-        # Qdrant upsert (less clear error).  The pipeline's assert_dimension
-        # + qdrant collection check are the Qdrant-side backstop.  The 2-dim
-        # stub in the T020 test is a test artifact, not a real-world case;
-        # the proper fix is strict dim != expected_dim → raise + correcting
-        # the T020 stub to 384-dim (controller ruling pending at T028).
+        # dimension, the endpoint must return vectors of that dim — strict:
+        # any mismatch fails fast here, not later at the Qdrant upsert.
         for i, v in enumerate(vectors):
             dim = len(v)
-            if dim != expected_dim and dim >= 32:
+            if dim != expected_dim:
                 raise SchemaError(
                     f"embedding endpoint returned a {dim}-dim vector at "
                     f"index {i} but the pinned model produces "
