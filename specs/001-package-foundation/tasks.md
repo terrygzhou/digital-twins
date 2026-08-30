@@ -60,7 +60,7 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
 - [x] T013 [P] [US1] Write init behavior tests — creates starter `kb.local.yml` with every source disabled, creates state dir + `state.db`, idempotent re-run, interrupted-init resume (edge case) — in `tests/unit/test_init.py`
-- [x] T014 [P] [US1] Write validate tests — healthy against in-memory Qdrant + stubs, per-endpoint pass/fail + remediation hint, exit codes 0/1 — in `tests/integration/test_validate.py`
+- [x] T014 [P] [US1] Write validate tests — healthy against in-memory Qdrant + stubs, per-endpoint pass/fail + remediation hint, exit codes 0/1 — in `tests/unit/test_validate.py` (shipped as unit; path was integration in the original plan)
 
 ### Implementation for User Story 1
 
@@ -125,7 +125,7 @@ Single project: `digital_twins/` and `tests/` at repository root (per plan.md st
 
 ### Tests for User Story 4 ⚠️
 
-- [x] T031 [P] [US4] Write dimension-mismatch test — collection vector size ≠ configured model dim → hard error with remediation message at validate-time and before first write; 0 silent mismatches (SC-005) — in `tests/integration/test_dim_mismatch.py`
+- [x] T031 [P] [US4] Write dimension-mismatch test — collection vector size ≠ configured model dim → hard error with remediation message at validate-time and before first write; 0 silent mismatches (SC-005) — in `tests/unit/test_dimension_mismatch.py` (shipped as unit; plus `tests/unit/test_pipeline_dimension_guard.py` and `tests/integration/test_dimension_guard_cli.py`)
 - [x] T032 [P] [US4] Write upgrade-preservation test — seed state (high-water + audit + accounts), run a version-bumped migration, assert all rows + config survive (SC-006) — in `tests/unit/test_upgrade.py`
 
 ### Implementation for User Story 4

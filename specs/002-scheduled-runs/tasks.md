@@ -34,7 +34,7 @@ Polish: US5 status contract (T018), docs + standing guards (T019–T020)
 
 - [x] **T009** `[US2]` — `cli.py::run --once [--source]`: single run over enabled sources, `trigger='manual'`, exit codes per `contracts/cli.md`; red test first (new items ingested + audit row)
 - [x] **T010** `[US2]` — **SC-001 top acceptance check**: `tests/integration/test_serve_once_dedup.py` — same content via `run --once` then a served fire, and the reverse order; assert exactly one point each way (red against Phase 3/4 code as it lands; must be green before US1+US2 close)
-- [x] **T011** `[US2]` `[P]` — `--as <user>` auth (R5): verify email+password against 001 `accounts` (env var or interactive prompt, never argv/logs), `scheduled_by=<user>`; `tests/unit/test_auth_as.py` red first (bad password fails fast with zero ingestion, exit code 2)
+- [x] **T011** `[US2]` `[P]` — `--as <user>` auth (R5): verify email+password against 001 `accounts` (env var or interactive prompt, never argv/logs), `scheduled_by=<user>`; `tests/unit/test_auth.py` red first (shipped under the plain name; docstring cites T011) (bad password fails fast with zero ingestion, exit code 2)
 
 ## Phase 5: User Story 3 — Per-user/per-source schedules, preset-only (P2) ✅ goal: CRUD round-trip + host-cron docs
 
