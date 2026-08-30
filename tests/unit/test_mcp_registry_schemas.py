@@ -140,3 +140,94 @@ def test_kb_health_schema_shape():
     assert set(props.keys()) == {"agent_kind"}
     assert schema["required"] == []
     assert props["agent_kind"] == _agent_kind_expected()
+
+
+# ---------------------------------------------------------------------------
+# T009 RED: build_tool_registry entries — real schemas + no-stub wording
+# (007-R5a/R5b, SC-006) + the six 004 scheduler declarations unchanged
+# ---------------------------------------------------------------------------
+
+SCHEDULER_TOOLS = {
+    "kb_schedule_list",
+    "kb_schedule_create",
+    "kb_schedule_update",
+    "kb_schedule_delete",
+    "kb_schedule_run",
+    "kb_run_history",
+}
+
+# The four KB entries, their builders, and their required lists (007-R5a).
+KB_ENTRY_EXPECT: dict[str, dict] = {
+    "kb_search": {"builder": "_kb_search_schema", "required": ["query"]},
+    "kb_chat": {"builder": "_kb_chat_schema", "required": ["query"]},
+    "kb_ingest": {"builder": "_kb_ingest_schema", "required": []},
+    "kb_health": {"builder": "_kb_health_schema", "required": []},
+}
+
+# The canary (004) description for one scheduler tool — asserted byte-
+# identical to prove the six 004 declarations are untouched.
+_CANARY_TOOL = "kb_schedule_list"
+_CANARY_DESCRIPTION = (
+    "List schedules. Own scope by default; all_users=true is "
+    "admin-only and returns every owner's schedules."
+)
+
+
+def test_registry_entries_use_real_schemas():
+    """007-R5a: each KB entry's inputSchema equals its builder's output."""
+    tools = _registry_by_name()
+    for name, expected in KB_ENTRY_EXPECT.items():
+        tool = tools[name]
+        expected_schema = getattr(registry, expected["builder"])()
+        assert tool["inputSchema"] == expected_schema, (
+            f"{name}: inputSchema does not equal {expected['builder']}() "
+            "output"
+        )
+        assert tool["inputSchema"]["required"] == expected["required"]
+
+
+def test_registry_entries_no_stub_wording():
+    """007-R5b / SC-006: no KB description contains 'stub' or
+    'not implemented in 004'."""
+    tools = _registry_by_name()
+    for name in KB_ENTRY_EXPECT:
+        desc = tools[name]["description"]
+        lowered = desc.lower()
+        assert "stub" not in lowered, (
+            f"{name}: description still contains 'stub': {desc!r}"
+        )
+        assert "not implemented in 004" not in lowered, (
+            f"{name}: description still contains 'not implemented in 004': "
+            f"{desc!r}"
+        )
+
+
+def test_registry_kb_descriptions_name_error_codes():
+    """The four descriptions describe the real behavior + error codes."""
+    tools = _registry_by_name()
+    assert "bad_request" in tools["kb_search"]["description"]
+    assert "qdrant_unavailable" in tools["kb_search"]["description"]
+    assert "embedding_unavailable" in tools["kb_search"]["description"]
+    assert "not_implemented" in tools["kb_chat"]["description"]
+    assert "permission_denied" in tools["kb_ingest"]["description"]
+    assert "run_failed" in tools["kb_ingest"]["description"]
+    assert "config_not_loaded" in tools["kb_ingest"]["description"]
+    assert "checks" in tools["kb_health"]["description"]
+
+
+def test_scheduler_declarations_canary_unchanged():
+    """Canary: one 004 scheduler declaration is byte-identical to 004 —
+    proves the six 004 scheduler declarations were not touched."""
+    tools = _registry_by_name()
+    assert tools[_CANARY_TOOL]["description"] == _CANARY_DESCRIPTION, (
+        "004 scheduler declaration changed — the six 004 scheduler "
+        "declarations must stay byte-identical"
+    )
+
+
+def test_stub_schema_helper_deleted():
+    """After T009 GREEN, _stub_schema() no longer exists."""
+    assert not hasattr(registry, "_stub_schema"), (
+        "registry._stub_schema still exists — T009 GREEN deletes it "
+        "(no remaining callers after the four stub entries are swapped)"
+    )
