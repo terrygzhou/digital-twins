@@ -203,8 +203,11 @@ say "stub"; the `_stub_schema()` helper deleted.
   (b) scheduler/admin role + enabled source → fake `run_pipeline` called
   once with positional `(merged_cfg, ctx.db, <qdrant factory>, <embedder>)`
   and `source_names=[<name>]`, `trigger="mcp"`,
-  `scheduled_by=ctx.caller_email`, `owner=ctx.caller_email`,
-  `agent_kind=ctx.agent_kind` captured for the audit row (007-R3d/BR-11.5.3);
+  `scheduled_by=ctx.caller_email`, `owner=ctx.caller_email`
+  (NO `agent_kind` kwarg — `run_pipeline`'s signature has none; verify at
+  `ingest/pipeline.py:105`). `agent_kind` is recorded on the audit row via
+  the 004 `_stamp_agent_kind(ctx.db, summary.run_id, ctx.agent_kind)` post-call
+  pattern (007-R3d/BR-11.5.3 — mirror `_kb_schedule_run_body` step 5);
   (c) source validation (exact 006 messages, all `bad_request`,
   zero pipeline calls): unknown → `"unknown source '<name>'"`, disabled →
   `"source '<name>' is not enabled"`, `source` omitted/`"all"` with none
