@@ -218,7 +218,16 @@ def build_neo4j_driver(config):
 
 
 def _embedder(config):
-    """Lazy embedder: the heavy model loads on first call, not at tick start."""
+    """Lazy embedder: the heavy model loads on first call, not at tick start.
+
+    FR-003: endpoint-aware embedder when ``embedding.endpoint`` is set
+    (additive, unchanged default).
+    """
+    from digital_twins.config.schema import get
+    if get(config, "embedding.endpoint"):
+        from digital_twins.ingest.embedding import build_endpoint_embedder
+        return build_endpoint_embedder(config)
+
     state = {}
 
     def embed(texts):

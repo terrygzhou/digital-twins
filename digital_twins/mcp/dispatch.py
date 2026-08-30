@@ -270,9 +270,14 @@ def _resolve_embedder(config):
     """Lazy embedder: the heavy model loads on first call, not at call start.
 
     Mirrors ``scheduler.loop._embedder``.  Tests monkeypatch this to a fixed
-    384-dim stub so no model is loaded.
+    384-dim stub so no model is loaded.  FR-003: endpoint-aware embedder when
+    ``embedding.endpoint`` is set (additive, unchanged default).
     """
     from ..config.schema import get
+    if get(config, "embedding.endpoint"):
+        from ..ingest.embedding import build_endpoint_embedder
+        return build_endpoint_embedder(config)
+
     state = {}
 
     def embed(texts):

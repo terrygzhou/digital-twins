@@ -433,8 +433,15 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         once per server, not once per search.  Load failures are not caught
         here: they surface to the caller, which maps any embedding
         malfunction to a clean 503 hint (fail-closed).
+
+        FR-003: endpoint-aware embedder when ``embedding.endpoint`` is set
+        (additive, unchanged default).
         """
         server = self.server
+        if _cfg_get(server.config, "embedding.endpoint"):
+            from digital_twins.ingest.embedding import build_endpoint_embedder
+            return build_endpoint_embedder(server.config)
+
         pool = getattr(server, "_embed_pool", None)
         if pool is None:
             pool = {}

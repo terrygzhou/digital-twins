@@ -354,7 +354,12 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
 
 
 def _make_embedder(cfg):
-    from digital_twins.ingest.embedding import load_embedder
+    from digital_twins.ingest.embedding import load_embedder, build_endpoint_embedder
+
+    # FR-003: endpoint-aware embedder when embedding.endpoint is set,
+    # in-process pinned model otherwise (additive, unchanged default).
+    if get(cfg, "embedding.endpoint"):
+        return build_endpoint_embedder(cfg)
 
     state = {}
 
