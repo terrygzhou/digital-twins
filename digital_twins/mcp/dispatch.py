@@ -23,6 +23,7 @@ from typing import Any, Callable
 from ..accounts import owner_tag_for, require_capability, RoleDenied
 from ..config.schema import get as _cfg_get
 from ..health import QDRANT_COLLECTION
+from ..ingest.pipeline import run_pipeline  # noqa: F401 — monkeypatch seam
 from .acl import can_access_schedule
 from .registry import MCPContext
 
@@ -854,6 +855,225 @@ def _kb_chat_body(ctx: MCPContext, args: dict) -> dict:
     }
 
 
+def _kb_ingest_body(ctx: MCPContext, args: dict) -> dict:
+    """Trigger a pipeline run for the caller (007-R3).
+
+    Mirrors 006's ``web/app.py::_handle_ingest_run`` order — the 007 plan
+    "kb_ingest body":
+
+    1. Fail-closed guard (``ctx.config is None`` → ``config_not_loaded``;
+       no other work).
+    2. Capability gate FIRST: ``require_capability(ctx.caller_role,
+       "trigger_run", "trigger a run")`` — the body's own gate, mirroring
+       the ``dispatch()`` gate but at the body level so the body's tests
+       can assert it in isolation.  Refusal → ``permission_denied``
+       naming ``trigger_run`` (the RoleDenied message includes the
+       capability id); NO ``run_pipeline`` call, NO audit row.
+    3. Source validation (exact 006 messages, all ``bad_request``,
+       zero pipeline calls):
+         * ``source`` missing / ``"all"`` with no enabled sources →
+           ``"no sources enabled"``.
+         * ``source = <name>`` unknown → ``"unknown source '<name>'"``.
+         * ``source = <name>`` not in ``BUILTIN_SOURCES`` →
+           ``"unknown source '<name>'"``.
+         * ``source = <name>`` in ``BUILTIN_SOURCES`` but disabled →
+           ``"source '<name>' is not enabled"``.
+       The caller's enabled-source set comes from
+       ``ctx.config.get("sources", {})`` — the 006 web reads the same
+       nested dict (built-in source names are known from
+       ``schema.BUILTIN_SOURCES``; custom names are looked up in the
+       ``sources`` dict, mirroring 006's two-branch source validation).
+    4. ``merged_cfg`` = schema defaults merged over ``ctx.config``
+       (006's ``_merge_defaults`` equivalent: nested dict from the flat
+       dotted-key DEFAULTS, caller wins).
+    5. Resolve the qdrant factory + embedder via Phase-3 helpers
+       (``_resolve_qdrant_factory`` / ``_resolve_embedder`` — the same
+       lazy, monkeypatchable helpers the 004 ``kb_schedule_run`` body
+       uses).
+    6. ``run_pipeline(merged_cfg, ctx.db, qdrant_factory, embedder,
+       source_names=..., trigger="mcp", scheduled_by=caller_email,
+       owner=caller_email)`` — resolved at call time via the module
+       attribute (the 006 ``_pipeline_mod.run_pipeline`` monkeypatch
+       seam).  **NO ``agent_kind`` kwarg** (run_pipeline's signature
+       has no ``agent_kind`` parameter, ingest/pipeline.py:105).
+       ``neo4j`` is left at its default (Qdrant-only).
+    7. Post-call: ``_stamp_agent_kind(ctx.db, summary.run_id,
+       ctx.agent_kind)`` — the 004 D6 pattern, mirroring
+       ``_kb_schedule_run_body`` step 5.  This is how ``agent_kind`` is
+       recorded on the audit row (007-R3d/BR-11.5.3); the pipeline
+       itself does NOT write it.
+    8. Error mapping:
+         * ``PrerequisiteError`` (``exc.source`` + ``exc.missing``) →
+           ``prerequisite_missing`` with the message
+           ``"source '<name>': missing prerequisite(s): <missing>"``.
+           The pipeline writes its own ``failed`` audit row; the body
+           writes NO second row.
+         * ``UnknownSourceError`` (``exc.args[0]`` = source name) →
+           ``bad_request`` with ``"unknown source '<name>'"``.
+         * Other exceptions → ``run_failed`` with ``str(exc)``; the
+           pipeline writes its own ``failed`` audit row.
+    9. Success → ``{"ok": True, "run_id", "status", "counts", "points"}``
+       — the 006 web result shape.
+    """
+    from ..config.schema import BUILTIN_SOURCES
+    from ..ingest import pipeline as _pipeline_mod
+    from ..sources import UnknownSourceError
+
+    # 1. Fail-closed guard (006 _fail_closed).
+    if ctx.config is None:
+        return _fail_closed()
+
+    # 2. Capability gate FIRST — the body's own gate, mirroring the
+    #    dispatch() gate but at the body level.  Refusal →
+    #    permission_denied naming trigger_run; NO run_pipeline call,
+    #    NO audit row (007-R3b).
+    try:
+        require_capability(
+            ctx.caller_role, "trigger_run", "trigger a run")
+    except RoleDenied as exc:
+        return {
+            "ok": False,
+            "error": {
+                "code": "permission_denied",
+                "message": str(exc),
+            },
+        }
+
+    # 3. Source validation (exact 006 messages, all bad_request).
+    sources_cfg = (ctx.config or {}).get("sources") or {}
+    enabled = [
+        name for name, entry in sources_cfg.items()
+        if isinstance(entry, dict) and entry.get("enabled")
+    ]
+    source = args.get("source")
+    if source in (None, "", "all"):
+        if not enabled:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "bad_request",
+                    "message": "no sources enabled",
+                },
+            }
+        source_names = enabled
+    else:
+        # A specific source name.  Unknown / disabled → bad_request with
+        # the exact 006 message.
+        if source not in BUILTIN_SOURCES and source not in sources_cfg:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "bad_request",
+                    "message": f"unknown source '{source}'",
+                },
+            }
+        entry = sources_cfg.get(source)
+        if not (isinstance(entry, dict) and entry.get("enabled")):
+            return {
+                "ok": False,
+                "error": {
+                    "code": "bad_request",
+                    "message": f"source '{source}' is not enabled",
+                },
+            }
+        source_names = [source]
+
+    # 4. merged_cfg = schema defaults merged over ctx.config (006
+    #    _merge_defaults equivalent).  The caller's config wins on every
+    #    key.
+    merged_cfg = dict(ctx.config or {})
+    for key, value in _pipeline_mod_run_defaults().items():
+        if key not in merged_cfg:
+            merged_cfg[key] = value
+
+    # 5. Resolve the qdrant factory + embedder (the same lazy,
+    #    monkeypatchable helpers the 004 kb_schedule_run body uses).
+    qdrant_factory = _resolve_qdrant_factory(merged_cfg)
+    embedder = _resolve_embedder(merged_cfg)
+
+    # 6. run_pipeline hand-off — resolved at call time via the
+    #    dispatch module attribute (the 006 _pipeline_mod.run_pipeline
+    #    monkeypatch seam — the test monkeypatches dispatch.run_pipeline,
+    #    which is what the body reads).  NO agent_kind kwarg
+    #    (run_pipeline's signature has none, ingest/pipeline.py:105).
+    #    neo4j left at its default (Qdrant-only).
+    run_pipeline = globals().get("run_pipeline", _pipeline_mod.run_pipeline)
+    try:
+        summary = run_pipeline(
+            merged_cfg, ctx.db, qdrant_factory, embedder,
+            source_names=source_names,
+            trigger="mcp",
+            scheduled_by=ctx.caller_email,
+            owner=ctx.caller_email,
+        )
+    except _pipeline_mod.PrerequisiteError as exc:
+        # The pipeline writes its own `failed` audit row on the
+        # exception path (start_audit_run up front + finish on except).
+        # Map to the stable code; the row is audited `failed` with
+        # trigger='mcp'.  The body writes NO second row.
+        return {
+            "ok": False,
+            "error": {
+                "code": "prerequisite_missing",
+                "message": (
+                    f"source '{exc.source}': missing prerequisite(s): "
+                    f"{'; '.join(exc.missing)}"
+                ),
+            },
+        }
+    except UnknownSourceError as exc:
+        # 006 web pattern: the source name is exc.args[0] (KeyError
+        # subclass, the 001 pipeline raises with the source name as the
+        # single arg).
+        name = exc.args[0] if exc.args else str(exc)
+        return {
+            "ok": False,
+            "error": {
+                "code": "bad_request",
+                "message": f"unknown source '{name}'",
+            },
+        }
+    except Exception as exc:
+        # The pipeline writes its own `failed` audit row on the
+        # exception path.  Map to the stable run_failed code; the
+        # row is audited `failed` with trigger='mcp'.  The body
+        # writes NO second row.
+        return {
+            "ok": False,
+            "error": {
+                "code": "run_failed",
+                "message": str(exc),
+            },
+        }
+
+    # 7. Post-call: stamp agent_kind on the audit row's
+    #    per_source_counts JSON (004 D6 pattern, mirror
+    #    _kb_schedule_run_body step 5).  This is how agent_kind is
+    #    recorded (007-R3d/BR-11.5.3); the pipeline does NOT write it.
+    _stamp_agent_kind(ctx.db, summary.run_id, ctx.agent_kind)
+
+    # 8/9. Success — the 006 web result shape.
+    return {
+        "ok": True,
+        "run_id": summary.run_id,
+        "status": summary.status,
+        "counts": summary.counts,
+        "points": summary.points,
+    }
+
+
+def _pipeline_mod_run_defaults() -> dict:
+    """The flat dotted-key DEFAULTS from ``config.schema``.
+
+    The 006 web's ``_merge_defaults`` builds a nested dict from this
+    flat mapping.  This helper returns the flat mapping so the body can
+    apply the same "caller wins" overlay without duplicating the
+    DEFAULTS table.
+    """
+    from ..config.schema import DEFAULTS
+    return dict(DEFAULTS)
+
+
 TOOL_BODIES: dict[str, Callable[..., dict]] = {
     "kb_schedule_list": _kb_schedule_list_body,
     "kb_schedule_create": _kb_schedule_create_body,
@@ -864,14 +1084,7 @@ TOOL_BODIES: dict[str, Callable[..., dict]] = {
     # 007 KB tool bodies (the BR-10 stubs are being replaced one by one)
     "kb_search": _kb_search_body,
     "kb_chat": _kb_chat_body,
-    "kb_ingest": lambda ctx, args: {
-        "ok": False,
-        "error": {
-            "code": "not_implemented_yet",
-            "message": "kb_ingest is a BR-10 tool, a follow-up slice; "
-                       "not implemented in 004",
-        },
-    },
+    "kb_ingest": _kb_ingest_body,
     "kb_health": lambda ctx, args: {
         "ok": False,
         "error": {

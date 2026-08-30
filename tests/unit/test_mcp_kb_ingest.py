@@ -162,7 +162,22 @@ def test_kb_ingest_scheduler_success_shape(db, monkeypatch):
     ``trigger="mcp"``, ``scheduled_by=caller``, ``owner=caller`` —
     NO ``agent_kind`` kwarg (run_pipeline's signature has none,
     ingest/pipeline.py:105).  agent_kind is stamped on the audit row
-    via the post-call _stamp_agent_kind pattern."""
+    via the post-call _stamp_agent_kind pattern.
+
+    The fake run_pipeline does NOT write its own audit row (the real
+    one does via start_audit_run); we pre-insert the row the way
+    start_audit_run would, so _stamp_agent_kind has a row to merge
+    into.
+    """
+    db.execute(
+        "INSERT INTO audit_runs (run_id, started_at, completed_at, status, "
+        "trigger, scheduled_by, per_source_counts) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("run-x", "2025-01-01T00:00:00Z", "2025-01-01T00:00:01Z",
+         "ok", "mcp", "admin@example.com", "null"),
+    )
+    db.commit()
+
     rec = _RunRecorder(summary=_mk_summary(run_id="run-x"))
     monkeypatch.setattr(dispatch_mod, "run_pipeline", rec, raising=False)
 
