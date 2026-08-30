@@ -172,16 +172,16 @@ def test_stdio_serve_threads_explicit_config(db):
     assert loads == []  # no load() when config is supplied
 
 
-def test_stdio_serve_omitted_config_uses_loader(db):
-    """stdio.serve() without config → loads via the config layer.
+def test_stdio_serve_omitted_config_is_none(db):
+    """stdio.serve() without config → MCPContext.config is None.
 
-    The constructed MCPContext carries a non-None dict (the loaded
-    config), and the loader's ``load`` was called exactly once.
+    The programmatic ``serve`` seam does not load config; the live
+    transport (``main``) does. This is the documented 004 call shape
+    for tests + the CLI.
     """
     ctx, loads = _run_stdio_once(db)
-    assert isinstance(ctx.config, dict)
-    assert ctx.config is not None
-    assert len(loads) == 1
+    assert ctx.config is None
+    assert loads == []  # serve never loads; main does
 
 
 def test_stdio_main_loads_config_when_omitted(db, monkeypatch):
