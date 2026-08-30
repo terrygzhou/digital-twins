@@ -37,6 +37,14 @@ QDRANT_URL="http://localhost:6333/healthz"
 NEO4J_URL="http://localhost:7687/"
 LLM_URL="http://localhost:8000/v1/models"
 EMBED_URL="http://localhost:8080/v1/models"
+# Service endpoints written to kb.local.yml (the base URLs the package's
+# clients consume: QdrantClient appends REST paths; build_llm_client /
+# build_endpoint_embedder append /chat/completions and /v1/embeddings;
+# the Neo4j driver uses bolt://).
+QDRANT_EP="http://localhost:6333"
+NEO4J_EP="bolt://localhost:7687"
+LLM_EP="http://localhost:8000/v1"
+EMBED_EP="http://localhost:8080/v1"
 # Port -> compose service name (for the port-conflict probe, exit 2).
 declare -A PORT_TO_SERVICE=(
   [6333]=qdrant
@@ -339,13 +347,13 @@ HELP
   # --- 10) build kb.local.yml content ---
   local kb_content=""
   kb_content+="qdrant:
-  url: $QDRANT_URL
+  url: $QDRANT_EP
 neo4j:
-  url: $NEO4J_URL
+  url: $NEO4J_EP
 "
   if [ "$gpu_present" -eq 1 ]; then
     kb_content+="llm:
-  endpoint: $LLM_URL
+  endpoint: $LLM_EP
 "
   fi
   # embedding.endpoint is written only when the embedding healthcheck passed
@@ -354,7 +362,7 @@ neo4j:
   # default and kb.local.yml leaves embedding.endpoint unset (BR-12.3.4, A5).
   if [ "$embedding_state" = "healthy" ] && [ "$gpu_present" -eq 1 ]; then
     kb_content+="embedding:
-  endpoint: $EMBED_URL
+  endpoint: $EMBED_EP
 "
   fi
 

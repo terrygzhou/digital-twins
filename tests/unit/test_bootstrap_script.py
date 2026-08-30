@@ -346,6 +346,19 @@ def test_gpu_present_full_stack_exit_0(
     assert "qdrant" in content, f"expected qdrant in kb.local.yml; got: {content!r}"
     assert "neo4j" in content, f"expected neo4j in kb.local.yml; got: {content!r}"
     assert "llm" in content, f"expected llm in kb.local.yml; got: {content!r}"
+    # The written URLs must be the service endpoints (base URLs the package
+    # clients consume), NOT the health-probe URLs. QdrantClient appends REST
+    # paths, build_llm_client appends /chat/completions, the Neo4j driver
+    # uses bolt://.  A /healthz or /v1/models suffix would 404.
+    assert "url: http://localhost:6333" in content, (
+        f"qdrant.url must be the base endpoint (no /healthz suffix); got: {content!r}"
+    )
+    assert "url: bolt://localhost:7687" in content, (
+        f"neo4j.url must be bolt:// (not http://); got: {content!r}"
+    )
+    assert "endpoint: http://localhost:8000/v1" in content, (
+        f"llm.endpoint must be the /v1 base (no /models suffix); got: {content!r}"
+    )
 
 
 def test_health_timeout_exits_3(
