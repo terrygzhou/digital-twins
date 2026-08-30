@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-29
 
-**Status**: specify+clarify+plan complete (tasks pending)
+**Status**: Complete (all 32 tasks done; BR-10 stubs superseded by 007-kb-search-chat)
 
 **Input**: User description: "BRD slice BR-11.5 (requirement.md §2): extend the MCP server (BR-10) with scheduler tools so any MCP-capable agent can manage schedules and trigger runs — kb_schedule_list/create/update/delete, kb_schedule_run, kb_run_history; caller-scoped by default with a reserved per-schedule ACL (Q9 placeholder); transport-agnostic; identical audit with trigger=mcp + agent_kind."
 
