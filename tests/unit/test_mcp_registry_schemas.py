@@ -73,3 +73,26 @@ def test_kb_search_schema_shape():
 
     # required list is exactly [query]
     assert schema["required"] == ["query"]
+
+
+# ---------------------------------------------------------------------------
+# T006 RED: _kb_chat_schema() builder (007-R2a)
+# ---------------------------------------------------------------------------
+
+def test_kb_chat_schema_builder_exists():
+    """RED: the builder function does not exist yet."""
+    assert hasattr(registry, "_kb_chat_schema"), (
+        "registry._kb_chat_schema() missing (007 T006 RED)"
+    )
+
+
+def test_kb_chat_schema_shape():
+    """007-R2a: {query (string, required), agent_kind}."""
+    schema = registry._kb_chat_schema()
+    assert schema["type"] == "object"
+    props = schema["properties"]
+    assert set(props.keys()) == {"query", "agent_kind"}
+    assert props["query"]["type"] == "string"
+    assert "query" in schema["required"]
+    assert props["agent_kind"] == _agent_kind_expected()
+    assert schema["required"] == ["query"]
