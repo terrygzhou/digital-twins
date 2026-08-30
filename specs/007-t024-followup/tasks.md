@@ -48,7 +48,8 @@ RED commit failing before the GREEN commit, per task.
   (`test_portability.py`, `test_knob_docs.py`) green; ordered flake run
   green ×2; no version bump; diff touches only the planned files.
 - [x] V2 whole-branch review (separate subagent) recorded in the ledger.
-- [ ] V3 STOP at merge gate — ask owner; do NOT merge without go-ahead.
+- [x] V3 STOP at merge gate — ask owner; do NOT merge without go-ahead.
+  (Cleared: owner approved 2026-08-30; merged to main @ 834909c.)
 
 ## Notes
 
