@@ -35,6 +35,9 @@ Tests:
       (bad_request).
   (f) success → {"ok": True, "run_id", "status", "counts", "points"}.
   (g) config=None → config_not_loaded.
+  (h) 007-t024 D-007-3: merged_cfg keeps sibling schema defaults under a
+  subtree the caller partially overrides (nested merge, not a flat
+  dotted-key overlay).
 """
 from __future__ import annotations
 
@@ -46,6 +49,7 @@ from digital_twins.mcp.dispatch import dispatch
 from digital_twins.mcp.registry import MCPContext
 from digital_twins.ingest.pipeline import PrerequisiteError
 from digital_twins.sources import UnknownSourceError
+from digital_twins.config.schema import DEFAULTS as _SCHEMA_DEFAULTS
 
 
 # ---------------------------------------------------------------------------
@@ -402,3 +406,57 @@ def test_kb_ingest_config_none_fails_closed(db, monkeypatch):
     assert result["ok"] is False
     assert result["error"]["code"] == "config_not_loaded"
     assert rec.calls == []
+
+
+# ---------------------------------------------------------------------------
+# (h) 007-t024 D-007-3: nested default merge — sibling schema defaults
+#     survive a partial subtree override
+# ---------------------------------------------------------------------------
+
+def test_kb_ingest_merged_cfg_keeps_sibling_schema_defaults(db, monkeypatch):
+    """007-t024 D-007-3: ``ctx.config`` that sets ONE value under an
+    existing schema-default subtree (``chunking.max_chars``) must reach
+    ``run_pipeline`` with the sibling default (``chunking.overlap``) still
+    at its schema value.
+
+    The pre-fix body overlaid the flat dotted-key ``DEFAULTS`` onto a
+    copy of ``ctx.config`` — a nested caller key like ``chunking``
+    blocked the dotted key ``chunking.max_chars``, so the whole
+    ``chunking`` subtree in the merged config came ONLY from the caller
+    and every sibling schema default (``chunking.overlap`` = 100) was
+    silently dropped.  006's ``web/app.py::_merge_defaults`` instead
+    builds the nested dict from the flat DEFAULTS first and then
+    deep-merges the caller's config on top (caller wins per key, sibling
+    defaults preserved).  This test asserts both sides of that shape via
+    the fake run_pipeline seam (first positional arg is the merged
+    config, the 007 contract).
+    """
+    # Sibling defaults asserted at their schema values (imported from the
+    # schema, not guessed): config/schema.py DEFAULTS has
+    #   "chunking.max_chars": 800, "chunking.overlap": 100
+    assert _SCHEMA_DEFAULTS["chunking.max_chars"] == 800
+    assert _SCHEMA_DEFAULTS["chunking.overlap"] == 100
+
+    cfg = {
+        "qdrant": {"url": "http://127.0.0.1:6333"},
+        "embedding": {"model": "BAAI/bge-small-en-v1.5", "device": "cpu"},
+        "chunking": {"max_chars": 999},  # partial override: no overlap
+        "sources": {"hermes": {"enabled": True}},
+    }
+    rec = _RunRecorder(summary=_mk_summary())
+    monkeypatch.setattr(dispatch_mod, "run_pipeline", rec, raising=False)
+
+    result = dispatch(
+        _ctx(db, config=dict(cfg), role="scheduler"),
+        "kb_ingest", {"source": "hermes"})
+    assert result["ok"] is True, f"unexpected error: {result!r}"
+    assert len(rec.calls) == 1, f"expected exactly 1 pipeline call: {rec.calls}"
+
+    merged_cfg = rec.calls[0]["args"][0]
+    # (a) the caller's override wins
+    assert merged_cfg["chunking"]["max_chars"] == 999
+    # (b) the sibling schema default survived the merge, at its schema value
+    assert merged_cfg["chunking"]["overlap"] == 100, (
+        f"flat merge dropped the sibling chunking.overlap default "
+        f"(schema DEFAULTS['chunking.overlap'] == 100): "
+        f"chunking subtree = {merged_cfg.get('chunking')!r}")
