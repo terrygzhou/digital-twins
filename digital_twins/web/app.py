@@ -258,6 +258,12 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         if path == "/api/kb/chat" and method == "POST":
             self._handle_chat(caller_email)
             return
+        if path == "/api/config/services" and method == "GET":
+            self._handle_config_services_get(caller_email)
+            return
+        if path == "/api/config/services" and method == "POST":
+            self._handle_config_services_post(caller_email)
+            return
         del method, query, caller_email  # wired up by the later handler tasks
         self._send_json(404, {"error": "not_found", "path": path})
 
@@ -870,6 +876,174 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             "remediation": self._CHAT_NOT_IMPLEMENTED_REMEDIATION,
         })
 
+    # --- /api/config/services handlers (008/US2, T023+T024) -------------------
+    #
+    # Admin-gated service config surface (contracts/web-config-api.md):
+    # GET returns the masked effective view (no credential values, only
+    # ``*_set`` flags + the effective endpoint/URLs); POST persists a
+    # partial update via ``config.local_io.merge_write`` to ``kb.local.yml``
+    # and returns the post-write masked view.  404 unknown service, 422
+    # schema-invalid, 409 unparseable existing YAML (no write).  FR-004:
+    # credential values are NEVER logged or returned.
+
+    #: The four hard services the admin UI manages (FR-003).
+    _CONFIG_SERVICES = ("qdrant", "neo4j", "llm", "embedding")
+    #: Section names the admin UI may POST (the four services + chunking,
+    #: the only other section whose knobs the web surface exposes).
+    _CONFIG_SERVICE_OR_CHUNKING = _CONFIG_SERVICES + ("chunking",)
+    #: service name -> (the "url" knob dotted path, [(cred knob, flag name)])
+    _CONFIG_SERVICE_FIELDS = {
+        "qdrant": ("qdrant.url",
+                   [("qdrant.api_key", "api_key_set")]),
+        "neo4j": ("neo4j.url",
+                  [("neo4j.user", "user_set"),
+                   ("neo4j.password", "password_set")]),
+        "llm": ("llm.endpoint",
+                [("llm.api_key", "api_key_set")]),
+        "embedding": ("embedding.endpoint",
+                      [("embedding.api_key", "api_key_set")]),
+    }
+
+    def _require_admin(self, caller_email: str) -> bool:
+        """Admin gate shared by both /api/config/services routes.
+
+        Resolves the caller's role via the existing ``accounts.get_role``
+        (the same mechanism ``/api/audit/recent`` and ``/api/ingest/run``
+        use).  Non-admin → 403 ``permission_denied``; returns True when the
+        caller is admin (the caller then proceeds with the request).
+        """
+        with self.server._db_lock:
+            role = _accounts_mod.get_role(self.server.db, caller_email)
+        if role is None:
+            role = "reader"
+        if role != "admin":
+            self._send_json(403, {
+                "error": "permission_denied",
+                "code": "permission_denied",
+                "message": "admin role required",
+            })
+            return False
+        return True
+
+    def _config_services_view(self, config_dir: str, env) -> dict:
+        """Build the masked effective view + env_overrides (GET/POST 200).
+
+        Effective values come from ``config.loader.load(config_dir=...,
+        env=...)`` — the same four-layer precedence the rest of the package
+        uses (env > kb.local.yml > kb.yml > defaults).  Credentials are
+        reduced to ``*_set`` booleans; the values are never returned
+        (FR-004).  ``env_overrides`` lists the ``KB_*`` env var names that
+        currently shadow a service knob.
+        """
+        from digital_twins.config import loader as _loader
+        from digital_twins.config import schema as _schema
+        from digital_twins.config.schema import get as _cfg_get
+        try:
+            effective = _loader.load(config_dir=config_dir, env=env)
+        except Exception:
+            effective = _merge_defaults({})
+
+        services = {}
+        for service in self._CONFIG_SERVICES:
+            url_path, cred_pairs = self._CONFIG_SERVICE_FIELDS[service]
+            view = {"url": _cfg_get(effective, url_path)}
+            for cred_path, flag in cred_pairs:
+                view[flag] = bool(_cfg_get(effective, cred_path))
+            services[service] = view
+
+        env_overrides = []
+        for service in self._CONFIG_SERVICES:
+            url_path, cred_pairs = self._CONFIG_SERVICE_FIELDS[service]
+            for knob in ([url_path] + [c for c, _ in cred_pairs]):
+                var = _schema.env_var_for(knob)
+                if var in env:
+                    env_overrides.append(var)
+        env_overrides = sorted(set(env_overrides))
+        return {"services": services, "env_overrides": env_overrides}
+
+    def _handle_config_services_get(self, caller_email: str) -> None:
+        """GET /api/config/services → 200 masked view (admin only)."""
+        if not self._require_admin(caller_email):
+            return
+        import os
+        view = self._config_services_view(
+            _cfg_get(self.server.config, "config_dir"), os.environ)
+        self._send_json(200, view)
+
+    def _handle_config_services_post(self, caller_email: str) -> None:
+        """POST /api/config/services → 200 post-write view (admin only).
+
+        Body: any subset of the four services' knobs (e.g.
+        ``{"llm": {"endpoint": ..., "api_key": ...}}``).  Persists via
+        ``config.local_io.merge_write`` to ``kb.local.yml`` (unrelated keys
+        preserved).  404 unknown service, 422 schema-invalid value, 409
+        unparseable existing YAML (no write).  The submitted credential
+        values are NEVER logged (FR-004) — only the masked post-write view
+        is returned.
+        """
+        if not self._require_admin(caller_email):
+            return
+        body = self._read_json_body()
+        if body is None:
+            self._send_json(400, {"error": "invalid JSON body"})
+            return
+        from digital_twins.config import loader as _loader
+        from digital_twins.config import schema as _schema
+        import os
+        config_dir = _cfg_get(self.server.config, "config_dir")
+        try:
+            effective = _loader.load(config_dir=config_dir,
+                                     env=dict(os.environ))
+        except _schema.SchemaError:
+            # Existing config fails validation (e.g. the on-disk file is
+            # corrupt or has drifted).  409 — no write.
+            self._send_json(
+                409, {"error": "existing kb.local.yml does not validate"})
+            return
+        except Exception:
+            effective = _merge_defaults({})
+
+        # 404: any top-level key that is not a known section.  The four
+        # services are the primary surface; chunking is the one other
+        # section whose knobs the web config surface exposes (int knobs).
+        for service in body:
+            if service not in self._CONFIG_SERVICE_OR_CHUNKING:
+                self._send_json(
+                    404, {"error": f'unknown service "{service}"'})
+                return
+        # 422: schema-validate the *candidate* (effective + submitted
+        # updates) BEFORE any write.  A bad value in the submitted body
+        # surfaces here as a 422 naming the offending knob.  (The
+        # effective config already validated when load() ran.)
+        candidate = _deep_update(_copy_dict(effective), body)
+        try:
+            _schema.validate(candidate)
+        except _schema.SchemaError as exc:
+            self._send_json(
+                422, {"error": f"schema violation: {exc}"})
+            return
+        # 409 / 200: persist via merge_write.  An unparseable existing
+        # kb.local.yml makes merge_write raise ValueError — map to 409, no
+        # write performed.
+        from digital_twins.config import local_io as _local_io
+        try:
+            _local_io.merge_write(body)
+        except ValueError as exc:
+            # merge_write raises ValueError for "unparseable YAML" and for
+            # "top level must be a mapping" — both are 409 (refused write).
+            self._send_json(
+                409, {"error": f"existing kb.local.yml is not parseable "
+                               f"YAML: {exc}"})
+            return
+        except PermissionError as exc:
+            self._send_json(
+                500, {"error": f"cannot write kb.local.yml: {exc}"})
+            return
+        # Post-write masked view (re-read the effective config so the
+        # response reflects the just-written value).
+        view = self._config_services_view(config_dir, dict(os.environ))
+        self._send_json(200, view)
+
     # --- helpers -------------------------------------------------------------
 
     def _decode_counts(self, raw) -> dict:
@@ -976,6 +1150,34 @@ class WebApp(ThreadingHTTPServer):
         self.qdrant_client = None
         self.db = _open_same_db(db, check_same_thread=False)
         super().__init__(addr, _WebAppHandler)
+
+
+def _copy_dict(cfg: dict) -> dict:
+    """A shallow-copy-safe deep copy of a nested config dict.
+
+    Used by the /api/config/services POST path to build a candidate config
+    (effective + submitted updates) without mutating the server's live
+    config.  Leaves non-dict values as-is.
+    """
+    out: dict = {}
+    for key, value in (cfg or {}).items():
+        out[key] = _copy_dict(value) if isinstance(value, dict) else value
+    return out
+
+
+def _deep_update(base: dict, updates: dict) -> dict:
+    """Deep-merge ``updates`` into ``base`` (``updates`` wins on conflicts).
+
+    Returns a new dict; ``base`` is not mutated.  Mirrors
+    ``config.local_io._deep_merge`` for the in-memory candidate build.
+    """
+    out = dict(base)
+    for key, value in (updates or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_update(out[key], value)
+        else:
+            out[key] = value
+    return out
 
 
 def _merge_defaults(cfg: dict) -> dict:

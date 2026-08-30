@@ -182,6 +182,41 @@ def _qdrant_factory(config) -> callable:
     return factory
 
 
+def _neo4j_driver_factory(config):
+    """Zero-arg factory returning the configured Neo4j driver (lazy).
+
+    Mirrors :func:`_qdrant_factory`: the driver is only constructed when the
+    caller invokes the factory, so a missing ``neo4j.url``/``neo4j.user``/
+    ``neo4j.password`` never pays the cost of a network connection.  US2
+    / FR-003: the credential knobs reach the driver here (pre-US2 they
+    reached only ``health.check_neo4j``).
+    """
+    url = get(config, "neo4j.url")
+    user = get(config, "neo4j.user")
+    password = get(config, "neo4j.password")
+
+    def factory():
+        if not (url and user and password):
+            from digital_twins.config.schema import ConfigError
+            raise ConfigError(
+                "neo4j.url/neo4j.user/neo4j.password are not set — "
+                "run init or set KB_NEO4J__URL / KB_NEO4J__USER / "
+                "KB_NEO4J__PASSWORD")
+        from neo4j import GraphDatabase
+        return GraphDatabase.driver(url, auth=(user, password))
+
+    return factory
+
+
+def build_neo4j_driver(config):
+    """Eager Neo4j driver built from ``config`` (US2 / FR-003).
+
+    Convenience alias for callers that want the driver immediately rather
+    than a lazy zero-arg factory.
+    """
+    return _neo4j_driver_factory(config)()
+
+
 def _embedder(config):
     """Lazy embedder: the heavy model loads on first call, not at tick start."""
     state = {}

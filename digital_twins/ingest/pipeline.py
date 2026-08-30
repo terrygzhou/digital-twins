@@ -19,7 +19,12 @@ from qdrant_client import models as qm
 from digital_twins.config.schema import get
 from digital_twins.health import QDRANT_COLLECTION, preflight
 from digital_twins.ingest.chunking import chunk_text
-from digital_twins.ingest.embedding import DEFAULT_MODEL, model_dimension
+from digital_twins.ingest.embedding import (
+    DEFAULT_MODEL,
+    build_endpoint_embedder,
+    load_embedder,
+    model_dimension,
+)
 from digital_twins.ingest.ids import point_id
 from digital_twins.sources import UnknownSourceError, build as build_source
 from digital_twins.state.models import (
@@ -58,6 +63,21 @@ class RunSummary:
     counts: dict = field(default_factory=dict)
     points: int = 0
     status: str = "ok"
+
+
+def _resolve_embedder(cfg):
+    """Resolve the embedder from config: endpoint-based when
+    ``embedding.endpoint`` is set, in-process pinned model otherwise.
+
+    Shared by the CLI / scheduler / MCP entry points so every ingestion
+    path honors ``embedding.endpoint`` (US2 / FR-003).
+    """
+    if get(cfg, "embedding.endpoint"):
+        return build_endpoint_embedder(cfg)
+    return load_embedder(
+        get(cfg, "embedding.model"),
+        get(cfg, "embedding.device") or "auto",
+    )
 
 
 def _cursor(db, source: str):

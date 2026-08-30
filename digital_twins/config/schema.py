@@ -44,6 +44,15 @@ _ALLOW_EMPTY: frozenset = frozenset({
     "qdrant.url", "qdrant.api_key",
     "neo4j.url", "neo4j.user", "neo4j.password",
     "llm.endpoint", "llm.model", "llm.api_key",
+    "embedding.endpoint", "embedding.api_key",
+})
+
+# Knobs with an int type that aren't in the legacy DEFAULTS registry
+# (008/US2 — the KNOBS registry declares these as "int"; _declared_type
+# consults this set to coerce them correctly).
+_INT_KNOBS: frozenset = frozenset({
+    "mcp.port", "web.port",
+    "scheduler.run_hour", "scheduler.run_minute", "scheduler.run_minute_jitter_s",
 })
 
 EMBEDDING_DEVICES: tuple = ("auto", "cpu", "cuda")
@@ -127,6 +136,8 @@ def _declared_type(path: str):
         if isinstance(default, int):
             return int
         return str
+    if path in _INT_KNOBS:
+        return int
     if path.startswith("sources."):
         return _SOURCE_KNOB_TYPES.get(path.rsplit(".", 1)[-1], str)
     return str
