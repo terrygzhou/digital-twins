@@ -3,6 +3,55 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [0.6.0] - 2026-08-30
+
+### Added
+
+- **Web app first-class surface** (006 slice, BR-11.1.8) — the package now
+  ships a standalone web UI on a dedicated port (8767):
+  - **WebApp scaffold** (`digital_twins/web/app.py`): stdlib
+    `ThreadingHTTPServer` + `BaseHTTPRequestHandler` (no new web framework);
+    bearer-token gate via `digital_twins.auth` (`Authorization: Bearer <token>`
+    or `?token=` fallback, fail-closed 401); path-traversal-safe static routes
+    (`/` → `index.html`, `/static/*` → `web/static/`); `/api/*` dispatch.
+  - **Auth surface**: `/api/auth/signup` (first account → admin, else reader),
+    `/api/auth/signin`, `/api/auth/signout` (revoke session), `GET /api/me`
+    (email, role, point_count; point_count degrades to 0 when Qdrant
+    unreachable).
+  - **KB read**: `GET /api/kb/points` (count, owner_count, source_count,
+    sample — owner-scoped via `owner_tag`) and `POST /api/kb/search`
+    (owner-scoped vector search via Qdrant + `digital_twins.ingest.embedding`;
+    502/503 with remediation hint when Qdrant is down).
+  - **Ingestion trigger**: `POST /api/ingest/run` — delegates to
+    `digital_twins.ingest.pipeline.run_pipeline` with `trigger='web'` +
+    `scheduled_by=<caller email>` + `owner=<caller owner_tag>` (one-record-not-N
+    invariant, NFR-1/NFR-14). Reader role → 403 `permission_denied` before any
+    pipeline work. Disabled/unknown source → 400 with contract-exact error.
+  - **Audit**: `GET /api/audit/recent` — per-user scoping (non-admin sees only
+    their own `scheduled_by` rows; admin sees all). `per_source_counts`
+    returned as a decoded dict.
+  - **Chat surface**: `POST /api/kb/chat` — 501 `not_implemented` with
+    remediation hint when `llm.endpoint` is unset (mirrors 004's BR-10 stub
+    pattern; generation is a follow-up slice).
+  - **CLI**: `digital-twins web` click subcommand — binds to
+    `web.bind`/`web.port` (default 127.0.0.1:8767), prints the listening URL,
+    serves the UI + API. No scheduler lifecycle (separate surface from
+    `serve`).
+  - **Static UI** (`digital_twins/web/static/`): single-page `index.html`
+    (sign-in, sign-up, KB panel with point count / search / trigger-ingestion
+    / last-audit-row) + `style.css`. Plain HTML, no build step, no SPA
+    framework. Plain `fetch()` to `/api/*` + vanilla DOM. Host-neutral
+    (relative `/api/*` paths only, NFR-13).
+  - **Config knobs** (Constitution IV lock-step): `web.bind` (default
+    127.0.0.1), `web.port` (default 8767), `web.base_url` (default empty).
+    Four-surface lock-step: `knobs.py` registry, `config.example.yml`,
+    `.env.example`, `docs/configuration.md`.
+  - **Portability guard extended**: `test_portability.py` SHIPPED +
+    SHIPPED_NON_PY now covers `digital_twins/web/` Python + static assets +
+    `specs/006-web-app/quickstart.md` (NFR-13).
+  - **Quickstart**: `specs/006-web-app/quickstart.md` — host-neutral
+    install → serve → sign-in → query → trigger ingestion flow.
+
 ## [0.5.0] - 2026-08-30
 
 ### Added
