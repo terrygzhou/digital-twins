@@ -96,3 +96,26 @@ def test_kb_chat_schema_shape():
     assert "query" in schema["required"]
     assert props["agent_kind"] == _agent_kind_expected()
     assert schema["required"] == ["query"]
+
+
+# ---------------------------------------------------------------------------
+# T007 RED: _kb_ingest_schema() builder (007-R3a)
+# ---------------------------------------------------------------------------
+
+def test_kb_ingest_schema_builder_exists():
+    """RED: the builder function does not exist yet."""
+    assert hasattr(registry, "_kb_ingest_schema"), (
+        "registry._kb_ingest_schema() missing (007 T007 RED)"
+    )
+
+
+def test_kb_ingest_schema_shape():
+    """007-R3a: {source (string, optional), agent_kind}; required: []."""
+    schema = registry._kb_ingest_schema()
+    assert schema["type"] == "object"
+    props = schema["properties"]
+    assert set(props.keys()) == {"source", "agent_kind"}
+    assert props["source"]["type"] == "string"
+    # source is optional — not in required
+    assert schema["required"] == []
+    assert props["agent_kind"] == _agent_kind_expected()
