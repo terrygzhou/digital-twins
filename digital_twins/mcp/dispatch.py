@@ -792,6 +792,68 @@ def _kb_search_body(ctx: MCPContext, args: dict) -> dict:
     return {"ok": True, "results": rows, "count": len(rows)}
 
 
+def _kb_chat_body(ctx: MCPContext, args: dict) -> dict:
+    """007-R2: kb_chat — "surface only" in 007.
+
+    Mirrors 006's two-branch ``_handle_chat``: the body reads
+    ``llm.endpoint`` / ``llm.model`` (the only knob access — makes the
+    body decision-ready for the follow-up slice that fills generation)
+    and returns the 501-surface result in BOTH branches, whether the
+    knobs are set or unset.
+
+    Steps (007 plan "kb_chat body"):
+
+    1. ``ctx.config is None`` → ``config_not_loaded`` (006
+       ``_fail_closed`` guard; no other work).
+    2. ``query`` missing / blank / non-string → ``bad_request``
+       ``"query must be a non-empty string"`` — BEFORE any config read
+       (the 006 message verbatim; the body short-circuits on the query
+       check so no llm.* knob is touched).
+    3. Read ``get(cfg, "llm.endpoint")`` + ``get(cfg, "llm.model")``
+       (the only knob access; the read is what makes the body
+       decision-ready — a follow-up slice can branch on whether the
+       knobs are set to decide whether to call the LLM).
+    4. Return the 501-surface result in BOTH branches (007-R2):
+       ``{"ok": False, "error": {"code": "not_implemented",
+       "remediation": "set llm.endpoint / llm.model to enable chat
+       (007 ships the surface only; follow-up slice fills generation)"}}``.
+       No LLM call, no embedding, no Qdrant, no network.
+    """
+    if ctx.config is None:
+        return _fail_closed()
+
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return {
+            "ok": False,
+            "error": {
+                "code": "bad_request",
+                "message": "query must be a non-empty string",
+            },
+        }
+
+    # The only knob access — makes the body decision-ready for the
+    # follow-up slice that fills generation (007-R2).  007 ships the
+    # surface only: the read happens, the LLM call does not.
+    _ = _cfg_get(ctx.config, "llm.endpoint")
+    _ = _cfg_get(ctx.config, "llm.model")
+
+    # Both branches return the same 501-surface result — mirroring
+    # 006's two-branch handler (set → would-call-LLM branch; unset →
+    # not-implemented branch; in 007 both return the surface result).
+    return {
+        "ok": False,
+        "error": {
+            "code": "not_implemented",
+            "remediation": (
+                "set llm.endpoint / llm.model to enable chat "
+                "(007 ships the surface only; follow-up slice fills "
+                "generation)"
+            ),
+        },
+    }
+
+
 TOOL_BODIES: dict[str, Callable[..., dict]] = {
     "kb_schedule_list": _kb_schedule_list_body,
     "kb_schedule_create": _kb_schedule_create_body,
@@ -801,14 +863,7 @@ TOOL_BODIES: dict[str, Callable[..., dict]] = {
     "kb_run_history": _kb_run_history_body,
     # 007 KB tool bodies (the BR-10 stubs are being replaced one by one)
     "kb_search": _kb_search_body,
-    "kb_chat": lambda ctx, args: {
-        "ok": False,
-        "error": {
-            "code": "not_implemented_yet",
-            "message": "kb_chat is a BR-10 tool, a follow-up slice; "
-                       "not implemented in 004",
-        },
-    },
+    "kb_chat": _kb_chat_body,
     "kb_ingest": lambda ctx, args: {
         "ok": False,
         "error": {
