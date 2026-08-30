@@ -59,6 +59,11 @@ docker-compose.override.yml
 .DS_Store
 Thumbs.db
 
+# --- Spec-Kit generated artefacts (only the ratified constitution is source) ---
+.specify/
+!.specify/memory/
+!.specify/memory/constitution.md
+
 # --- Superpowers execution artifacts (task briefs, reports, review diffs) ---
 .superpowers/
 
