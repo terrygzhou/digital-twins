@@ -435,3 +435,83 @@ def test_http_build_handler_cls_threads_explicit_config(db):
         lambda: http._build_handler_cls(db, "system", config=cfg))
     assert body["ok"] is True
     assert ctx.config is cfg
+
+
+# ---------------------------------------------------------------------------
+# T004: cli.serve_mcp passes its loaded cfg to both transports (007-R6d)
+#
+# Design: cli.serve_mcp loads the config once (line 596's ``load()``) and
+# passes that SAME dict into both ``stdio.main(config=cfg)`` and
+# ``mcp_http.main(config=cfg, ...)``. No second config load. The test
+# asserts via monkeypatched ``stdio.main`` / ``mcp_http.main`` that the
+# ``config`` kwarg is exactly the dict returned by the CLI's own
+# ``load()`` call.
+# ---------------------------------------------------------------------------
+
+def _serve_mcp_invoke(monkeypatch, transport, captured):
+    """Invoke cli.serve_mcp with the given transport; capture the config
+    kwarg passed to the transport's main(). Return the captured config."""
+    from click.testing import CliRunner
+    from digital_twins.cli import cli as cli_group
+    import digital_twins.config.loader as loader
+    from digital_twins.mcp import stdio as stdio_mod
+    from digital_twins.mcp import http as http_mod
+
+    # Sentinel config dict that the CLI's load() will return. Enriched
+    # with the keys serve_mcp actually reads (state_dir, mcp.port,
+    # mcp.service_account_email) so the CLI path past connect/migrate
+    # succeeds before reaching the (monkeypatched) transport main.
+    sentinel_cfg = {"state_dir": "/tmp/cli-cfg",
+                    "mcp": {"port": 8770,
+                            "service_account_email": "system"},
+                    "sources": {"hermes": {"enabled": True}}}
+    monkeypatch.setattr(
+        loader, "load", lambda *a, **kw: sentinel_cfg, raising=False)
+    # cli.py imports ``load`` directly (from digital_twins.config import load),
+    # so we also patch that binding.
+    import digital_twins.cli as cli_mod
+    monkeypatch.setattr(cli_mod, "load", lambda: sentinel_cfg,
+                        raising=False)
+
+    if transport == "stdio":
+        def fake_stdio_main(db_, service_account_email="system",
+                            config=None):
+            captured.append(("stdio", config))
+        monkeypatch.setattr(stdio_mod, "main", fake_stdio_main,
+                            raising=False)
+    else:  # http
+        def fake_http_main(db_, service_account_email="system",
+                           port=8770, config=None):
+            captured.append(("http", config, port))
+        monkeypatch.setattr(http_mod, "main", fake_http_main,
+                            raising=False)
+
+    runner = CliRunner()
+    res = runner.invoke(cli_group,
+                        ["serve-mcp", "--transport", transport])
+    return res, sentinel_cfg
+
+
+def test_serve_mcp_stdio_passes_loaded_cfg(monkeypatch):
+    """cli.serve_mcp --transport stdio passes its loaded cfg into
+    stdio.main(config=cfg) — the SAME dict, no second load."""
+    captured = []
+    res, sentinel_cfg = _serve_mcp_invoke(monkeypatch, "stdio", captured)
+    assert res.exit_code == 0, res.output
+    assert len(captured) == 1
+    kind, config = captured[0]
+    assert kind == "stdio"
+    assert config is sentinel_cfg  # identity, not equality
+
+
+def test_serve_mcp_http_passes_loaded_cfg(monkeypatch):
+    """cli.serve_mcp --transport http passes its loaded cfg into
+    mcp_http.main(config=cfg, ...) — the SAME dict, no second load."""
+    captured = []
+    res, sentinel_cfg = _serve_mcp_invoke(monkeypatch, "http", captured)
+    assert res.exit_code == 0, res.output
+    assert len(captured) == 1
+    kind, config, port = captured[0]
+    assert kind == "http"
+    assert config is sentinel_cfg  # identity, not equality
+    assert port is not None
