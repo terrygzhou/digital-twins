@@ -294,6 +294,22 @@ def _kb_ingest_schema() -> dict:
     }
 
 
+def _kb_health_schema() -> dict:
+    """kb_health inputSchema (007-R4a).
+
+    ``agent_kind`` — the shared client-kind property. No other arguments;
+    the body wraps ``health.run_health_checks`` and takes its config from
+    the context.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "agent_kind": _agent_kind_prop(),
+        },
+        "required": [],
+    }
+
+
 def _stub_schema() -> dict:
     """Minimal inputSchema for the four BR-10 stubs (R10)."""
     return {
