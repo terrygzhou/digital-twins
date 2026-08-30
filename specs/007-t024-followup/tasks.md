@@ -33,11 +33,11 @@ RED commit failing before the GREEN commit, per task.
 
 ## Task 3 — D-007-3: nested default merge for kb_ingest
 
-- [ ] T3 RED: test that `ctx.config = {"chunking": {"max_chars": 999}}`
+- [x] T3 RED: test that `ctx.config = {"chunking": {"max_chars": 999}}`
   yields a merged config with the override AND the sibling `chunking.*`
   schema defaults in the `run_pipeline` call. Verify: RED (flat merge drops
   siblings).
-- [ ] T3 GREEN: `dispatch.py` — add `_deep_merge(base, override)`
+- [x] T3 GREEN: `dispatch.py` — add `_deep_merge(base, override)`
   (006 semantics, local to dispatch — no web/ import); use for `merged_cfg`
   in `_kb_ingest_body`. Verify: `pytest tests/unit/test_mcp_kb_ingest.py
   tests/integration/test_mcp_kb_tools.py -q` green.
