@@ -118,3 +118,122 @@ def test_config_none_shape_is_fail_closed_contract():
     # later phases assert the dispatch-time fail-closed shape.
     ctx = MCPContext(object(), "a@b", "reader", "stdio", config=None)
     assert ctx.config is None
+
+
+# ---------------------------------------------------------------------------
+# T002: stdio transport threads config (007-R6b)
+# ---------------------------------------------------------------------------
+
+def _run_stdio_once(db, config=None):
+    """Run one stdio request through serve(); return the MCPContext seen
+    by dispatch + whether the config layer's load() was called."""
+    from digital_twins.mcp import stdio
+    from digital_twins.mcp import dispatch as dispatch_module
+
+    seen_ctx = []
+
+    def fake_dispatch(ctx, tool_name, args):
+        seen_ctx.append(ctx)
+        return {"ok": True}
+
+    monkeypatched = False
+    import digital_twins.config.loader as loader
+    real_load = loader.load
+    loads = []
+
+    def spy_load(*a, **kw):
+        loads.append((a, kw))
+        return {"state_dir": "/tmp/spy-cfg", "sources": {}}
+
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    mp.setattr(dispatch_module, "dispatch", fake_dispatch, raising=False)
+    mp.setattr(stdio, "dispatch", fake_dispatch, raising=False)
+    mp.setattr(loader, "load", spy_load, raising=False)
+    inp = StringIO(json.dumps({"tool": "kb_schedule_list", "args": {}}) + "\n")
+    out = StringIO()
+    try:
+        if config is None:
+            stdio.serve(inp, out, db, service_account_email="system")
+        else:
+            stdio.serve(inp, out, db, service_account_email="system",
+                        config=config)
+    finally:
+        mp.undo()
+    assert len(seen_ctx) == 1
+    return seen_ctx[0], loads
+
+
+def test_stdio_serve_threads_explicit_config(db):
+    """stdio.serve(config=cfg) → the MCPContext carries that exact dict."""
+    cfg = {"state_dir": "/tmp/explicit", "sources": {"hermes": {"enabled": True}}}
+    ctx, loads = _run_stdio_once(db, config=cfg)
+    assert ctx.config is cfg
+    assert loads == []  # no load() when config is supplied
+
+
+def test_stdio_serve_omitted_config_uses_loader(db):
+    """stdio.serve() without config → loads via the config layer.
+
+    The constructed MCPContext carries a non-None dict (the loaded
+    config), and the loader's ``load`` was called exactly once.
+    """
+    ctx, loads = _run_stdio_once(db)
+    assert isinstance(ctx.config, dict)
+    assert ctx.config is not None
+    assert len(loads) == 1
+
+
+def test_stdio_main_loads_config_when_omitted(db, monkeypatch):
+    """stdio.main(db) loads config via digital_twins.config.loader.load().
+
+    007-R6b: main() is the entry point that must load when the caller
+    omits config. Assert via monkeypatched loader.load that main called
+    it exactly once with no args (the cwd default).
+    """
+    from digital_twins.mcp import stdio
+    import digital_twins.config.loader as loader
+
+    loads = []
+    monkeypatch.setattr(
+        loader, "load",
+        lambda *a, **kw: loads.append((a, kw)) or {"state_dir": "/tmp/x"},
+        raising=False)
+    # main() calls serve(sys.stdin, sys.stdout, ...); feed it an empty
+    # stdin (immediate EOF) so serve returns without blocking.
+    monkeypatch.setattr(stdio, "sys",
+                        type("FakeIO", (), {"stdin": StringIO(""),
+                                            "stdout": StringIO()}))
+    stdio.main(db)
+    assert len(loads) == 1
+    a, kw = loads[0]
+    assert a == () and kw == {}  # load() with the cwd default
+
+
+def test_stdio_main_threads_explicit_config(db, monkeypatch):
+    """stdio.main(db, config=cfg) → serve receives that dict; no load()."""
+    from digital_twins.mcp import stdio
+    import digital_twins.config.loader as loader
+
+    loads = []
+    monkeypatch.setattr(
+        loader, "load",
+        lambda *a, **kw: loads.append(1) or {"state_dir": "/tmp/x"},
+        raising=False)
+    seen = []
+
+    def fake_serve(in_stream, out_stream, db_, *, service_account_email="system",
+                   dispatch=None, config=None):
+        seen.append(config)
+        # Drain in_stream so the real loop shape is honored.
+        for _ in in_stream:
+            pass
+
+    monkeypatch.setattr(stdio, "serve", fake_serve)
+    monkeypatch.setattr(stdio, "sys",
+                        type("FakeIO", (), {"stdin": StringIO(""),
+                                            "stdout": StringIO()}))
+    cfg = {"state_dir": "/tmp/main-cfg"}
+    stdio.main(db, config=cfg)
+    assert seen == [cfg]
+    assert loads == []  # no load() when config is supplied
