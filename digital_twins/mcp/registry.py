@@ -1,16 +1,17 @@
-"""MCP tool registry (feature 004, R2/R10, T006).
+"""MCP tool registry (feature 004, R2/R10, T006; 007 Phase 2, 007-R5).
 
 ``build_tool_registry()`` returns the ten MCP tools as a list of dicts,
-each with ``name``, ``description``, and ``inputSchema``.  The six real
+each with ``name``, ``description``, and ``inputSchema``.  The six
 scheduler tools mirror 003 ``contracts/scheduler.md`` field names exactly
-(R2); the four BR-10 stubs carry a minimal ``inputSchema`` so a fresh
-client sees a complete, stable registry (R10).
+(R2); the four KB tools carry full ``inputSchema``s with real-behavior
+descriptions and error codes (007-R5a/R5b), replacing the 004 BR-10
+minimal declarations.
 
-The 6 real tools:
+The 6 scheduler tools:
     kb_schedule_list, kb_schedule_create, kb_schedule_update,
     kb_schedule_delete, kb_schedule_run, kb_run_history
 
-The 4 BR-10 stubs:
+The 4 KB tools:
     kb_search, kb_chat, kb_ingest, kb_health
 """
 from __future__ import annotations
@@ -310,17 +311,6 @@ def _kb_health_schema() -> dict:
     }
 
 
-def _stub_schema() -> dict:
-    """Minimal inputSchema for the four BR-10 stubs (R10)."""
-    return {
-        "type": "object",
-        "properties": {
-            "agent_kind": _agent_kind_prop(),
-        },
-        "required": [],
-    }
-
-
 # ---------------------------------------------------------------------------
 # build_tool_registry
 # ---------------------------------------------------------------------------
@@ -333,8 +323,9 @@ def build_tool_registry() -> list[dict]:
     - ``description``: a human-readable summary.
     - ``inputSchema``: a JSON-Schema object describing the arguments.
 
-    The six real tools mirror 003 ``contracts/scheduler.md`` field names
-    exactly (R2).  The four BR-10 stubs carry a minimal schema (R10).
+    The six scheduler tools mirror 003 ``contracts/scheduler.md`` field
+    names exactly (R2).  The four KB tools carry full inputSchemas with
+    real-behavior descriptions and error codes (007-R5a/R5b).
     """
     return [
         {
@@ -380,33 +371,46 @@ def build_tool_registry() -> list[dict]:
                 "Admin cross-user reads write one access-log row.",
             "inputSchema": _kb_run_history_schema(),
         },
-        # --- BR-10 stubs (R10) ---
+        # --- KB tools (007-R5a/R5b: real schemas + real-behavior
+        #      descriptions; the 004 BR-10 stubs are replaced) ---
         {
             "name": "kb_search",
             "description":
-                "BR-10 stub: knowledge-base search. Not implemented in "
-                "004; returns not_implemented_yet.",
-            "inputSchema": _stub_schema(),
+                "Owner-scoped knowledge-base search on the `personal_kb` "
+                "Qdrant collection. Returns top-N results (default 5, max "
+                "100) with score, source_url, text, source, chunk_index. "
+                "Errors: `bad_request` (blank/missing query), "
+                "`qdrant_unavailable` (Qdrant not reachable), "
+                "`embedding_unavailable` (embedding model load failed).",
+            "inputSchema": _kb_search_schema(),
         },
         {
             "name": "kb_chat",
             "description":
-                "BR-10 stub: knowledge-base chat. Not implemented in "
-                "004; returns not_implemented_yet.",
-            "inputSchema": _stub_schema(),
+                "Knowledge-base chat surface. Returns `not_implemented` "
+                "with a remediation hint until `llm.endpoint`/`llm.model` "
+                "are configured (007 ships the surface only; a follow-up "
+                "slice fills generation).",
+            "inputSchema": _kb_chat_schema(),
         },
         {
             "name": "kb_ingest",
             "description":
-                "BR-10 stub: knowledge-base ingest. Not implemented in "
-                "004; returns not_implemented_yet.",
-            "inputSchema": _stub_schema(),
+                "Trigger a KB ingestion run via `run_pipeline` with "
+                "`trigger='mcp'`. Accepts an optional `source` (omitted/"
+                "all runs all enabled). Audited with the caller's identity "
+                "+ `agent_kind`. Errors: `permission_denied` (reader role), "
+                "`bad_request` (unknown/disabled source / none enabled), "
+                "`run_failed` (pipeline exception), `config_not_loaded` "
+                "(config is None).",
+            "inputSchema": _kb_ingest_schema(),
         },
         {
             "name": "kb_health",
             "description":
-                "BR-10 stub: knowledge-base health. Not implemented in "
-                "004; returns not_implemented_yet.",
-            "inputSchema": _stub_schema(),
+                "Run endpoint health checks (Qdrant, Neo4j, LLM) and "
+                "return per-endpoint results. No I/O beyond the checks "
+                "themselves.",
+            "inputSchema": _kb_health_schema(),
         },
     ]
