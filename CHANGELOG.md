@@ -3,6 +3,58 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [0.7.0] - 2026-08-31
+
+### Added
+
+- **Real MCP KB tools** (007 slice, BR-11.5.2 / BR-11.5.3 / BR-10) — the four
+  BR-10 stub tools from 004 are now real implementations:
+  - **`kb_search`** — owner-scoped Qdrant vector search on the `personal_kb`
+    collection. Query is embedded via the config-pinned embedding model
+    (`embedding.model` / `embedding.device`); results are filtered by the
+    caller's `owner_tag` (`accounts.owner_tag_for`). Returns top-N
+    (default 5, max 100) with `score`, `source_url`, `text`, `source`,
+    `chunk_index`. Errors: `bad_request` (blank/missing query),
+    `qdrant_unavailable` (Qdrant not reachable), `embedding_unavailable`
+    (embedding model load failed), `config_not_loaded`.
+  - **`kb_chat`** — the chat **surface** (007 R8 / 006 C-1 parity): reads
+    `llm.endpoint` / `llm.model` from the config layer (decision-ready for a
+    follow-up slice) and returns `not_implemented` with a remediation hint
+    until generation is implemented. No LLM call, no embedding call, no
+    Qdrant call, no network call.
+  - **`kb_ingest`** — triggers a KB ingestion run via
+    `ingest.pipeline.run_pipeline` with `trigger="mcp"`,
+    `scheduled_by=<caller-email>`, `owner=<caller-email>` (the same code
+    path as schedule / `run --once` / web UI — NFR-1/NFR-14 one-record
+    holds). Capability-gated on `trigger_run` (reader → `permission_denied`,
+    no audit row). Source validation mirrors 006 web
+    (`unknown source` / `source is not enabled` / `no sources enabled`).
+    The audit row carries `trigger="mcp"` + `agent_kind` (stamped via the
+    004 `_stamp_agent_kind` post-call pattern; BR-11.5.3).
+  - **`kb_health`** — wraps `health.run_health_checks` and returns
+    per-endpoint results (`endpoint`, `ok`, `detail`, `remediation`).
+- **Full `inputSchema`s** for all four tools in the MCP registry
+  (replacing 004's minimal `_stub_schema()`). Descriptions now describe
+  real behavior + error codes.
+- **`MCPContext.config`** — the MCP context gains a `config: Any = None`
+  field (last, so the 004 4-arg positional call shape is preserved). Both
+  transports (stdio + http) populate it from the config layer
+  (`digital_twins.config.loader.load()`); `cli.serve_mcp` threads its
+  already-loaded `cfg` into both. KB tool bodies fail closed with
+  `config_not_loaded` when it is `None`.
+
+### Changed
+
+- Replaced the four BR-10 stub tool bodies from 004
+  (`not_implemented_yet` → real behavior). The `_stub_schema()` helper in
+  `digital_twins/mcp/registry.py` is deleted (no remaining callers).
+- `tests/unit/test_mcp_stubs.py` deleted (the four tools are no longer
+  stubs; their real-body tests supersede it).
+- `tests/integration/test_mcp_integration.py::test_sc001_fresh_client_gets_full_tool_list`
+  updated: the 4 KB tools no longer assert `not_implemented_yet`; the
+  assertion now checks that their observed error codes stay within the 007
+  error-shape set.
+
 ## [0.6.0] - 2026-08-30
 
 ### Added

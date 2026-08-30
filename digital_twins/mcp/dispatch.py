@@ -20,7 +20,10 @@ import json
 import uuid
 from typing import Any, Callable
 
-from ..accounts import require_capability, RoleDenied
+from ..accounts import owner_tag_for, require_capability, RoleDenied
+from ..config.schema import get as _cfg_get
+from ..health import QDRANT_COLLECTION
+from ..ingest.pipeline import run_pipeline  # noqa: F401 — monkeypatch seam
 from .acl import can_access_schedule
 from .registry import MCPContext
 
@@ -50,7 +53,7 @@ _SCHEDULE_TARGETING: set[str] = {
 }
 
 # ---------------------------------------------------------------------------
-# tool bodies (Phase 2: stubs + the real kb_schedule_list)
+# tool bodies (Phase 2: the 004 scheduler bodies + kb_run_history)
 # ---------------------------------------------------------------------------
 
 def _stub_body(name: str) -> dict:
@@ -562,6 +565,561 @@ def _parse_counts(per_source_counts_json) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
+# ---------------------------------------------------------------------------
+# 007 KB tool bodies (007-R1..R4) + shared helpers
+# ---------------------------------------------------------------------------
+
+#: The 006 503 remediation hint, verbatim (contracts/web-api.md).  ``kb_search``
+#: maps any Qdrant failure (unconfigured / construction / transport) to this
+#: string — never a traceback (007-R1d).
+_QDRANT_UNAVAILABLE_REMEDIATION = (
+    "check qdrant.url (env: KB_QDRANT__URL) points at a live Qdrant "
+    "host:port, and that the collection exists")
+
+
+class QdrantUnavailable(Exception):
+    """Raised when the Qdrant client cannot be resolved or the call fails.
+
+    The body maps this to the ``qdrant_unavailable`` error code + the exact
+    006 remediation string (007-R1d).
+    """
+
+
+class EmbeddingUnavailable(Exception):
+    """Raised when the embedding model cannot be loaded (007-R1e).
+
+    The body maps this to the ``embedding_unavailable`` error code (a code
+    distinct from ``qdrant_unavailable``), naming ``embedding.model``.
+    """
+
+
+def _fail_closed() -> dict:
+    """The 007-R6e fail-closed guard: config is None → config_not_loaded."""
+    return {
+        "ok": False,
+        "error": {
+            "code": "config_not_loaded",
+            "message": ("MCPContext.config is None; the transport must "
+                        "load config before dispatch"),
+        },
+    }
+
+
+def _resolve_qdrant_client(config) -> "QdrantClient":
+    """Resolve the Qdrant client from the config layer (006 ``_qdrant_client``
+    pattern, web/app.py lines 383–412).
+
+    Reads ``qdrant.url`` / ``qdrant.api_key``.  Unconfigured or a
+    construction/transport failure raises :class:`QdrantUnavailable`, which
+    the body maps to ``qdrant_unavailable`` + the exact 006 remediation.
+    The client is cached on the module so repeated calls don't reconstruct
+    it (007-R1: a pooled client, not a per-request client).
+    """
+    # NOTE: the QdrantUnavailable reference in this docstring is defined
+    # below the imports (above the body that raises it).
+    url = _cfg_get(config, "qdrant.url")
+    if not url:
+        raise QdrantUnavailable("qdrant.url is not configured")
+    client = globals().get("_qdrant_client_cache")
+    if client is None:
+        try:
+            from qdrant_client import QdrantClient
+            client = QdrantClient(
+                url=url,
+                api_key=_cfg_get(config, "qdrant.api_key") or None)
+        except Exception as exc:  # construction/transport failure
+            raise QdrantUnavailable(str(exc)) from exc
+        globals()["_qdrant_client_cache"] = client
+    return client
+
+
+def _embed_query(config, text: str):
+    """Embed a single query string with the config-pinned model.
+
+    Pooled: the heavy ``load_embedder`` model loads **once per process**
+    (a lazy module-level cache keyed on model + device), not once per
+    request (006's ``_pooled_embedder`` pattern, adapted to a module cache).
+    A load failure raises :class:`EmbeddingUnavailable`, which the body maps
+    to ``embedding_unavailable`` naming ``embedding.model`` (007-R1e).
+    """
+    from ..ingest.embedding import DEFAULT_MODEL
+
+    model = _cfg_get(config, "embedding.model") or DEFAULT_MODEL
+    device = _cfg_get(config, "embedding.device") or "auto"
+    key = (model, device)
+    pool = globals().get("_embed_pool")
+    if pool is None:
+        pool = {}
+        globals()["_embed_pool"] = pool
+    if key not in pool:
+        try:
+            from ..ingest.embedding import load_embedder
+            pool[key] = load_embedder(model, device)
+        except Exception as exc:  # load failure (download / unpinned / etc)
+            raise EmbeddingUnavailable(
+                f"embedding.model {model!r} failed to load: {exc}") from exc
+    return pool[key].encode([text])
+
+
+def _kb_search_body(ctx: MCPContext, args: dict) -> dict:
+    """Owner-scoped Qdrant vector search (007-R1, mirrors 006's
+    ``web/app.py::_handle_kb_search``).
+
+    Order of operations:
+      1. Fail-closed guard (config None → ``config_not_loaded``).
+      2. Validate ``query`` (blank/missing/non-str →
+         ``bad_request "query must be a non-empty string"`` — 006's exact
+         400 message, **before** any Qdrant/embedding work).
+      3. Clamp ``limit`` (default 5, cap 100; non-int → 5).
+      4. ``owner_tag = owner_tag_for(ctx.caller_email)``.
+      5. ``_resolve_qdrant_client(ctx.config)`` (006 ``_qdrant_client``
+         pattern; unconfigured/construction/transport failure →
+         ``qdrant_unavailable`` + the exact 006 remediation).
+      6. Pooled ``_embed_query(ctx.config, text)`` (the heavy model loads
+         once, not per request; load failure → ``embedding_unavailable``
+         naming ``embedding.model``).
+      7. ``query_points(QDRANT_COLLECTION, query=<vec>,
+         query_filter=Filter(must=[FieldCondition(key='owner_tag',
+         match=MatchValue(value=owner_tag))]), limit=limit,
+         with_payload=True)`` — the 006 filter verbatim.
+      8. Map rows to ``{score, source_url, text, source, chunk_index}``,
+         sort descending by score, return ``{"ok": True, "results": [...],
+         "count": N}``.
+    """
+    if ctx.config is None:
+        return _fail_closed()
+
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return {
+            "ok": False,
+            "error": {
+                "code": "bad_request",
+                "message": "query must be a non-empty string",
+            },
+        }
+
+    try:
+        limit = int(args.get("limit", 5))
+    except (TypeError, ValueError):
+        limit = 5
+    limit = max(1, min(limit, 100))
+
+    owner_tag = owner_tag_for(ctx.caller_email)
+
+    try:
+        client = _resolve_qdrant_client(ctx.config)
+    except Exception:
+        # Any qdrant-resolution failure (unconfigured URL, transport down,
+        # construction error) → the clean qdrant_unavailable hint, never a
+        # traceback (007-R1d).
+        return {
+            "ok": False,
+            "error": {
+                "code": "qdrant_unavailable",
+                "remediation": _QDRANT_UNAVAILABLE_REMEDIATION,
+            },
+        }
+
+    try:
+        embedding = _embed_query(ctx.config, query)
+        # _embed_query returns the encode() result; the first (only) vector
+        # is the query vector.  Handle both a batch-with-``tolist`` and a
+        # plain list (test fakes may return either).
+        if hasattr(embedding, "tolist"):
+            vectors = embedding.tolist()
+        else:
+            vectors = list(embedding)
+        if not vectors:
+            raise QdrantUnavailable("no embedding produced for the query")
+        query_vector = vectors[0]
+    except EmbeddingUnavailable:
+        return {
+            "ok": False,
+            "error": {
+                "code": "embedding_unavailable",
+                "remediation": (
+                    "check embedding.model / embedding.device point at a "
+                    "loadable model (embedding.model failed to load)"
+                ),
+            },
+        }
+    except Exception:
+        # Any other embedding failure → the same clean code (never a
+        # traceback; the distinct code from qdrant_unavailable, 007-R1e).
+        return {
+            "ok": False,
+            "error": {
+                "code": "embedding_unavailable",
+                "remediation": (
+                    "check embedding.model / embedding.device point at a "
+                    "loadable model (embedding.model failed to load)"
+                ),
+            },
+        }
+
+    try:
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+        results = client.query_points(
+            QDRANT_COLLECTION,
+            query=query_vector,
+            query_filter=Filter(must=[FieldCondition(
+                key="owner_tag", match=MatchValue(value=owner_tag))]),
+            limit=limit,
+            with_payload=True,
+        )
+    except Exception:
+        # query_points call failure / transport down: the clean
+        # qdrant_unavailable hint — never a traceback (007-R1d).
+        return {
+            "ok": False,
+            "error": {
+                "code": "qdrant_unavailable",
+                "remediation": _QDRANT_UNAVAILABLE_REMEDIATION,
+            },
+        }
+
+    rows = [
+        {
+            "score": r.score,
+            "source_url": (r.payload or {}).get("source_url"),
+            "text": (r.payload or {}).get("text"),
+            "source": (r.payload or {}).get("source"),
+            "chunk_index": (r.payload or {}).get("chunk_index"),
+        }
+        for r in results
+    ]
+    rows.sort(key=lambda row: row["score"] or 0.0, reverse=True)
+    return {"ok": True, "results": rows, "count": len(rows)}
+
+
+def _kb_chat_body(ctx: MCPContext, args: dict) -> dict:
+    """007-R2: kb_chat — "surface only" in 007.
+
+    Mirrors 006's two-branch ``_handle_chat``: the body reads
+    ``llm.endpoint`` / ``llm.model`` (the only knob access — makes the
+    body decision-ready for the follow-up slice that fills generation)
+    and returns the 501-surface result in BOTH branches, whether the
+    knobs are set or unset.
+
+    Steps (007 plan "kb_chat body"):
+
+    1. ``ctx.config is None`` → ``config_not_loaded`` (006
+       ``_fail_closed`` guard; no other work).
+    2. ``query`` missing / blank / non-string → ``bad_request``
+       ``"query must be a non-empty string"`` — BEFORE any config read
+       (the 006 message verbatim; the body short-circuits on the query
+       check so no llm.* knob is touched).
+    3. Read ``get(cfg, "llm.endpoint")`` + ``get(cfg, "llm.model")``
+       (the only knob access; the read is what makes the body
+       decision-ready — a follow-up slice can branch on whether the
+       knobs are set to decide whether to call the LLM).
+    4. Return the 501-surface result in BOTH branches (007-R2):
+       ``{"ok": False, "error": {"code": "not_implemented",
+       "remediation": "set llm.endpoint / llm.model to enable chat
+       (007 ships the surface only; follow-up slice fills generation)"}}``.
+       No LLM call, no embedding, no Qdrant, no network.
+    """
+    if ctx.config is None:
+        return _fail_closed()
+
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return {
+            "ok": False,
+            "error": {
+                "code": "bad_request",
+                "message": "query must be a non-empty string",
+            },
+        }
+
+    # The only knob access — makes the body decision-ready for the
+    # follow-up slice that fills generation (007-R2).  007 ships the
+    # surface only: the read happens, the LLM call does not.
+    _ = _cfg_get(ctx.config, "llm.endpoint")
+    _ = _cfg_get(ctx.config, "llm.model")
+
+    # Both branches return the same 501-surface result — mirroring
+    # 006's two-branch handler (set → would-call-LLM branch; unset →
+    # not-implemented branch; in 007 both return the surface result).
+    return {
+        "ok": False,
+        "error": {
+            "code": "not_implemented",
+            "remediation": (
+                "set llm.endpoint / llm.model to enable chat "
+                "(007 ships the surface only; follow-up slice fills "
+                "generation)"
+            ),
+        },
+    }
+
+
+def _kb_ingest_body(ctx: MCPContext, args: dict) -> dict:
+    """Trigger a pipeline run for the caller (007-R3).
+
+    Mirrors 006's ``web/app.py::_handle_ingest_run`` order — the 007 plan
+    "kb_ingest body":
+
+    1. Fail-closed guard (``ctx.config is None`` → ``config_not_loaded``;
+       no other work).
+    2. Capability gate FIRST: ``require_capability(ctx.caller_role,
+       "trigger_run", "trigger a run")`` — the body's own gate, mirroring
+       the ``dispatch()`` gate but at the body level so the body's tests
+       can assert it in isolation.  Refusal → ``permission_denied``
+       naming ``trigger_run`` (the RoleDenied message includes the
+       capability id); NO ``run_pipeline`` call, NO audit row.
+    3. Source validation (exact 006 messages, all ``bad_request``,
+       zero pipeline calls):
+         * ``source`` missing / ``"all"`` with no enabled sources →
+           ``"no sources enabled"``.
+         * ``source = <name>`` unknown → ``"unknown source '<name>'"``.
+         * ``source = <name>`` not in ``BUILTIN_SOURCES`` →
+           ``"unknown source '<name>'"``.
+         * ``source = <name>`` in ``BUILTIN_SOURCES`` but disabled →
+           ``"source '<name>' is not enabled"``.
+       The caller's enabled-source set comes from
+       ``ctx.config.get("sources", {})`` — the 006 web reads the same
+       nested dict (built-in source names are known from
+       ``schema.BUILTIN_SOURCES``; custom names are looked up in the
+       ``sources`` dict, mirroring 006's two-branch source validation).
+    4. ``merged_cfg`` = schema defaults merged over ``ctx.config``
+       (006's ``_merge_defaults`` equivalent: nested dict from the flat
+       dotted-key DEFAULTS, caller wins).
+    5. Resolve the qdrant factory + embedder via Phase-3 helpers
+       (``_resolve_qdrant_factory`` / ``_resolve_embedder`` — the same
+       lazy, monkeypatchable helpers the 004 ``kb_schedule_run`` body
+       uses).
+    6. ``run_pipeline(merged_cfg, ctx.db, qdrant_factory, embedder,
+       source_names=..., trigger="mcp", scheduled_by=caller_email,
+       owner=caller_email)`` — resolved at call time via the module
+       attribute (the 006 ``_pipeline_mod.run_pipeline`` monkeypatch
+       seam).  **NO ``agent_kind`` kwarg** (run_pipeline's signature
+       has no ``agent_kind`` parameter, ingest/pipeline.py:105).
+       ``neo4j`` is left at its default (Qdrant-only).
+    7. Post-call: ``_stamp_agent_kind(ctx.db, summary.run_id,
+       ctx.agent_kind)`` — the 004 D6 pattern, mirroring
+       ``_kb_schedule_run_body`` step 5.  This is how ``agent_kind`` is
+       recorded on the audit row (007-R3d/BR-11.5.3); the pipeline
+       itself does NOT write it.
+    8. Error mapping:
+         * ``PrerequisiteError`` (``exc.source`` + ``exc.missing``) →
+           ``prerequisite_missing`` with the message
+           ``"source '<name>': missing prerequisite(s): <missing>"``.
+           The pipeline writes its own ``failed`` audit row; the body
+           writes NO second row.
+         * ``UnknownSourceError`` (``exc.args[0]`` = source name) →
+           ``bad_request`` with ``"unknown source '<name>'"``.
+         * Other exceptions → ``run_failed`` with ``str(exc)``; the
+           pipeline writes its own ``failed`` audit row.
+    9. Success → ``{"ok": True, "run_id", "status", "counts", "points"}``
+       — the 006 web result shape.
+    """
+    from ..config.schema import BUILTIN_SOURCES
+    from ..ingest import pipeline as _pipeline_mod
+    from ..sources import UnknownSourceError
+
+    # 1. Fail-closed guard (006 _fail_closed).
+    if ctx.config is None:
+        return _fail_closed()
+
+    # 2. Capability gate FIRST — the body's own gate, mirroring the
+    #    dispatch() gate but at the body level.  Refusal →
+    #    permission_denied naming trigger_run; NO run_pipeline call,
+    #    NO audit row (007-R3b).
+    try:
+        require_capability(
+            ctx.caller_role, "trigger_run", "trigger a run")
+    except RoleDenied as exc:
+        return {
+            "ok": False,
+            "error": {
+                "code": "permission_denied",
+                "message": str(exc),
+            },
+        }
+
+    # 3. Source validation (exact 006 messages, all bad_request).
+    sources_cfg = (ctx.config or {}).get("sources") or {}
+    enabled = [
+        name for name, entry in sources_cfg.items()
+        if isinstance(entry, dict) and entry.get("enabled")
+    ]
+    source = args.get("source")
+    if source in (None, "", "all"):
+        if not enabled:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "bad_request",
+                    "message": "no sources enabled",
+                },
+            }
+        source_names = enabled
+    else:
+        # A specific source name.  Unknown / disabled → bad_request with
+        # the exact 006 message.
+        if source not in BUILTIN_SOURCES and source not in sources_cfg:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "bad_request",
+                    "message": f"unknown source '{source}'",
+                },
+            }
+        entry = sources_cfg.get(source)
+        if not (isinstance(entry, dict) and entry.get("enabled")):
+            return {
+                "ok": False,
+                "error": {
+                    "code": "bad_request",
+                    "message": f"source '{source}' is not enabled",
+                },
+            }
+        source_names = [source]
+
+    # 4. merged_cfg = schema defaults merged over ctx.config (006
+    #    _merge_defaults equivalent).  The caller's config wins on every
+    #    key.
+    merged_cfg = dict(ctx.config or {})
+    for key, value in _pipeline_mod_run_defaults().items():
+        if key not in merged_cfg:
+            merged_cfg[key] = value
+
+    # 5. Resolve the qdrant factory + embedder (the same lazy,
+    #    monkeypatchable helpers the 004 kb_schedule_run body uses).
+    qdrant_factory = _resolve_qdrant_factory(merged_cfg)
+    embedder = _resolve_embedder(merged_cfg)
+
+    # 6. run_pipeline hand-off — resolved at call time via the
+    #    dispatch module attribute (the 006 _pipeline_mod.run_pipeline
+    #    monkeypatch seam — the test monkeypatches dispatch.run_pipeline,
+    #    which is what the body reads).  NO agent_kind kwarg
+    #    (run_pipeline's signature has none, ingest/pipeline.py:105).
+    #    neo4j left at its default (Qdrant-only).
+    run_pipeline = globals().get("run_pipeline", _pipeline_mod.run_pipeline)
+    try:
+        summary = run_pipeline(
+            merged_cfg, ctx.db, qdrant_factory, embedder,
+            source_names=source_names,
+            trigger="mcp",
+            scheduled_by=ctx.caller_email,
+            owner=ctx.caller_email,
+        )
+    except _pipeline_mod.PrerequisiteError as exc:
+        # The pipeline writes its own `failed` audit row on the
+        # exception path (start_audit_run up front + finish on except).
+        # Map to the stable code; the row is audited `failed` with
+        # trigger='mcp'.  The body writes NO second row.
+        return {
+            "ok": False,
+            "error": {
+                "code": "prerequisite_missing",
+                "message": (
+                    f"source '{exc.source}': missing prerequisite(s): "
+                    f"{'; '.join(exc.missing)}"
+                ),
+            },
+        }
+    except UnknownSourceError as exc:
+        # 006 web pattern: the source name is exc.args[0] (KeyError
+        # subclass, the 001 pipeline raises with the source name as the
+        # single arg).
+        name = exc.args[0] if exc.args else str(exc)
+        return {
+            "ok": False,
+            "error": {
+                "code": "bad_request",
+                "message": f"unknown source '{name}'",
+            },
+        }
+    except Exception as exc:
+        # The pipeline writes its own `failed` audit row on the
+        # exception path.  Map to the stable run_failed code; the
+        # row is audited `failed` with trigger='mcp'.  The body
+        # writes NO second row.
+        return {
+            "ok": False,
+            "error": {
+                "code": "run_failed",
+                "message": str(exc),
+            },
+        }
+
+    # 7. Post-call: stamp agent_kind on the audit row's
+    #    per_source_counts JSON (004 D6 pattern, mirror
+    #    _kb_schedule_run_body step 5).  This is how agent_kind is
+    #    recorded (007-R3d/BR-11.5.3); the pipeline does NOT write it.
+    _stamp_agent_kind(ctx.db, summary.run_id, ctx.agent_kind)
+
+    # 8/9. Success — the 006 web result shape.
+    return {
+        "ok": True,
+        "run_id": summary.run_id,
+        "status": summary.status,
+        "counts": summary.counts,
+        "points": summary.points,
+    }
+
+
+def _pipeline_mod_run_defaults() -> dict:
+    """The flat dotted-key DEFAULTS from ``config.schema``.
+
+    The 006 web's ``_merge_defaults`` builds a nested dict from this
+    flat mapping.  This helper returns the flat mapping so the body can
+    apply the same "caller wins" overlay without duplicating the
+    DEFAULTS table.
+    """
+    from ..config.schema import DEFAULTS
+    return dict(DEFAULTS)
+
+
+def _kb_health_body(ctx: MCPContext, args: dict) -> dict:
+    """Run the package's health checks (007-R4, mirrors 006's
+    ``_handle_health``).
+
+    Steps (007 plan "kb_health body"):
+
+    1. Fail-closed guard (``ctx.config is None`` → ``config_not_loaded``;
+       no other work).
+    2. ``checks = _health_mod.run_health_checks(ctx.config)`` — the
+       module-attribute seam (006's ``_health_mod`` pattern): the test
+       monkeypatches ``digital_twins.health.run_health_checks`` so the
+       body's read of ``_health_mod.run_health_checks`` sees the fake.
+       No other I/O: no qdrant / embedding / network call (the
+       function does all the I/O internally; the body just maps the
+       results).
+    3. Map each ``HealthResult`` to ``{endpoint, ok, detail,
+       remediation}`` → ``{"ok": True, "checks": [...]}`` — field
+       shape and order preserved (007-R4a).
+    """
+    # 1. Fail-closed guard (006 _fail_closed).
+    if ctx.config is None:
+        return _fail_closed()
+
+    # 2. The module-attribute seam — the test monkeypatches
+    #    digital_twins.health.run_health_checks so this read sees the
+    #    fake.  No other I/O: no qdrant / embedding / network call
+    #    (run_health_checks does all the I/O internally; the body just
+    #    maps the results).
+    from .. import health as _health_mod
+    checks = _health_mod.run_health_checks(ctx.config)
+
+    # 3. Map each HealthResult to the wire shape.
+    return {
+        "ok": True,
+        "checks": [
+            {
+                "endpoint": r.endpoint,
+                "ok": r.ok,
+                "detail": r.detail,
+                "remediation": r.remediation,
+            }
+            for r in checks
+        ],
+    }
+
+
 TOOL_BODIES: dict[str, Callable[..., dict]] = {
     "kb_schedule_list": _kb_schedule_list_body,
     "kb_schedule_create": _kb_schedule_create_body,
@@ -569,39 +1127,11 @@ TOOL_BODIES: dict[str, Callable[..., dict]] = {
     "kb_schedule_delete": _kb_schedule_delete_body,
     "kb_schedule_run": _kb_schedule_run_body,
     "kb_run_history": _kb_run_history_body,
-    # BR-10 stubs
-    "kb_search": lambda ctx, args: {
-        "ok": False,
-        "error": {
-            "code": "not_implemented_yet",
-            "message": "kb_search is a BR-10 tool, a follow-up slice; "
-                       "not implemented in 004",
-        },
-    },
-    "kb_chat": lambda ctx, args: {
-        "ok": False,
-        "error": {
-            "code": "not_implemented_yet",
-            "message": "kb_chat is a BR-10 tool, a follow-up slice; "
-                       "not implemented in 004",
-        },
-    },
-    "kb_ingest": lambda ctx, args: {
-        "ok": False,
-        "error": {
-            "code": "not_implemented_yet",
-            "message": "kb_ingest is a BR-10 tool, a follow-up slice; "
-                       "not implemented in 004",
-        },
-    },
-    "kb_health": lambda ctx, args: {
-        "ok": False,
-        "error": {
-            "code": "not_implemented_yet",
-            "message": "kb_health is a BR-10 tool, a follow-up slice; "
-                       "not implemented in 004",
-        },
-    },
+    # 007 KB tool bodies (the BR-10 stubs are being replaced one by one)
+    "kb_search": _kb_search_body,
+    "kb_chat": _kb_chat_body,
+    "kb_ingest": _kb_ingest_body,
+    "kb_health": _kb_health_body,
 }
 
 

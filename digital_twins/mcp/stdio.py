@@ -47,6 +47,7 @@ from .. import accounts as _accounts
 from .. import auth as _auth
 from . import dispatch as _dispatch
 from .registry import MCPContext
+from ..config import loader as _loader
 
 
 def _resolve_caller(db, service_account_email: str) -> tuple[str, str | None]:
@@ -105,6 +106,7 @@ def serve(
     db,
     service_account_email: str = "system",
     dispatch: Any = None,
+    config: Any = None,
 ) -> None:
     """Run the stdio transport until ``in_stream`` is exhausted.
 
@@ -126,6 +128,13 @@ def serve(
     dispatch:
         Optional dispatch callable (injectable for tests); defaults to
         :func:`digital_twins.mcp.dispatch.dispatch`.
+    config:
+        The loaded config dict (feature 007, 007-R6b), threaded into
+        ``MCPContext.config`` so the KB tool bodies can read it. The
+        programmatic ``serve`` seam defaults to ``None``; the CLI entry
+        point (:func:`main`) always loads it via the config layer first
+        (007-R6b) so a live transport never dispatches with a ``None``
+        config.
     """
     caller_email, caller_role = _resolve_caller(db, service_account_email)
 
@@ -148,11 +157,17 @@ def serve(
             out_stream.flush()
         return
 
+    # 007-R6b: thread the loaded config into MCPContext so the KB tool
+    # bodies (kb_search / kb_chat / kb_ingest / kb_health) can read it.
+    # The programmatic ``serve`` seam does not load config itself — that's
+    # the CLI entry point's job (:func:`main`, 007-R6b). When the caller
+    # omits ``config`` (the 004 call shape), MCPContext.config is None.
     ctx = MCPContext(
         db=db,
         caller_email=caller_email,
         caller_role=caller_role,
         agent_kind="stdio",
+        config=config,
     )
 
     for line in in_stream:
@@ -184,6 +199,17 @@ def serve(
         out_stream.flush()
 
 
-def main(db, service_account_email: str = "system") -> None:
-    """Run the stdio transport on ``sys.stdin`` / ``sys.stdout``."""
-    serve(sys.stdin, sys.stdout, db, service_account_email=service_account_email)
+def main(db, service_account_email: str = "system",
+         config: Any = None) -> None:
+    """Run the stdio transport on ``sys.stdin`` / ``sys.stdout``.
+
+    ``config`` (feature 007, 007-R6b): the loaded config dict. When
+    omitted, ``main`` loads it via the config layer
+    (:func:`digital_twins.config.loader.load`) and threads it into
+    :func:`serve` → ``MCPContext.config`` so the KB tool bodies can
+    read it.
+    """
+    if config is None:
+        config = _loader.load()
+    serve(sys.stdin, sys.stdout, db,
+          service_account_email=service_account_email, config=config)

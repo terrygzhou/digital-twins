@@ -607,7 +607,8 @@ def serve_mcp(transport: str, port: int) -> None:
             click.echo("serve-mcp: stdio transport ready (stdin/stdout)",
                        err=True)
             try:
-                stdio.main(db, service_account_email=service_account_email)
+                stdio.main(db, service_account_email=service_account_email,
+                           config=cfg)
             finally:
                 click.echo("serve-mcp: stdio transport stopped", err=True)
         else:  # http
@@ -623,7 +624,7 @@ def serve_mcp(transport: str, port: int) -> None:
                 err=True)
             try:
                 mcp_http.main(db, service_account_email=service_account_email,
-                              port=mcp_port)
+                              port=mcp_port, config=cfg)
             except KeyboardInterrupt:
                 pass
             finally:

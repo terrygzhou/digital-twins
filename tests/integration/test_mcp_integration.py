@@ -96,24 +96,82 @@ def db(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_sc001_fresh_client_gets_full_tool_list(db):
-    """A valid personal-token caller can call all 10 tools; the 4 BR-10
-    stubs return not_implemented_yet; the 6 real tools succeed."""
+    """A valid personal-token caller can call all 10 tools; the 4 KB tools
+    (the 004 BR-10 stubs, now real in 007) return a stable 007 code (never
+    ``not_implemented_yet``); the 6 real tools succeed."""
     # The first account is admin.
     create_account(db, "admin@example.com", "pw-admin")
     _, token = create_personal_token(db, "admin@example.com")
 
     # Build a context as the admin (the token authenticates to admin's email).
-    ctx = _ctx(db, "admin@example.com", "admin", agent_kind="test")
+    # The KB tool bodies (007) read ``ctx.config``; the transport normally
+    # populates it.  For this registry-shape check we carry a minimal config
+    # so the bodies exercise their real (non-fail-closed) paths.
+    cfg = {
+        "qdrant": {"url": "http://127.0.0.1:6333"},
+        "embedding": {"model": "BAAI/bge-small-en-v1.5", "device": "cpu"},
+        "llm": {"endpoint": None, "model": None, "api_key": None},
+        "sources": {"fs": {"enabled": True}},
+    }
+    ctx = MCPContext(db=db, caller_email="admin@example.com",
+                     caller_role="admin", agent_kind="test", config=cfg)
 
-    # The 4 BR-10 stubs must return not_implemented_yet.
-    stub_tools = ("kb_search", "kb_chat", "kb_ingest", "kb_health")
-    for tool in stub_tools:
-        result = disp_mod.dispatch(ctx, tool, {})
-        assert result.get("ok") is False, f"{tool}: expected failure"
-        assert result["error"]["code"] == "not_implemented_yet", (
-            f"{tool}: expected not_implemented_yet, "
-            f"got {result['error']['code']}"
-        )
+    # The 4 KB tools (the 004 BR-10 stubs, now real in 007) no longer
+    # return ``not_implemented_yet``.  Each returns a result whose
+    # ``error.code`` (if any) is one of the stable 007 codes: the set of
+    # codes observed is a subset of the documented surface, and
+    # ``config_not_loaded`` is never returned (the context carries a
+    # non-None config).  We seed the dispatch seams so the bodies reach a
+    # deterministic code rather than touching the network.
+    import digital_twins.mcp.dispatch as disp
+    mp = pytest.MonkeyPatch()
+    try:
+        mp.setattr(disp, "_resolve_qdrant_client",
+                   lambda c: (_ for _ in ()).throw(
+                       type("QdrantUnavailable", (Exception,), {})(
+                           "qdrant.url is not configured")),
+                   raising=False)
+        mp.setattr(disp, "_embed_query",
+                   lambda c, t: [0.1] * 384, raising=False)
+        mp.setattr(disp, "run_pipeline",
+                   lambda *a, **kw: (_ for _ in ()).throw(
+                       type("RunFailed", (Exception,), {})(
+                           "fake run failure")),
+                   raising=False)
+        import digital_twins.health as _health
+        mp.setattr(_health, "run_health_checks",
+                   lambda c: [], raising=False)
+
+        kb_tools = ("kb_search", "kb_chat", "kb_ingest", "kb_health")
+        observed_codes = set()
+        for tool in kb_tools:
+            result = disp_mod.dispatch(ctx, tool, {"query": "x"})
+            if result.get("ok"):
+                # kb_health with an empty check list succeeds.
+                observed_codes.add("ok")
+            else:
+                code = result["error"]["code"]
+                observed_codes.add(code)
+                assert code != "not_implemented_yet", (
+                    f"{tool}: BR-10 stub code still returned: {code}")
+                assert code != "config_not_loaded", (
+                    f"{tool}: config was provided; fail-closed not expected")
+        assert observed_codes <= {
+            "bad_request", "not_implemented", "permission_denied",
+            "run_failed", "qdrant_unavailable", "embedding_unavailable",
+            "config_not_loaded", "source_disabled", "prerequisite_missing",
+            "unknown_source", "ok",
+        }, f"unexpected KB tool codes: {observed_codes}"
+        # Spot-check the deterministic codes this context produces:
+        # kb_search → bad_request (empty query), kb_chat → not_implemented,
+        # kb_ingest → run_failed (fake pipeline), kb_health → ok.
+        assert disp_mod.dispatch(ctx, "kb_search", {})["error"]["code"] == \
+            "bad_request"
+        assert disp_mod.dispatch(ctx, "kb_chat", {"query": "hi"})[
+            "error"]["code"] == "not_implemented"
+        assert disp_mod.dispatch(ctx, "kb_health", {})["ok"] is True
+    finally:
+        mp.undo()
 
     # The 6 real tools must succeed (list/create are safe no-ops on an
     # empty DB; update/delete/run/history need no schedule to be callable —
