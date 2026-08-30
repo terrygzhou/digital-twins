@@ -50,6 +50,19 @@ vector size matches the embedding model. A dimension mismatch is a hard error
 naming the mismatch plus the remediation ("re-embed, or point at a new
 collection"), exit 1.
 
+### 3b — Local stack (Docker)
+
+On a Docker host, bring up the full local stack (qdrant, neo4j, llm,
+embedding-model, digital-twins) and write a machine-local `kb.local.yml`:
+
+```bash
+bash scripts/bootstrap-local.sh
+```
+
+On a no-GPU host the bundled `llm` is skipped; point `KB_LLM__ENDPOINT` at an
+external LLM to get the full stack. Tear down with `docker compose down`.
+See `docs/configuration.md` for the no-GPU external-LLM path.
+
 ### 4 — First run (the `fs` demo source)
 
 ```bash

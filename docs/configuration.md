@@ -55,6 +55,14 @@ All endpoint knobs are optional and unset by default; a `digital-twins
 validate` run fails fast naming any endpoint an enabled source needs that
 has not been supplied.
 
+**No-GPU / external-LLM path (BR-12.3.4).** The `llm.endpoint` knob is the
+way to point at an external LLM when no suitable GPU is present. On a
+no-GPU host the local bootstrap (`scripts/bootstrap-local.sh`) skips the
+bundled `llm` service and prints `llm: SKIPPED (no suitable GPU — set
+KB_LLM__ENDPOINT to an external LLM via config or the admin UI)`; set
+`llm.endpoint` (or `KB_LLM__ENDPOINT`) to an OpenAI-compatible or SGLang
+server URL to run the full stack against that external endpoint.
+
 | knob | type | default | env var | notes |
 |---|---|---|---|---|
 | qdrant.url | str | ~ | KB_QDRANT__URL | Vector store endpoint URL. |

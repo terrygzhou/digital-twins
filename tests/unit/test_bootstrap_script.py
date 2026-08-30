@@ -92,7 +92,6 @@ if isinstance(entry, dict):
     sys.exit(entry.get("exit", 0))
 
 sys.exit(0)
-\"\"\"
 """
 
 
