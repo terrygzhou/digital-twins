@@ -20,6 +20,14 @@ From a checkout:
 pip install -e .
 ```
 
+CPU-only hosts: PyPI's default `torch` wheel is ~5 GB with CUDA bundled.
+Install torch from the CPU wheel index first, then the package:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install digital-twins
+```
+
 ### 2 — Initialise
 
 ```bash
