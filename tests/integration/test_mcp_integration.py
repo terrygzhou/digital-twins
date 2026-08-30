@@ -335,7 +335,7 @@ def test_sc004_reader_denied_mutating(db):
 # SC-005: transport parity (stdio vs HTTP)
 # ---------------------------------------------------------------------------
 
-def test_sc005_transport_parity(db):
+def test_sc005_transport_parity(db, monkeypatch):
     """Calling kb_schedule_list via the stdio handler and the HTTP handler
     returns byte-identical JSON (R7 parity by construction: both delegate
     to the same dispatch).
@@ -356,20 +356,17 @@ def test_sc005_transport_parity(db):
     tool_call = {"tool": "kb_schedule_list", "args": {}}
 
     # --- stdio path: real NDJSON I/O loop ---
-    import os
-    old_token = os.environ.get("DT_PERSONAL_TOKEN")
-    os.environ["DT_PERSONAL_TOKEN"] = bob_token
-    try:
-        in_stream = io.StringIO(json.dumps(tool_call) + "\n")
-        out_stream = io.StringIO()
-        mcp_stdio.serve(in_stream, out_stream, db,
-                        service_account_email="system")
-        stdio_json = out_stream.getvalue().strip()
-    finally:
-        if old_token is not None:
-            os.environ["DT_PERSONAL_TOKEN"] = old_token
-        else:
-            del os.environ["DT_PERSONAL_TOKEN"]
+    # Hermetic credentials: DT_SERVICE_TOKEN must not leak in from earlier
+    # tests (it would resolve to the service account instead of the
+    # personal token), and DT_PERSONAL_TOKEN is cleared/patched + restored
+    # by monkeypatch after the test.
+    monkeypatch.delenv("DT_SERVICE_TOKEN", raising=False)
+    monkeypatch.setenv("DT_PERSONAL_TOKEN", bob_token)
+    in_stream = io.StringIO(json.dumps(tool_call) + "\n")
+    out_stream = io.StringIO()
+    mcp_stdio.serve(in_stream, out_stream, db,
+                    service_account_email="system")
+    stdio_json = out_stream.getvalue().strip()
 
     # --- HTTP path: dispatch level (same call the HTTP handler makes) ---
     # The HTTP handler's do_POST: authenticates via mcp_authenticator,

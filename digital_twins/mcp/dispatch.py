@@ -17,6 +17,7 @@ The role-gate and owner-scope logic is what T009/T010 test.
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from typing import Any, Callable
 
@@ -605,6 +606,13 @@ def _fail_closed() -> dict:
     }
 
 
+# D-007-2: one client per distinct connection-param key, not one client per
+# process.  A second MCPContext (or owner) with the same qdrant.url but a
+# different qdrant.api_key must not silently share the first client.
+_QDRANT_CLIENT_CACHE_KEY = "_qdrant_client_cache"
+_qdrant_client_cache_lock = threading.Lock()
+
+
 def _resolve_qdrant_client(config) -> "QdrantClient":
     """Resolve the Qdrant client from the config layer (006 ``_qdrant_client``
     pattern, web/app.py lines 383–412).
@@ -614,22 +622,33 @@ def _resolve_qdrant_client(config) -> "QdrantClient":
     the body maps to ``qdrant_unavailable`` + the exact 006 remediation.
     The client is cached on the module so repeated calls don't reconstruct
     it (007-R1: a pooled client, not a per-request client).
+
+    D-007-2: the cache is keyed on the full tuple of config-derived
+    connection params the constructor consumes (url + api_key — every knob
+    the ``QdrantClient(...)`` call reads from config, so no silent sharing
+    across configs that differ in any of them), and the check-then-set is
+    guarded by ``_qdrant_client_cache_lock`` (atomic under concurrent first
+    calls; the lock is the pooled-embedder pool-style module-global guard).
     """
     # NOTE: the QdrantUnavailable reference in this docstring is defined
     # below the imports (above the body that raises it).
     url = _cfg_get(config, "qdrant.url")
     if not url:
         raise QdrantUnavailable("qdrant.url is not configured")
-    client = globals().get("_qdrant_client_cache")
-    if client is None:
-        try:
-            from qdrant_client import QdrantClient
-            client = QdrantClient(
-                url=url,
-                api_key=_cfg_get(config, "qdrant.api_key") or None)
-        except Exception as exc:  # construction/transport failure
-            raise QdrantUnavailable(str(exc)) from exc
-        globals()["_qdrant_client_cache"] = client
+    key = (url, _cfg_get(config, "qdrant.api_key") or None)
+    cache = globals().get(_QDRANT_CLIENT_CACHE_KEY)
+    if cache is None:
+        cache = {}
+        globals()[_QDRANT_CLIENT_CACHE_KEY] = cache
+    with _qdrant_client_cache_lock:
+        client = cache.get(key)
+        if client is None:
+            try:
+                from qdrant_client import QdrantClient
+                client = QdrantClient(url=url, api_key=key[1])
+            except Exception as exc:  # construction/transport failure
+                raise QdrantUnavailable(str(exc)) from exc
+            cache[key] = client
     return client
 
 
@@ -979,12 +998,15 @@ def _kb_ingest_body(ctx: MCPContext, args: dict) -> dict:
         source_names = [source]
 
     # 4. merged_cfg = schema defaults merged over ctx.config (006
-    #    _merge_defaults equivalent).  The caller's config wins on every
-    #    key.
-    merged_cfg = dict(ctx.config or {})
-    for key, value in _pipeline_mod_run_defaults().items():
-        if key not in merged_cfg:
-            merged_cfg[key] = value
+    #    _merge_defaults equivalent, D-007-3 fix): the nested dict
+    #    built from the flat dotted-key DEFAULTS, with the caller's
+    #    config deep-merged on top (caller wins per key; sibling
+    #    defaults under a partially-overridden subtree are preserved
+    #    — the pre-fix flat dotted-key overlay dropped them).
+    merged_cfg = _deep_merge(
+        _defaults_as_nested(_pipeline_mod_run_defaults()),
+        ctx.config or {},
+    )
 
     # 5. Resolve the qdrant factory + embedder (the same lazy,
     #    monkeypatchable helpers the 004 kb_schedule_run body uses).
@@ -1072,6 +1094,49 @@ def _pipeline_mod_run_defaults() -> dict:
     """
     from ..config.schema import DEFAULTS
     return dict(DEFAULTS)
+
+
+def _defaults_as_nested(flat_defaults: dict) -> dict:
+    """Expand a flat dotted-key mapping into a nested dict (006
+    ``web/app.py::_merge_defaults`` expansion step, duplicated here —
+    ``digital_twins/web/`` is a separate distribution layer and must
+    not be imported from ``mcp/``).
+
+    ``"chunking.max_chars": 800`` becomes ``{"chunking":
+    {"max_chars": 800}}``.  ``None`` values are kept verbatim (the
+    schema's "optional / unset" sentinel).  Returns a new dict tree.
+    """
+    nested: dict = {}
+    for dotted_key, value in flat_defaults.items():
+        parts = dotted_key.split(".")
+        node = nested
+        for part in parts[:-1]:
+            if part not in node or not isinstance(node[part], dict):
+                node[part] = {}
+            node = node[part]
+        node[parts[-1]] = value
+    return nested
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursive dict merge (006 ``web/app.py::_merge_defaults``
+    overlay step, duplicated here): ``override`` wins per key; nested
+    dicts merge recursively; any non-dict value (including ``None``)
+    replaces the base value wholesale.
+
+    Neither input is mutated — a new dict tree is built, so the
+    schema defaults and the caller's config are both left untouched.
+    (006's overlay is one level deep; this recurses, which matches
+    006 for the schema's two-level DEFAULTS and mirrors 006's stated
+    semantics — no other 006 subtlety, e.g. no None-skipping.)
+    """
+    merged: dict = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _kb_health_body(ctx: MCPContext, args: dict) -> dict:
