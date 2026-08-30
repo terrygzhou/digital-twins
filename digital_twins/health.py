@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -120,8 +121,13 @@ def check_llm(cfg) -> HealthResult:
     try:
         req = urllib.request.Request(target, headers=headers)
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as resp:
-            return HealthResult(
-                "llm", True, f"reachable ({target} -> HTTP {resp.status})")
+            detail = f"reachable ({target} -> HTTP {resp.status})"
+            ctx = _llm_context_window(endpoint, headers)
+            if ctx is not None:
+                detail += f"; context window {ctx} (SGLang /get_model_info)"
+            else:
+                detail += "; context window unknown (no SGLang /get_model_info)"
+            return HealthResult("llm", True, detail)
     except urllib.error.HTTPError as exc:
         # the server answered: it is reachable (auth/model config may still need care)
         return HealthResult(
@@ -134,6 +140,30 @@ def check_llm(cfg) -> HealthResult:
             "OpenAI-compatible URL",
         )
 
+
+def _llm_context_window(base: str, headers: dict) -> int | None:
+    """Probe an SGLang server root for its model context window.
+
+    SGLang serves GET /get_model_info at the server root (outside /v1) and
+    reports the model's ``context_len``. Non-SGLang OpenAI-compatible
+    endpoints lack the route, so a failed probe reads as "unknown" rather
+    than an error (reachability already established).
+    """
+    roots = [base]
+    if base.endswith("/v1"):
+        roots.insert(0, base[: -len("/v1")])
+    for root in roots:
+        try:
+            req = urllib.request.Request(
+                root.rstrip("/") + "/get_model_info", headers=headers)
+            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as resp:
+                data = json.loads(resp.read().decode("utf-8", "replace"))
+        except Exception:
+            continue
+        ctx = data.get("context_len") if isinstance(data, dict) else None
+        if isinstance(ctx, int) and ctx > 0:
+            return ctx
+    return None
 
 def run_health_checks(cfg) -> list:
     return [check_qdrant(cfg), check_neo4j(cfg), check_llm(cfg)]

@@ -206,6 +206,86 @@ def test_llm_unreachable(monkeypatch):
     assert "KB_LLM__ENDPOINT" in r.remediation
 
 
+class _JsonResp:
+    def __init__(self, body):
+        self._body = body
+        self.status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return self._body
+
+
+def _plain200():
+    return type("R", (), {
+        "status": 200,
+        "__enter__": lambda s: s,
+        "__exit__": lambda s, *a: False,
+    })()
+
+
+def _llm_urlopen(routes):
+    seen = []
+
+    def _fake(req, timeout=None):
+        seen.append(req.full_url)
+        key = req.full_url.rstrip("/").rsplit("/", 1)[-1]
+        fn = routes.get(key)
+        if fn is None:
+            raise urllib.error.HTTPError(req.full_url, 404, "not found", {}, None)
+        return fn()
+
+    return _fake, seen
+
+
+def test_llm_context_window_reported(monkeypatch):
+    fake, _ = _llm_urlopen({
+        "models": _plain200,
+        "get_model_info": lambda: _JsonResp(b'{"context_len": 32768}'),
+    })
+    monkeypatch.setattr(health.urllib.request, "urlopen", fake)
+    r = health.check_llm(_cfg(llm={"endpoint": "http://llm:30000"}))
+    assert r.ok
+    assert "context window 32768" in r.detail
+
+
+def test_llm_context_window_probe_strips_v1(monkeypatch):
+    fake, seen = _llm_urlopen({
+        "models": _plain200,
+        "get_model_info": lambda: _JsonResp(b'{"context_len": 8192}'),
+    })
+    monkeypatch.setattr(health.urllib.request, "urlopen", fake)
+    r = health.check_llm(_cfg(llm={"endpoint": "http://llm:30000/v1"}))
+    assert r.ok
+    assert "context window 8192" in r.detail
+    assert "http://llm:30000/get_model_info" in seen
+    assert "http://llm:30000/v1/get_model_info" not in seen
+
+
+def test_llm_context_window_unknown_for_non_sglang(monkeypatch):
+    fake, _ = _llm_urlopen({"models": _plain200})
+    monkeypatch.setattr(health.urllib.request, "urlopen", fake)
+    r = health.check_llm(_cfg(llm={"endpoint": "http://llm:30000"}))
+    assert r.ok
+    assert "context window unknown" in r.detail
+
+
+def test_llm_context_window_malformed_json(monkeypatch):
+    fake, _ = _llm_urlopen({
+        "models": _plain200,
+        "get_model_info": lambda: _JsonResp(b"not json"),
+    })
+    monkeypatch.setattr(health.urllib.request, "urlopen", fake)
+    r = health.check_llm(_cfg(llm={"endpoint": "http://llm:30000"}))
+    assert r.ok
+    assert "context window unknown" in r.detail
+
+
 def test_run_health_checks_returns_one_per_endpoint():
     results = health.run_health_checks(_cfg(qdrant={}, neo4j={}, llm={}))
     assert [r.endpoint for r in results] == ["qdrant", "neo4j", "llm"]
