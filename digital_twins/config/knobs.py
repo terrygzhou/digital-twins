@@ -108,6 +108,18 @@ KNOBS: dict[str, dict] = {
         "env": "KB_EMBEDDING__DEVICE",
         "group": GROUP_EMBEDDING,
     },
+    "embedding.endpoint": {
+        "type": "str",
+        "default": None,
+        "env": "KB_EMBEDDING__ENDPOINT",
+        "group": GROUP_EMBEDDING,
+    },
+    "embedding.api_key": {
+        "type": "str",
+        "default": None,
+        "env": "KB_EMBEDDING__API_KEY",
+        "group": GROUP_EMBEDDING,
+    },
 
     # --- Chunking ---
     "chunking.max_chars": {

@@ -186,14 +186,16 @@ def test_llm_reachable(monkeypatch):
     assert "HTTP 200" in r.detail
 
 
-def test_llm_http_error_still_reachable(monkeypatch):
+def test_llm_http_401_is_auth_failed_not_ok(monkeypatch):
     def _boom(req, timeout=None):
         raise urllib.error.HTTPError(
             "https://llm.example/v1/models", 401, "unauthorized", {}, None)
     monkeypatch.setattr(health.urllib.request, "urlopen", _boom)
     r = health.check_llm(_cfg(llm={"endpoint": "https://llm.example/v1"}))
-    assert r.ok
+    assert not r.ok
+    assert r.status == "auth-failed"
     assert "HTTP 401" in r.detail
+    assert "llm.api_key" in r.remediation
 
 
 def test_llm_unreachable(monkeypatch):
@@ -288,4 +290,54 @@ def test_llm_context_window_malformed_json(monkeypatch):
 
 def test_run_health_checks_returns_one_per_endpoint():
     results = health.run_health_checks(_cfg(qdrant={}, neo4j={}, llm={}))
-    assert [r.endpoint for r in results] == ["qdrant", "neo4j", "llm"]
+    assert [r.endpoint for r in results] == [
+        "qdrant", "neo4j", "llm", "embedding"]
+
+
+def test_llm_models_404_is_not_ok(monkeypatch):
+    def _boom(req, timeout=None):
+        raise urllib.error.HTTPError(
+            "https://llm.example/v1/models", 404, "not found", {}, None)
+    monkeypatch.setattr(health.urllib.request, "urlopen", _boom)
+    r = health.check_llm(_cfg(llm={"endpoint": "https://llm.example/v1"}))
+    assert not r.ok
+    assert r.status == "unreachable"
+    assert "HTTP 404" in r.detail
+    assert "KB_LLM__ENDPOINT" in r.remediation
+
+
+def test_llm_models_500_is_not_ok(monkeypatch):
+    def _boom(req, timeout=None):
+        raise urllib.error.HTTPError(
+            "https://llm.example/v1/models", 500, "server error", {}, None)
+    monkeypatch.setattr(health.urllib.request, "urlopen", _boom)
+    r = health.check_llm(_cfg(llm={"endpoint": "https://llm.example/v1"}))
+    assert not r.ok
+    assert "HTTP 500" in r.detail
+
+
+def test_llm_unreachable_scrubs_url_credentials(monkeypatch):
+    def _boom(req, timeout=None):
+        raise urllib.error.URLError(
+            "http://h:9999/ingest?api_key=supersecret failed")
+    monkeypatch.setattr(health.urllib.request, "urlopen", _boom)
+    r = health.check_llm(_cfg(llm={"endpoint": "http://h:9999"}))
+    assert not r.ok
+    assert "supersecret" not in r.detail
+    assert "api_key=" not in r.detail
+
+
+def test_qdrant_exception_detail_scrubs_url_credentials(monkeypatch):
+    import qdrant_client
+
+    class _BoomClient:
+        def __init__(self, **kw):
+            raise RuntimeError(
+                "GET https://q:6333/collections?api_key=topsecret failed")
+
+    monkeypatch.setattr(qdrant_client, "QdrantClient", _BoomClient)
+    r = health.check_qdrant(
+        _cfg(qdrant={"url": "https://q:6333", "api_key": "topsecret"}))
+    assert not r.ok
+    assert "topsecret" not in r.detail
+    assert "api_key=" not in r.detail

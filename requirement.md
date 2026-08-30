@@ -6,10 +6,10 @@ tags: [knowledge, requirements, packaging, mcp, scheduler, ingestion, auth, port
 
 # Digital Twins — Portable, Multi-User Edition
 
-> **Status:** Draft v0.2 (2026-08-29) — owner decisions Q1/Q2/Q3/Q4/Q5/Q6/Q7/Q8/Q9/Q10 all locked in.
+> **Status:** Draft v0.3 (2026-08-30) — owner decisions Q1/Q2/Q3/Q4/Q5/Q6/Q7/Q8/Q9/Q10/Q11 all locked in.
 > **Owner:** project owner
 > **Base:** Extends `docs/business-requirements.md` (BR-1..BR-10, NFR-1..11).
-> This document defines NEW requirements (BR-11) for turning the host-specific
+> This document defines NEW requirements (BR-11, BR-12) for turning the host-specific
 > *Daily KB Session Ingest* cron job into a deployable, environment-portable,
 > multi-user tool. All existing BR/NFR continue to apply unchanged.
 > **Scope:** What the system MUST do when deployed as a package any user can
@@ -322,6 +322,75 @@ installable, environment-portable, multi-user, MCP-reachable tool.
   and a **stable, documented config schema** so a user upgrading from v1 →
   v2 knows exactly what changed and how to migrate.
 
+### BR-12 — Service dependencies & hosting modes
+
+The system's hard runtime dependencies are the **Qdrant vector store**, the
+**Neo4j graph database**, an **LLM runtime**, and the **embedding model**.
+This BR defines how those services are declared, configured, and hosted.
+
+#### BR-12.1 — Hard service dependencies (fail fast)
+
+- **BR-12.1.1** digital-twins MUST treat Qdrant, Neo4j, the LLM runtime, and
+  the embedding model as **hard runtime service dependencies**: an ingestion
+  run that cannot persist or enrich cannot complete. If any required service
+  is unconfigured or unreachable, `validate` MUST name the failing service
+  with a remediation message, and `run`/`serve` MUST fail fast with that
+  error — never silently skip persistence or complete a run that no-ops
+  (extends the BR-11.2.2 fail-fast principle from ingestion sources to
+  service dependencies).
+
+#### BR-12.2 — External hosting: endpoints AND access credentials
+
+- **BR-12.2.1** Each service MAY be externally hosted. For Qdrant, Neo4j, and
+  the LLM / embedding endpoint, BOTH the **endpoint** (host / port / URL)
+  and the **access credential** (API key, token, or password — where the
+  service requires one) MUST be configurable through the same config layer
+  as BR-11.2.1 (process env / `.env` → `kb.local.yml` → `kb.yml` → built-in
+  defaults). No service MAY require a code or shipped-file edit to point at
+  an external instance. Service endpoints and access credentials MUST also be
+  settable from the **web admin UI** so external or partial hosting is
+  completable without file edits (owner decision 2026-08-30; values persist to
+  the machine-local config layer).
+- **BR-12.2.2** Access credentials MUST be treated as secrets: they MUST NOT
+  appear in committed config files, logs, audit records, or error output.
+  `.env.example` and `config.example.yml` SHALL document every credential
+  knob as a placeholder with its purpose (extends BR-11.2.4, NFR-13).
+
+#### BR-12.3 — Local hosting: Docker Compose is the preferred, supported mode
+
+- **BR-12.3.1** For locally hosted services, the **Docker Compose container
+  stack** (Qdrant + Neo4j + LLM + embedding model + digital-twins, per
+  BR-11.1.6 / feature 005) is the **preferred and supported** local
+  deployment.
+- **BR-12.3.2** The package SHALL ship a **bootstrap script included in the
+  codebase** (e.g. `scripts/bootstrap-local.sh`) that, on a clean host with
+  Docker, performs the **image pull** (and the v1 user-builds equivalent for
+  images built from the in-repo Dockerfile) and the **initial setting**:
+  starts the local stack, waits for service health, and writes the
+  machine-local config (`kb.local.yml` / `.env`) with the local endpoints.
+  One script invocation on a clean Docker host MUST reach a healthy local
+  stack — no hand-authored compose files, no registry account required. The
+  script MUST be **idempotent**: re-running it against an already-healthy
+  stack MUST NOT re-pull, re-build, or corrupt state, and MUST report
+  per-service status.
+- **BR-12.3.3** The bootstrap script MUST satisfy the host-neutrality guard
+  (NFR-13, `tests/integration/test_portability.py` extended to `scripts/`):
+  no host paths, usernames, or interpreter pins in the shipped script.
+- **BR-12.3.4** A suitable GPU MUST NOT be a mandatory condition for
+  bootstrap. On a host without a suitable GPU, the script MUST bring up the
+  remaining services (Qdrant, Neo4j, embedding model), skip the bundled LLM
+  service with a clear warning, and direct the user to configure an external
+  LLM API (endpoint + credential via the config layer or the admin UI).
+  **BYO-LLM** beyond the standard endpoint + credential configuration knobs
+  is out of scope for v1 (owner refinement, 2026-08-30).
+
+#### BR-12.4 — Hosting-mode parity
+
+- **BR-12.4.1** The system MUST behave identically whether services are
+  locally hosted (bundled Docker stack) or externally hosted; the only
+  difference is the configured endpoint / credential per service. Switching
+  modes MUST be a **config-only change** — no code change, no image rebuild.
+
 ---
 
 ## 3. Non-Functional Requirements (additions)
@@ -334,6 +403,7 @@ installable, environment-portable, multi-user, MCP-reachable tool.
 | NFR-15 | **Upgrade safety** — an in-place upgrade (new package version over an existing install) MUST not lose state: `.kbstate/`, the account DB, and the config survive; a migration step (if schema changed) runs before the new code starts. |
 | NFR-16 | **Per-user auditability** — every run is attributable to a user (or `system`); a user can list only their own runs; an admin can list all. |
 | NFR-17 | **Credential scoping** — a user's personal token grants only that user's role; it MUST NOT grant access to another user's run history or config (NFR-5/11 extended to tokens). |
+| NFR-18 | **Service dependency visibility** — `validate`/`health` report reachability and auth status per hard service dependency (Qdrant, Neo4j, LLM, embedding model); a fresh GPU-capable Docker host reaches a fully healthy local stack by running only the shipped bootstrap script; a CPU-only host reaches a healthy partial stack (LLM excluded) with documented external-LLM guidance (BR-12.3.4). |
 
 ---
 
@@ -393,13 +463,33 @@ installable, environment-portable, multi-user, MCP-reachable tool.
 - [ ] An external MCP user (not admin) can call `kb_schedule_run` on their own
       schedule and `kb_run_history` for their own runs, but cannot list or
       trigger another user's schedules (BR-11.5.5, Q9).
+- [ ] With any required service (Qdrant / Neo4j / LLM / embedding) unconfigured
+      or unreachable, `validate` names the failing service with a remediation
+      message and `run`/`serve` fail fast — no silent no-op run (BR-12.1,
+      NFR-18).
+- [ ] Pointing the config at external Qdrant / Neo4j / LLM endpoints with
+      their access tokens configured passes `validate` and completes an
+      ingestion run, without the local Docker stack; no credential value
+      appears in committed files, logs, or audit output (BR-12.2).
+- [ ] Service endpoints + access tokens are configurable from the web admin
+      UI (admin-gated, secret-safe — values never echoed in UI responses,
+      logs, or audit); after external configuration via the UI, `validate`
+      passes and runs work (BR-12.2.1).
+- [ ] On a fresh GPU-capable Docker host, one invocation of the shipped
+      bootstrap script pulls/builds the pinned images, starts the full local
+      stack, writes the machine-local config, and `validate` passes —
+      re-running the script is a no-op on a healthy stack (BR-12.3, NFR-18,
+      Q11).
+- [ ] On a CPU-only Docker host, the same script brings up Qdrant / Neo4j /
+      embedding, skips the bundled LLM service with a warning + external-LLM
+      guidance, and exits 0 (BR-12.3.4).
 
 ---
 
 ## 5. Open Questions (need owner decision)
 
-All ten questions are now **DECIDED** (2026-08-29). No open items remain;
-the document is ready to drive implementation.
+All eleven questions are now **DECIDED** (Q1–Q10 on 2026-08-29, Q11 on
+2026-08-30). No open items remain; the document is ready to drive implementation.
 
 - **Q1 (BR-11.1.1):** ✅ **DECIDED 2026-08-29** — PyPI public, plus a web
   application surface so users can access the KB from anywhere (browser,
@@ -437,6 +527,16 @@ the document is ready to drive implementation.
   (`digital-twins run --once`). Arbitrary cron / recurrence is a follow-up.
   Locked in BR-11.3.7.
 
+- **Q11 (BR-12.3):** ✅ **DECIDED 2026-08-30** — Docker container-based local
+  hosting is the **preferred and supported** mode. Docker image pulling and
+  initial setting MUST be doable by running **shipped scripts included in the
+  codebase**: one script invocation on a clean Docker host → healthy local
+  stack, idempotent on re-run. Locked in BR-12.3 / NFR-18.
+  **Refined 2026-08-30**: a suitable GPU is NOT a mandatory condition for
+  bootstrap; on CPU-only hosts the bundled LLM service is skipped and an
+  external LLM API is configured via the config layer or admin UI; BYO-LLM
+  beyond endpoint + credential knobs is out of scope (BR-12.3.4).
+
 ---
 
 ## 6. Traceability to Existing BR/NFR
@@ -449,6 +549,7 @@ the document is ready to drive implementation.
 | BR-11.4 (multi-user) | BR-9 (auth), BR-9.5 (roles), NFR-11 (credential hygiene) |
 | BR-11.5 (MCP for any agent) | BR-10 (MCP), BR-10.3 (pipeline parity), BR-4.7 (MCP as trigger) |
 | BR-11.6 (community) | New — no existing BR covers packaging/licensing/docs for release |
+| BR-12 (service deps & hosting) | BR-3.6 (validate), BR-11.1.6 (Q7 Docker bundle), BR-11.2.1/2.4 (config layer + example files), NFR-13 |
 
 The existing BR-1..BR-10 and NFR-1..NFR-11 continue to apply unchanged.
-This document adds BR-11 (with sub-requirements) and NFR-12..NFR-17.
+This document adds BR-11, BR-12 (with sub-requirements) and NFR-12..NFR-18.

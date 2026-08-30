@@ -312,12 +312,16 @@ def test_kb_health_per_endpoint_check_list(db, tmp_path):
     result = disp_mod.dispatch(ctx, "kb_health", {})
     assert result["ok"] is True
     checks = result["checks"]
-    assert [c["endpoint"] for c in checks] == ["qdrant", "neo4j", "llm"]
+    assert [c["endpoint"] for c in checks] == [
+        "qdrant", "neo4j", "llm", "embedding"]  # 008 US1: 4 hard deps
     for c in checks:
         assert set(c.keys()) == {"endpoint", "ok", "detail", "remediation"}
-    # With qdrant.url / neo4j.url / llm.endpoint all unconfigured, every
-    # check reports ok=False (the real run_health_checks — no network).
-    assert all(c["ok"] is False for c in checks)
+    # With qdrant.url / neo4j.url / llm.endpoint all unconfigured, those
+    # three report ok=False (real run_health_checks, no network). embedding
+    # is host-dependent (in-process model available here), so it is asserted
+    # for presence, not for ok.
+    by_ep = {c["endpoint"]: c for c in checks}
+    assert all(by_ep[e]["ok"] is False for e in ("qdrant", "neo4j", "llm"))
 
 
 # ---------------------------------------------------------------------------

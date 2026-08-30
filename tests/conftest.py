@@ -65,3 +65,17 @@ class StubLLM:
 @pytest.fixture
 def llm_stub():
     return StubLLM()
+
+@pytest.fixture(autouse=True)
+def _preflight_bypass(request, monkeypatch):
+    # 008 US1: pre-008 fixtures drive the pipeline on default config
+    # (no service endpoints configured); the hard-dependency gate would
+    # stop them before the behavior under test. Bypass the pipeline's
+    # gate call only — modules marked preflight_real (008's own tests)
+    # keep the real check.
+    if request.node.get_closest_marker("preflight_real"):
+        return
+    import digital_twins.health as _health
+    from digital_twins.ingest import pipeline as _pipeline
+    monkeypatch.setattr(_pipeline, "preflight", lambda cfg: None)
+    monkeypatch.setattr(_health, "preflight", lambda cfg: None)

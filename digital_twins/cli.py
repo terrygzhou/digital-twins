@@ -93,7 +93,8 @@ def _ensure_first_admin(conn) -> None:
 
 def _print_report(results) -> None:
     for r in results:
-        line = f"{r.endpoint:<9} {'ok' if r.ok else 'FAIL':<5} {r.detail}"
+        line = (f"{r.endpoint:<9} {'ok' if r.ok else 'FAIL':<5} "
+                f"{(r.status or '-'):<13} {r.detail}")
         if not r.ok:
             line += f"  -> {r.remediation}"
         click.echo(line)
@@ -278,6 +279,7 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
     try:
         migrate(db)
 
+        from digital_twins.health import ServiceDependencyError
         from digital_twins.ingest.pipeline import (
             DimensionMismatchError,
             PrerequisiteError,
@@ -332,6 +334,9 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
                 trigger=trigger, scheduled_by=scheduled_by,
                 owner=run_owner)
         except PrerequisiteError as exc:
+            click.echo(f"fail-fast: {exc}", err=True)
+            raise SystemExit(2)
+        except ServiceDependencyError as exc:
             click.echo(f"fail-fast: {exc}", err=True)
             raise SystemExit(2)
         except DimensionMismatchError as exc:
@@ -463,13 +468,14 @@ def serve(port: int, tick_seconds: float) -> None:
     Loads config, connects and migrates the state DB, then hands off to
     run_serve (T007).
 
-    No endpoint-health gate at startup: 001's ``run`` does not gate on
-    endpoint health — it gates on per-source prerequisites, and the
-    pipeline fails per-source when an endpoint is actually needed.
-    ``serve`` matches that: a down endpoint at startup is not a reason to
-    refuse to start (an LLM-only pipeline can run with qdrant down). Per-
-    source failures at fire time are reported, never silent — T006's
-    ``serve_once_tick`` audits a ``failed`` row and advances (R-07).
+    008 US1 AC3: serve now gates on hard service dependencies at
+    startup — ``health.preflight`` runs before any state/loop work and a
+    down or misconfigured service exits 2 naming the service + remediation
+    (the MVP made all four services hard dependencies; 001's
+    no-gate-at-startup note is superseded).  Fires that start while a
+    dependency recovers mid-run are still reported, never silent —
+    T006's ``serve_once_tick`` audits a ``failed`` row and advances
+    (R-07).
 
     --port overrides scheduler.status_port; --port 0 disables the status
     endpoint entirely (no socket bound). Fails fast with exit code 2 if
@@ -478,6 +484,15 @@ def serve(port: int, tick_seconds: float) -> None:
     run_serve).
     """
     cfg = load()
+
+    # 008 US1 AC3: hard service dependencies are gated at startup — a down
+    # or misconfigured service exits non-zero and names the fix, before
+    # any state/loop work. (Overrides 001's no-gate-at-startup note.)
+    try:
+        health.preflight(cfg)
+    except health.ServiceDependencyError as exc:
+        click.echo(f"fail-fast: {exc}", err=True)
+        raise SystemExit(2)
 
     # Determine the status port: --port if given, else the knob default.
     status_port = port if port is not None else get(cfg, "scheduler.status_port")

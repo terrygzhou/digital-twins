@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from qdrant_client import models as qm
 
 from digital_twins.config.schema import get
-from digital_twins.health import QDRANT_COLLECTION
+from digital_twins.health import QDRANT_COLLECTION, preflight
 from digital_twins.ingest.chunking import chunk_text
 from digital_twins.ingest.embedding import DEFAULT_MODEL, model_dimension
 from digital_twins.ingest.ids import point_id
@@ -135,6 +135,11 @@ def run_pipeline(
     one-record dedup invariant (NFR-1) is preserved: the same content
     ingested by two different owners still yields one point.
     """
+    if not dry_run:
+        # 008 US1 gate: hard dependencies, before any write. dry-run skips
+        # the gate: it consumes no service capacity and writes nothing
+        # (diff-review P2 — a preview must not fail-fast on live services).
+        preflight(cfg)
     run_id = str(uuid.uuid4())
     built: list = []
     counts: dict = {}

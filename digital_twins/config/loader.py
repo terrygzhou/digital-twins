@@ -104,7 +104,7 @@ def _build_layers(cwd, env, config_dir):
         _load_dotenv(pre_dir / ".env", override=False)
         env = dict(os.environ)
     if config_dir is None:
-        config_dir = env.get("KB_CONFIG_DIR") or _schema.DEFAULTS["config_dir"]
+        config_dir = str(local_config_path(env).parent)
     config_dir = Path(config_dir).expanduser()
 
     layers = [
@@ -114,6 +114,21 @@ def _build_layers(cwd, env, config_dir):
         ("env", _env_layer(env)),
     ]
     return layers, config_dir
+
+
+def local_config_path(env=None):
+    """Machine-local layer location: ``config_dir / "kb.local.yml"`` (008/US2).
+
+    ``config_dir`` resolves from ``KB_CONFIG_DIR`` in ``env`` (the real
+    process environment when ``env`` is None), else the built-in default —
+    the same rule the loader bootstrap uses, so the two never drift.
+    """
+    if env is None:
+        env = dict(os.environ)
+    config_dir = Path(
+        env.get("KB_CONFIG_DIR") or _schema.DEFAULTS["config_dir"]
+    ).expanduser()
+    return config_dir / "kb.local.yml"
 
 
 def load(cwd=None, env=None, config_dir=None):

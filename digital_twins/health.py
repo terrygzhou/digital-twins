@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -17,6 +19,43 @@ QDRANT_COLLECTION = "personal_kb"
 
 HTTP_TIMEOUT_S = 10
 
+VALID_STATUSES = frozenset({"ok", "unconfigured", "unreachable", "auth-failed"})
+
+logger = logging.getLogger(__name__)
+
+
+class ServiceDependencyError(Exception):
+    """Raised by preflight when a hard service dependency is not ok."""
+
+    def __init__(self, service, status, remediation):
+        super().__init__(f"{service}: {status} — {remediation}")
+        self.service = service
+        self.status = status
+        self.remediation = remediation
+
+
+_URL_QUERY_RE = re.compile(r'(https?://\S+?)\?[^"\s]*')
+
+
+def _scrub(text: str, limit: int = 120) -> str:
+    # NFR-13 / FR-004: exception text can echo request URLs; drop any
+    # query string (credentials-in-URL) before it reaches validate output
+    # or log records.
+    def _strip(m):
+        return m.group(1)
+    return _URL_QUERY_RE.sub(_strip, text)[:limit]
+
+
+def _classify(exc: BaseException) -> str:
+    # ponytail: heuristic name/message match; add exact exception classes
+    # (qdrant_client UnexpectedStatusCode etc.) if false positives appear
+    name = type(exc).__name__
+    msg = str(exc)
+    if "Auth" in name or "Unauthorized" in msg or "Forbidden" in msg \
+            or "401" in msg or "403" in msg:
+        return "auth-failed"
+    return "unreachable"
+
 
 @dataclass
 class HealthResult:
@@ -24,6 +63,7 @@ class HealthResult:
     ok: bool
     detail: str
     remediation: str = ""
+    status: str = ""
 
 
 def check_qdrant(cfg) -> HealthResult:
@@ -32,7 +72,7 @@ def check_qdrant(cfg) -> HealthResult:
         return HealthResult(
             "qdrant", False, "qdrant.url is not configured",
             "set qdrant.url in kb.local.yml (env: KB_QDRANT__URL), then re-run init/validate",
-        )
+            status="unconfigured")
     try:
         from qdrant_client import QdrantClient
         client = QdrantClient(url=url, api_key=get(cfg, "qdrant.api_key") or None)
@@ -53,11 +93,18 @@ def check_qdrant(cfg) -> HealthResult:
             )
         return HealthResult(
             "qdrant", True, f"reachable; {QDRANT_COLLECTION} is {dim}-dim")
-    except Exception as exc:  # any transport/auth failure reads as unreachable
-        return HealthResult(
-            "qdrant", False, f"unreachable: {exc.__class__.__name__}: {exc}",
-            "check qdrant.url (env: KB_QDRANT__URL) points at a live Qdrant host:port",
-        )
+    except Exception as exc:
+        status = _classify(exc)
+        if status == "auth-failed":
+            detail = f"auth failed: {exc.__class__.__name__}: {_scrub(str(exc))}"
+            remediation = ("check qdrant.api_key / qdrant.url "
+                           "(env: KB_QDRANT__API_KEY / KB_QDRANT__URL)")
+        else:
+            detail = f"unreachable: {exc.__class__.__name__}: {_scrub(str(exc))}"
+            remediation = ("check qdrant.url (env: KB_QDRANT__URL) points at "
+                           "a live Qdrant host:port")
+        return HealthResult("qdrant", False, detail, remediation,
+                            status=status)
 
 
 def _collection_dim(client, name):
@@ -75,7 +122,7 @@ def check_neo4j(cfg) -> HealthResult:
         return HealthResult(
             "neo4j", False, "neo4j.url is not configured",
             "set neo4j.url in kb.local.yml (env: KB_NEO4J__URL), then re-run init/validate",
-        )
+            status="unconfigured")
     user = get(cfg, "neo4j.user")
     password = get(cfg, "neo4j.password")
     if not user or not password:
@@ -83,7 +130,7 @@ def check_neo4j(cfg) -> HealthResult:
             "neo4j", False, "neo4j.user/neo4j.password are not configured",
             "set neo4j.user and neo4j.password "
             "(env: KB_NEO4J__USER / KB_NEO4J__PASSWORD)",
-        )
+            status="unconfigured")
     try:
         from neo4j import GraphDatabase
         driver = GraphDatabase.driver(url, auth=(user, password))
@@ -95,7 +142,8 @@ def check_neo4j(cfg) -> HealthResult:
         finally:
             driver.close()
     except Exception as exc:
-        if "Auth" in type(exc).__name__:
+        status = "auth-failed" if "Auth" in type(exc).__name__ else "unreachable"
+        if status == "auth-failed":
             remediation = (
                 "correct neo4j.user / neo4j.password "
                 "(env: KB_NEO4J__USER / KB_NEO4J__PASSWORD)")
@@ -104,7 +152,9 @@ def check_neo4j(cfg) -> HealthResult:
                 "check neo4j.url (env: KB_NEO4J__URL) points at a live "
                 "Neo4j bolt endpoint")
         return HealthResult(
-            "neo4j", False, f"{type(exc).__name__}: {exc}", remediation)
+            "neo4j", False,
+            f"{type(exc).__name__}: {_scrub(str(exc))}", remediation,
+            status=status)
 
 
 def check_llm(cfg) -> HealthResult:
@@ -114,7 +164,7 @@ def check_llm(cfg) -> HealthResult:
             "llm", False, "llm.endpoint is not configured",
             "set llm.endpoint in kb.local.yml (env: KB_LLM__ENDPOINT) to an "
             "OpenAI-compatible base URL",
-        )
+            status="unconfigured")
     api_key = get(cfg, "llm.api_key")
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     target = endpoint.rstrip("/") + "/models"
@@ -127,18 +177,32 @@ def check_llm(cfg) -> HealthResult:
                 detail += f"; context window {ctx} (SGLang /get_model_info)"
             else:
                 detail += "; context window unknown (no SGLang /get_model_info)"
-            return HealthResult("llm", True, detail)
+            return HealthResult("llm", True, detail, status="ok")
     except urllib.error.HTTPError as exc:
-        # the server answered: it is reachable (auth/model config may still need care)
+        if exc.code in (401, 403):
+            # server answered but rejected credentials — not ok (FR-001)
+            return HealthResult(
+                "llm", False,
+                f"auth failed ({target} -> HTTP {exc.code}); endpoint answered",
+                "check llm.api_key / llm.endpoint "
+                "(env: KB_LLM__API_KEY / KB_LLM__ENDPOINT)",
+                status="auth-failed")
+        # Non-auth HTTP error: the endpoint answered but /models is not
+        # healthy (wrong base path 404, failing server 5xx) — not ok
+        # (diff-review P2: a misconfigured endpoint must fail fast).
         return HealthResult(
-            "llm", True,
-            f"reachable ({target} -> HTTP {exc.code}); endpoint answered")
+            "llm", False,
+            f"endpoint misconfigured ({target} -> HTTP {exc.code})",
+            "check llm.endpoint (env: KB_LLM__ENDPOINT) is a live "
+            "OpenAI-compatible URL whose /models route answers 2xx",
+            status="unreachable")
     except Exception as exc:
         return HealthResult(
-            "llm", False, f"unreachable: {type(exc).__name__}: {exc}",
+            "llm", False,
+            f"unreachable: {type(exc).__name__}: {_scrub(str(exc))}",
             "check llm.endpoint (env: KB_LLM__ENDPOINT) is a live "
             "OpenAI-compatible URL",
-        )
+            status="unreachable")
 
 
 def _llm_context_window(base: str, headers: dict) -> int | None:
@@ -165,5 +229,76 @@ def _llm_context_window(base: str, headers: dict) -> int | None:
             return ctx
     return None
 
+def check_embedding(cfg) -> HealthResult:
+    endpoint = get(cfg, "embedding.endpoint")
+    if not endpoint:
+        model = get(cfg, "embedding.model") or DEFAULT_MODEL
+        try:
+            dim = model_dimension(model)
+        except Exception as exc:
+            return HealthResult(
+                "embedding", False,
+                f"in-process check failed: {exc.__class__.__name__}: "
+                f"{_scrub(str(exc))}",
+                "check embedding.model (env: KB_EMBEDDING__MODEL)",
+                status="unreachable")
+        return HealthResult(
+            "embedding", True,
+            f"in-process embedding ok ({model}, {dim}-dim)",
+            status="ok")
+    api_key = get(cfg, "embedding.api_key")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    target = endpoint.rstrip("/") + "/models"
+    try:
+        req = urllib.request.Request(target, headers=headers)
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as resp:
+            return HealthResult(
+                "embedding", True,
+                f"reachable ({target} -> HTTP {resp.status})",
+                status="ok")
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return HealthResult(
+                "embedding", False,
+                f"auth failed ({target} -> HTTP {exc.code}); endpoint answered",
+                "check embedding.api_key / embedding.endpoint "
+                "(env: KB_EMBEDDING__API_KEY / KB_EMBEDDING__ENDPOINT)",
+                status="auth-failed")
+        return HealthResult(
+            "embedding", False,
+            f"endpoint misconfigured ({target} -> HTTP {exc.code})",
+            "check embedding.endpoint (env: KB_EMBEDDING__ENDPOINT) is a "
+            "live OpenAI-compatible URL whose /models route answers 2xx",
+            status="unreachable")
+    except Exception as exc:
+        return HealthResult(
+            "embedding", False,
+            f"unreachable: {type(exc).__name__}: {_scrub(str(exc))}",
+            "check embedding.endpoint (env: KB_EMBEDDING__ENDPOINT) is a "
+            "live OpenAI-compatible URL",
+            status="unreachable")
+
+
 def run_health_checks(cfg) -> list:
-    return [check_qdrant(cfg), check_neo4j(cfg), check_llm(cfg)]
+    return [check_qdrant(cfg), check_neo4j(cfg), check_llm(cfg),
+            check_embedding(cfg)]
+
+
+def preflight(cfg) -> list:
+    """Gate: every service in run_health_checks is a hard dependency (US1;
+    T013 shape — all four, none optional).
+
+    Raises ServiceDependencyError on the first non-ok check, before the
+    pipeline touches any store (no audit row, no upserts). Returns the
+    ordered list of ok service names when all pass.
+    """
+    ok_services = []
+    for res in run_health_checks(cfg):
+        if not res.ok:
+            logger.warning(
+                "preflight: service %s is %s: %s", res.endpoint, res.status,
+                res.remediation)
+            raise ServiceDependencyError(res.endpoint, res.status,
+                                         res.remediation)
+        ok_services.append(res.endpoint)
+    return ok_services

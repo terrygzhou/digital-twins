@@ -210,39 +210,22 @@ def test_serve_second_instance_fails_fast(env_dirs, monkeypatch):
     assert str(os.getpid()) in result.output
 
 
-# 4 — no endpoint-health gate (match 001's ``run``) ---------------------------
+# 4 — startup preflight gate (008 US1 AC3; supersedes 001's no-gate) ------
 
 
-def test_serve_no_endpoint_health_gate(env_dirs, monkeypatch):
-    """T008 review fix: serve must NOT gate on endpoint health at startup.
-
-    001's ``run`` does not gate on endpoint health — it gates on
-    per-source prerequisites, and the pipeline fails per-source when an
-    endpoint is actually needed. ``serve`` matches that: with every
-    endpoint down, ``serve`` still starts and hands off to run_serve.
-    Endpoint failures surface per-source at fire time (T006's
-    serve_once_tick: failed audit row + advance, R-07) — not at startup.
-    """
+@pytest.mark.preflight_real
+def test_serve_startup_preflight_gates(env_dirs, monkeypatch):
+    """008 US1 AC3: serve now gates on hard service dependencies at
+    startup (supersedes 001's no-gate-at-startup note) — an unconfigured
+    or down service exits non-zero naming the service + remediation,
+    before run_serve is reached."""
     config_dir, state_dir = env_dirs
     _seed_db(state_dir)
 
-    # Stub run_health_checks to report every endpoint down AND record that
-    # it was called: serve must not even call it.
-    called = {"n": 0}
-
-    def _down(cfg):
-        called["n"] += 1
-        return [
-            health.HealthResult(ep, False, "down", "down")
-            for ep in ("qdrant", "neo4j", "llm")
-        ]
-
-    monkeypatch.setattr(health, "run_health_checks", _down)
-
     stub = _stub_run_serve(monkeypatch)
     result = CliRunner().invoke(cli, ["serve", "--port", "0"])
-    assert result.exit_code == 0, result.output
-    # run_serve WAS called: the health gate did not block startup
-    assert stub.called is True
-    # serve never consults the endpoint-health gate
-    assert called["n"] == 0
+    assert result.exit_code == 2, result.output
+    assert "fail-fast" in result.output
+    assert "qdrant" in result.output
+    # the gate blocked startup: run_serve never ran
+    assert stub.called is False

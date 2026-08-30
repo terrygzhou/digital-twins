@@ -24,6 +24,8 @@ llm:
 embedding:
   model: "BAAI/bge-small-en-v1.5"  # 384-dim; model version pinned by the package (env: KB_EMBEDDING__MODEL)
   device: "auto"                  # auto | cpu | cuda (env: KB_EMBEDDING__DEVICE)
+  endpoint: ""                    # optional hosted-embedding OpenAI-compatible endpoint, e.g. http://embed:9000/v1 (env: KB_EMBEDDING__ENDPOINT)
+  api_key: ""                     # bearer token for embedding.endpoint, when it requires one (env: KB_EMBEDDING__API_KEY)
 
 # --- Chunking ---
 chunking:

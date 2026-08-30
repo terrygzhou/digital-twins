@@ -72,6 +72,8 @@ has not been supplied.
 |---|---|---|---|---|
 | embedding.model | str | BAAI/bge-small-en-v1.5 | KB_EMBEDDING__MODEL | Text-embedding model; the default is pinned by the package. |
 | embedding.device | str | auto | KB_EMBEDDING__DEVICE | One of `auto`, `cpu`, `cuda`. `auto` probes the host. |
+| embedding.endpoint | str | ~ | KB_EMBEDDING__ENDPOINT | Optional hosted-embedding OpenAI-compatible endpoint (the reference compose ships one). |
+| embedding.api_key | str | ~ | KB_EMBEDDING__API_KEY | Bearer token for `embedding.endpoint`, when it requires one. |
 
 ## Chunking
 

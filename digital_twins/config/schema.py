@@ -30,6 +30,8 @@ DEFAULTS: dict = {
     # embedding — model version pinned by the package
     "embedding.model": "BAAI/bge-small-en-v1.5",
     "embedding.device": "auto",
+    "embedding.endpoint": None,
+    "embedding.api_key": None,
     # chunking
     "chunking.max_chars": 800,
     "chunking.overlap": 100,
