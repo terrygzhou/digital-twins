@@ -272,6 +272,28 @@ def _kb_chat_schema() -> dict:
     }
 
 
+def _kb_ingest_schema() -> dict:
+    """kb_ingest inputSchema (007-R3a).
+
+    ``source`` (string, optional) — a single source name; omitted or
+    ``"all"`` runs all enabled sources (mirrors 006 web + ``run --once``).
+    ``agent_kind`` — the shared client-kind property.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "source": {
+                "type": "string",
+                "description":
+                    "Optional source name; omitted or 'all' runs all "
+                    "enabled sources (mirrors 006 web + run --once).",
+            },
+            "agent_kind": _agent_kind_prop(),
+        },
+        "required": [],
+    }
+
+
 def _stub_schema() -> dict:
     """Minimal inputSchema for the four BR-10 stubs (R10)."""
     return {
