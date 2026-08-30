@@ -296,24 +296,23 @@ def _http_post_to_handler(db, token, handler_builder):
     return json.loads(body), seen_ctx[0]
 
 
-def _service_token_for(db):
+def _service_token_for(db, monkeypatch):
     """Create a service account + return a usable Bearer token."""
-    import os
     from digital_twins.accounts import create_account
     # Ensure a system account exists (the fixture already creates one as
     # reader, so the service-token path resolves).
     token = "test-http-service-token"
-    os.environ["DT_SERVICE_TOKEN"] = token
+    monkeypatch.setenv("DT_SERVICE_TOKEN", token)
     return token
 
 
-def test_http_build_handler_threads_explicit_config(db):
+def test_http_build_handler_threads_explicit_config(db, monkeypatch):
     """http.build_handler(config=cfg) → the handler's MCPContext carries
     that exact dict; no config load in the builder."""
     from digital_twins.mcp import http
     cfg = {"state_dir": "/tmp/explicit",
            "sources": {"hermes": {"enabled": True}}}
-    token = _service_token_for(db)
+    token = _service_token_for(db, monkeypatch)
     body, ctx = _http_post_to_handler(
         db, token,
         lambda: http.build_handler(db, service_account_email="system",
@@ -322,14 +321,14 @@ def test_http_build_handler_threads_explicit_config(db):
     assert ctx.config is cfg
 
 
-def test_http_build_handler_omitted_config_is_none(db):
+def test_http_build_handler_omitted_config_is_none(db, monkeypatch):
     """http.build_handler() without config → MCPContext.config is None.
 
     The programmatic seam does not load config; the live transport
     (``main``) does.
     """
     from digital_twins.mcp import http
-    token = _service_token_for(db)
+    token = _service_token_for(db, monkeypatch)
     body, ctx = _http_post_to_handler(
         db, token,
         lambda: http.build_handler(db, service_account_email="system"))
@@ -424,12 +423,12 @@ def test_http_main_threads_explicit_config(db, monkeypatch):
     assert loads == []  # no load() when config is supplied
 
 
-def test_http_build_handler_cls_threads_explicit_config(db):
+def test_http_build_handler_cls_threads_explicit_config(db, monkeypatch):
     """http._build_handler_cls(config=cfg) → the handler's MCPContext
     carries that exact dict."""
     from digital_twins.mcp import http
     cfg = {"state_dir": "/tmp/cls-cfg"}
-    token = _service_token_for(db)
+    token = _service_token_for(db, monkeypatch)
     body, ctx = _http_post_to_handler(
         db, token,
         lambda: http._build_handler_cls(db, "system", config=cfg))
