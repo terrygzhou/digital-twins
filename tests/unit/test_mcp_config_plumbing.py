@@ -249,10 +249,14 @@ def test_stdio_main_threads_explicit_config(db, monkeypatch):
 # layer first so a live server never dispatches with a ``None`` config.
 # ---------------------------------------------------------------------------
 
-def _http_post_to_handler(db, handler_cls, token):
-    """POST one JSON request to a live ThreadingHTTPServer wrapping
-    ``handler_cls``; return the parsed response body + the MCPContext seen
-    by dispatch (via a monkeypatched dispatch)."""
+def _http_post_to_handler(db, token, handler_builder):
+    """POST one JSON request to a live ThreadingHTTPServer; return the
+    parsed response body + the MCPContext seen by dispatch.
+
+    ``handler_builder`` is a zero-arg callable that returns the handler
+    class. It is called AFTER the dispatch monkeypatch is in place, so
+    the Handler's closure captures the fake dispatch.
+    """
     import threading
     import http.client
     from http.server import ThreadingHTTPServer
@@ -269,6 +273,7 @@ def _http_post_to_handler(db, handler_cls, token):
     mp = _pytest.MonkeyPatch()
     mp.setattr(dispatch_module, "dispatch", fake_dispatch, raising=False)
     mp.setattr(http_mod, "dispatch", fake_dispatch, raising=False)
+    handler_cls = handler_builder()
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
     host, port = server.server_address[:2]
     t = threading.Thread(target=server.serve_forever, daemon=True)
@@ -308,10 +313,11 @@ def test_http_build_handler_threads_explicit_config(db):
     from digital_twins.mcp import http
     cfg = {"state_dir": "/tmp/explicit",
            "sources": {"hermes": {"enabled": True}}}
-    handler = http.build_handler(db, service_account_email="system",
-                                 config=cfg)
     token = _service_token_for(db)
-    body, ctx = _http_post_to_handler(db, handler, token)
+    body, ctx = _http_post_to_handler(
+        db, token,
+        lambda: http.build_handler(db, service_account_email="system",
+                                   config=cfg))
     assert body["ok"] is True
     assert ctx.config is cfg
 
@@ -323,45 +329,39 @@ def test_http_build_handler_omitted_config_is_none(db):
     (``main``) does.
     """
     from digital_twins.mcp import http
-    handler = http.build_handler(db, service_account_email="system")
     token = _service_token_for(db)
-    body, ctx = _http_post_to_handler(db, handler, token)
+    body, ctx = _http_post_to_handler(
+        db, token,
+        lambda: http.build_handler(db, service_account_email="system"))
     assert body["ok"] is True
     assert ctx.config is None
 
 
-def test_http_serve_threads_explicit_config(db):
-    """http.serve(config=cfg) → the running server's MCPContext carries
-    that exact dict."""
+def test_http_serve_threads_explicit_config(db, monkeypatch):
+    """http.serve(config=cfg) → the handler is built with that config.
+
+    Assert via monkeypatched ``_build_handler_cls`` that serve() passes
+    the config through. (We do not run a live server here; the handler
+    wiring is covered by the ``build_handler`` tests above.)
+    """
     from digital_twins.mcp import http
     cfg = {"state_dir": "/tmp/serve-cfg"}
+    seen = []
+    real_builder = http._build_handler_cls
+
+    def spy_builder(db_, service_account_email, dispatch=None, config=None):
+        seen.append(config)
+        return real_builder(db_, service_account_email, dispatch,
+                            config=config)
+
+    monkeypatch.setattr(http, "_build_handler_cls", spy_builder)
     server = http.serve(db, service_account_email="system", config=cfg)
     try:
-        host, port = server.server_address[:2]
-        token = _service_token_for(db)
-        import http.client
-        payload = json.dumps({"tool": "kb_schedule_list", "args": {}}).encode()
-        conn = http.client.HTTPConnection(host, port, timeout=5)
-        conn.request("POST", "/mcp", body=payload,
-                     headers={"Content-Type": "application/json",
-                              "Authorization": f"Bearer {token}"})
-        resp = conn.getresponse()
-        body = resp.read().decode("utf-8")
-        conn.close()
+        # The server is a ThreadingHTTPServer; we don't run it, we just
+        # verify the handler was built with the right config.
+        assert seen == [cfg]
     finally:
-        server.shutdown()
         server.server_close()
-    parsed = json.loads(body)
-    assert parsed["ok"] is True
-    # The handler class holds the config in its closure; verify by
-    # re-deriving the MCPContext the way do_POST would.
-    # (The MCPContext is built per-request inside do_POST; we assert the
-    # wiring by checking the handler class was built with the config.)
-    handler_cls = server.RequestHandlerClass
-    # _build_handler_cls captures config in the Handler's closure. We
-    # assert the wiring via the explicit test above; here we only assert
-    # the serve() call did not crash and the server responded.
-    assert handler_cls is not None
 
 
 def test_http_main_loads_config_when_omitted(db, monkeypatch):
@@ -429,8 +429,9 @@ def test_http_build_handler_cls_threads_explicit_config(db):
     carries that exact dict."""
     from digital_twins.mcp import http
     cfg = {"state_dir": "/tmp/cls-cfg"}
-    handler = http._build_handler_cls(db, "system", config=cfg)
     token = _service_token_for(db)
-    body, ctx = _http_post_to_handler(db, handler, token)
+    body, ctx = _http_post_to_handler(
+        db, token,
+        lambda: http._build_handler_cls(db, "system", config=cfg))
     assert body["ok"] is True
     assert ctx.config is cfg

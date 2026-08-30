@@ -34,6 +34,7 @@ from .. import accounts as _accounts
 from . import dispatch as _dispatch
 from .auth import mcp_authenticator
 from .registry import MCPContext
+from ..config import loader as _loader
 
 
 # ---------------------------------------------------------------------------
@@ -41,12 +42,20 @@ from .registry import MCPContext
 # ---------------------------------------------------------------------------
 
 def _build_handler_cls(db, service_account_email: str,
-                       dispatch: Any = None) -> type:
+                       dispatch: Any = None,
+                       config: Any = None) -> type:
     """Build a ``BaseHTTPRequestHandler`` subclass wired to ``db`` + ``dispatch``.
 
     ``dispatch`` is injectable for tests; defaults to
     :func:`digital_twins.mcp.dispatch.dispatch`. The returned class is
     suitable for ``ThreadingHTTPServer``.
+
+    ``config`` (feature 007, 007-R6c): the loaded config dict, threaded
+    into the handler's per-request ``MCPContext`` so the KB tool bodies
+    can read it. The programmatic seam defaults to ``None``; the CLI
+    entry point (:func:`main`) always loads it via the config layer
+    first (007-R6c) so a live server never dispatches with a ``None``
+    config.
     """
     if dispatch is None:
         dispatch = _dispatch.dispatch
@@ -121,11 +130,16 @@ def _build_handler_cls(db, service_account_email: str,
                                            "message": "account no longer exists"}})
                 return
 
+            # 007-R6c: thread the loaded config into MCPContext so the KB
+            # tool bodies (kb_search / kb_chat / kb_ingest / kb_health) can
+            # read it. The programmatic seam defaults to None; the live
+            # transport (:func:`main`) always loads it first.
             ctx = MCPContext(
                 db=db,
                 caller_email=email_or_reason,
                 caller_role=caller_role,
                 agent_kind="http",
+                config=config,
             )
             response = dispatch(ctx, request.get("tool", ""),
                                 request.get("args") or {})
@@ -144,14 +158,20 @@ def _build_handler_cls(db, service_account_email: str,
 
 
 def build_handler(db, service_account_email: str = "system",
-                  dispatch: Any = None) -> type:
+                  dispatch: Any = None,
+                  config: Any = None) -> type:
     """Public builder: return the request-handler class for ``db``.
 
     This is the seam the tests + the CLI use: the handler is constructed
     against the open state DB and the dispatch callable, and ready to be
     handed to a ``ThreadingHTTPServer``.
+
+    ``config`` (feature 007, 007-R6c): the loaded config dict, threaded
+    into the handler's per-request ``MCPContext``. Defaults to ``None``;
+    the CLI entry point (:func:`main`) loads it first.
     """
-    return _build_handler_cls(db, service_account_email, dispatch)
+    return _build_handler_cls(db, service_account_email, dispatch,
+                              config=config)
 
 
 # ---------------------------------------------------------------------------
@@ -160,22 +180,39 @@ def build_handler(db, service_account_email: str = "system",
 
 def serve(db, host: str = "127.0.0.1", port: int = 8770,
           service_account_email: str = "system",
-          dispatch: Any = None) -> ThreadingHTTPServer:
+          dispatch: Any = None,
+          config: Any = None) -> ThreadingHTTPServer:
     """Start the HTTP MCP server on ``(host, port)``.
 
     Returns the ``ThreadingHTTPServer`` (call ``.serve_forever()`` to run;
     the CLI's ``serve-mcp`` does this). ``dispatch`` is injectable for
     tests; defaults to :func:`digital_twins.mcp.dispatch.dispatch`.
+
+    ``config`` (feature 007, 007-R6c): the loaded config dict, threaded
+    into the handler's per-request ``MCPContext``. Defaults to ``None``;
+    the CLI entry point (:func:`main`) loads it first.
     """
-    handler = _build_handler_cls(db, service_account_email, dispatch)
+    handler = _build_handler_cls(db, service_account_email, dispatch,
+                                 config=config)
     server = ThreadingHTTPServer((host, port), handler)
     return server
 
 
-def main(db, service_account_email: str = "system", port: int = 8770) -> None:
-    """Run the HTTP MCP server until interrupted."""
+def main(db, service_account_email: str = "system", port: int = 8770,
+         config: Any = None) -> None:
+    """Run the HTTP MCP server until interrupted.
+
+    ``config`` (feature 007, 007-R6c): the loaded config dict. When
+    omitted, ``main`` loads it via the config layer
+    (:func:`digital_twins.config.loader.load`) and threads it into
+    :func:`serve` → the handler's ``MCPContext`` so the KB tool bodies
+    can read it.
+    """
+    if config is None:
+        config = _loader.load()
     server = serve(db, port=port,
-                   service_account_email=service_account_email)
+                   service_account_email=service_account_email,
+                   config=config)
     try:
         server.serve_forever()
     finally:
