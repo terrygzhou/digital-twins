@@ -251,6 +251,27 @@ def _kb_search_schema() -> dict:
     }
 
 
+def _kb_chat_schema() -> dict:
+    """kb_chat inputSchema (007-R2a).
+
+    ``query`` (string, required) — the chat prompt text.
+    ``agent_kind`` — the shared client-kind property.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description":
+                    "The chat prompt text. Validated before any config "
+                    "read; the surface reads llm.endpoint/llm.model only.",
+            },
+            "agent_kind": _agent_kind_prop(),
+        },
+        "required": ["query"],
+    }
+
+
 def _stub_schema() -> dict:
     """Minimal inputSchema for the four BR-10 stubs (R10)."""
     return {
