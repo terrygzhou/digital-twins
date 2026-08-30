@@ -20,7 +20,9 @@ import json
 import uuid
 from typing import Any, Callable
 
-from ..accounts import require_capability, RoleDenied
+from ..accounts import owner_tag_for, require_capability, RoleDenied
+from ..config.schema import get as _cfg_get
+from ..health import QDRANT_COLLECTION
 from .acl import can_access_schedule
 from .registry import MCPContext
 
@@ -50,7 +52,7 @@ _SCHEDULE_TARGETING: set[str] = {
 }
 
 # ---------------------------------------------------------------------------
-# tool bodies (Phase 2: stubs + the real kb_schedule_list)
+# tool bodies (Phase 2: the 004 scheduler bodies + kb_run_history)
 # ---------------------------------------------------------------------------
 
 def _stub_body(name: str) -> dict:
@@ -562,6 +564,234 @@ def _parse_counts(per_source_counts_json) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
+# ---------------------------------------------------------------------------
+# 007 KB tool bodies (007-R1..R4) + shared helpers
+# ---------------------------------------------------------------------------
+
+#: The 006 503 remediation hint, verbatim (contracts/web-api.md).  ``kb_search``
+#: maps any Qdrant failure (unconfigured / construction / transport) to this
+#: string — never a traceback (007-R1d).
+_QDRANT_UNAVAILABLE_REMEDIATION = (
+    "check qdrant.url (env: KB_QDRANT__URL) points at a live Qdrant "
+    "host:port, and that the collection exists")
+
+
+class QdrantUnavailable(Exception):
+    """Raised when the Qdrant client cannot be resolved or the call fails.
+
+    The body maps this to the ``qdrant_unavailable`` error code + the exact
+    006 remediation string (007-R1d).
+    """
+
+
+class EmbeddingUnavailable(Exception):
+    """Raised when the embedding model cannot be loaded (007-R1e).
+
+    The body maps this to the ``embedding_unavailable`` error code (a code
+    distinct from ``qdrant_unavailable``), naming ``embedding.model``.
+    """
+
+
+def _fail_closed() -> dict:
+    """The 007-R6e fail-closed guard: config is None → config_not_loaded."""
+    return {
+        "ok": False,
+        "error": {
+            "code": "config_not_loaded",
+            "message": ("MCPContext.config is None; the transport must "
+                        "load config before dispatch"),
+        },
+    }
+
+
+def _resolve_qdrant_client(config) -> "QdrantClient":
+    """Resolve the Qdrant client from the config layer (006 ``_qdrant_client``
+    pattern, web/app.py lines 383–412).
+
+    Reads ``qdrant.url`` / ``qdrant.api_key``.  Unconfigured or a
+    construction/transport failure raises :class:`QdrantUnavailable`, which
+    the body maps to ``qdrant_unavailable`` + the exact 006 remediation.
+    The client is cached on the module so repeated calls don't reconstruct
+    it (007-R1: a pooled client, not a per-request client).
+    """
+    # NOTE: the QdrantUnavailable reference in this docstring is defined
+    # below the imports (above the body that raises it).
+    url = _cfg_get(config, "qdrant.url")
+    if not url:
+        raise QdrantUnavailable("qdrant.url is not configured")
+    client = globals().get("_qdrant_client_cache")
+    if client is None:
+        try:
+            from qdrant_client import QdrantClient
+            client = QdrantClient(
+                url=url,
+                api_key=_cfg_get(config, "qdrant.api_key") or None)
+        except Exception as exc:  # construction/transport failure
+            raise QdrantUnavailable(str(exc)) from exc
+        globals()["_qdrant_client_cache"] = client
+    return client
+
+
+def _embed_query(config, text: str):
+    """Embed a single query string with the config-pinned model.
+
+    Pooled: the heavy ``load_embedder`` model loads **once per process**
+    (a lazy module-level cache keyed on model + device), not once per
+    request (006's ``_pooled_embedder`` pattern, adapted to a module cache).
+    A load failure raises :class:`EmbeddingUnavailable`, which the body maps
+    to ``embedding_unavailable`` naming ``embedding.model`` (007-R1e).
+    """
+    from ..ingest.embedding import DEFAULT_MODEL
+
+    model = _cfg_get(config, "embedding.model") or DEFAULT_MODEL
+    device = _cfg_get(config, "embedding.device") or "auto"
+    key = (model, device)
+    pool = globals().get("_embed_pool")
+    if pool is None:
+        pool = {}
+        globals()["_embed_pool"] = pool
+    if key not in pool:
+        try:
+            from ..ingest.embedding import load_embedder
+            pool[key] = load_embedder(model, device)
+        except Exception as exc:  # load failure (download / unpinned / etc)
+            raise EmbeddingUnavailable(
+                f"embedding.model {model!r} failed to load: {exc}") from exc
+    return pool[key].encode([text])
+
+
+def _kb_search_body(ctx: MCPContext, args: dict) -> dict:
+    """Owner-scoped Qdrant vector search (007-R1, mirrors 006's
+    ``web/app.py::_handle_kb_search``).
+
+    Order of operations:
+      1. Fail-closed guard (config None → ``config_not_loaded``).
+      2. Validate ``query`` (blank/missing/non-str →
+         ``bad_request "query must be a non-empty string"`` — 006's exact
+         400 message, **before** any Qdrant/embedding work).
+      3. Clamp ``limit`` (default 5, cap 100; non-int → 5).
+      4. ``owner_tag = owner_tag_for(ctx.caller_email)``.
+      5. ``_resolve_qdrant_client(ctx.config)`` (006 ``_qdrant_client``
+         pattern; unconfigured/construction/transport failure →
+         ``qdrant_unavailable`` + the exact 006 remediation).
+      6. Pooled ``_embed_query(ctx.config, text)`` (the heavy model loads
+         once, not per request; load failure → ``embedding_unavailable``
+         naming ``embedding.model``).
+      7. ``query_points(QDRANT_COLLECTION, query=<vec>,
+         query_filter=Filter(must=[FieldCondition(key='owner_tag',
+         match=MatchValue(value=owner_tag))]), limit=limit,
+         with_payload=True)`` — the 006 filter verbatim.
+      8. Map rows to ``{score, source_url, text, source, chunk_index}``,
+         sort descending by score, return ``{"ok": True, "results": [...],
+         "count": N}``.
+    """
+    if ctx.config is None:
+        return _fail_closed()
+
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return {
+            "ok": False,
+            "error": {
+                "code": "bad_request",
+                "message": "query must be a non-empty string",
+            },
+        }
+
+    try:
+        limit = int(args.get("limit", 5))
+    except (TypeError, ValueError):
+        limit = 5
+    limit = max(1, min(limit, 100))
+
+    owner_tag = owner_tag_for(ctx.caller_email)
+
+    try:
+        client = _resolve_qdrant_client(ctx.config)
+    except Exception:
+        # Any qdrant-resolution failure (unconfigured URL, transport down,
+        # construction error) → the clean qdrant_unavailable hint, never a
+        # traceback (007-R1d).
+        return {
+            "ok": False,
+            "error": {
+                "code": "qdrant_unavailable",
+                "remediation": _QDRANT_UNAVAILABLE_REMEDIATION,
+            },
+        }
+
+    try:
+        embedding = _embed_query(ctx.config, query)
+        # _embed_query returns the encode() result; the first (only) vector
+        # is the query vector.  Handle both a batch-with-``tolist`` and a
+        # plain list (test fakes may return either).
+        if hasattr(embedding, "tolist"):
+            vectors = embedding.tolist()
+        else:
+            vectors = list(embedding)
+        if not vectors:
+            raise QdrantUnavailable("no embedding produced for the query")
+        query_vector = vectors[0]
+    except EmbeddingUnavailable:
+        return {
+            "ok": False,
+            "error": {
+                "code": "embedding_unavailable",
+                "remediation": (
+                    "check embedding.model / embedding.device point at a "
+                    "loadable model (embedding.model failed to load)"
+                ),
+            },
+        }
+    except Exception:
+        # Any other embedding failure → the same clean code (never a
+        # traceback; the distinct code from qdrant_unavailable, 007-R1e).
+        return {
+            "ok": False,
+            "error": {
+                "code": "embedding_unavailable",
+                "remediation": (
+                    "check embedding.model / embedding.device point at a "
+                    "loadable model (embedding.model failed to load)"
+                ),
+            },
+        }
+
+    try:
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+        results = client.query_points(
+            QDRANT_COLLECTION,
+            query=query_vector,
+            query_filter=Filter(must=[FieldCondition(
+                key="owner_tag", match=MatchValue(value=owner_tag))]),
+            limit=limit,
+            with_payload=True,
+        )
+    except Exception:
+        # query_points call failure / transport down: the clean
+        # qdrant_unavailable hint — never a traceback (007-R1d).
+        return {
+            "ok": False,
+            "error": {
+                "code": "qdrant_unavailable",
+                "remediation": _QDRANT_UNAVAILABLE_REMEDIATION,
+            },
+        }
+
+    rows = [
+        {
+            "score": r.score,
+            "source_url": (r.payload or {}).get("source_url"),
+            "text": (r.payload or {}).get("text"),
+            "source": (r.payload or {}).get("source"),
+            "chunk_index": (r.payload or {}).get("chunk_index"),
+        }
+        for r in results
+    ]
+    rows.sort(key=lambda row: row["score"] or 0.0, reverse=True)
+    return {"ok": True, "results": rows, "count": len(rows)}
+
+
 TOOL_BODIES: dict[str, Callable[..., dict]] = {
     "kb_schedule_list": _kb_schedule_list_body,
     "kb_schedule_create": _kb_schedule_create_body,
@@ -569,15 +799,8 @@ TOOL_BODIES: dict[str, Callable[..., dict]] = {
     "kb_schedule_delete": _kb_schedule_delete_body,
     "kb_schedule_run": _kb_schedule_run_body,
     "kb_run_history": _kb_run_history_body,
-    # BR-10 stubs
-    "kb_search": lambda ctx, args: {
-        "ok": False,
-        "error": {
-            "code": "not_implemented_yet",
-            "message": "kb_search is a BR-10 tool, a follow-up slice; "
-                       "not implemented in 004",
-        },
-    },
+    # 007 KB tool bodies (the BR-10 stubs are being replaced one by one)
+    "kb_search": _kb_search_body,
     "kb_chat": lambda ctx, args: {
         "ok": False,
         "error": {
