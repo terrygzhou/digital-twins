@@ -119,3 +119,24 @@ def test_kb_ingest_schema_shape():
     # source is optional — not in required
     assert schema["required"] == []
     assert props["agent_kind"] == _agent_kind_expected()
+
+
+# ---------------------------------------------------------------------------
+# T008 RED: _kb_health_schema() builder (007-R4a)
+# ---------------------------------------------------------------------------
+
+def test_kb_health_schema_builder_exists():
+    """RED: the builder function does not exist yet."""
+    assert hasattr(registry, "_kb_health_schema"), (
+        "registry._kb_health_schema() missing (007 T008 RED)"
+    )
+
+
+def test_kb_health_schema_shape():
+    """007-R4a: {agent_kind} only; required: []."""
+    schema = registry._kb_health_schema()
+    assert schema["type"] == "object"
+    props = schema["properties"]
+    assert set(props.keys()) == {"agent_kind"}
+    assert schema["required"] == []
+    assert props["agent_kind"] == _agent_kind_expected()
