@@ -8,7 +8,7 @@ RED commit failing before the GREEN commit, per task.
 
 ## Task 1 — D-007-1: env-hermetic MCP tests
 
-- [ ] T1 RED: convert `_service_token_for(db)` in
+- [x] T1 RED: convert `_service_token_for(db)` in
   `tests/unit/test_mcp_config_plumbing.py` to take `monkeypatch` and use
   `monkeypatch.setenv`; convert `test_sc005_transport_parity` in
   `tests/integration/test_mcp_integration.py` to `monkeypatch.delenv("DT_SERVICE_TOKEN",
