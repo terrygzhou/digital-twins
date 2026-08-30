@@ -1,0 +1,221 @@
+/* digital-twins web UI — minimal styling, no external dependencies. */
+
+:root {
+  --bg: #f7f8fa;
+  --card: #ffffff;
+  --ink: #1f2328;
+  --muted: #6a737d;
+  --line: #d8dde3;
+  --accent: #0b5cad;
+  --accent-ink: #ffffff;
+  --error: #b3261e;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+/* --- top bar ------------------------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1.25rem;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar .brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.topbar .session-user {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-left: auto;
+}
+
+/* --- layout -------------------------------------------------------------- */
+
+main {
+  max-width: 44rem;
+  margin: 1.5rem auto;
+  padding: 0 1rem;
+  display: grid;
+  gap: 1.25rem;
+}
+
+main[hidden] { display: none; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+}
+
+.card h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+}
+
+.card h2 small {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.card h3 {
+  margin: 0.75rem 0 0.4rem;
+  font-size: 1rem;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.6rem 0;
+}
+
+.row .inline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1rem 0;
+}
+
+/* --- forms ---------------------------------------------------------------- */
+
+form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+input,
+select {
+  font: inherit;
+  color: var(--ink);
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  width: 100%;
+}
+
+input:focus,
+select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+.row input { flex: 1; min-width: 12rem; }
+.row select { width: auto; }
+
+/* --- buttons --------------------------------------------------------------- */
+
+.btn {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.btn:hover { border-color: var(--muted); }
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn.primary:hover { filter: brightness(1.08); }
+
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.btn.ghost:hover { text-decoration: underline; }
+
+.btn.small {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+/* --- messages -------------------------------------------------------------- */
+
+.error {
+  color: var(--error);
+  font-size: 0.9rem;
+  min-height: 1.1rem;
+}
+
+/* --- KB panel ---------------------------------------------------------------- */
+
+#point-count {
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+.results {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.result {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.result .score {
+  display: inline-block;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-right: 0.5rem;
+}
+
+.result p { margin: 0.25rem 0; }
+.result small { color: var(--muted); }
+
+.audit-row {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}

@@ -49,6 +49,13 @@ SHIPPED_NON_PY = [
     "docs/references/agent-guides.md",
     "docker-compose.yml",
     "Dockerfile",
+    # 006 web UI assets (FR-016: the SHIPPED scan gains digital_twins/web/,
+    # including non-Python UI assets; the .py files are already covered by
+    # the "digital_twins" directory entry above).
+    "digital_twins/web/static/index.html",
+    "digital_twins/web/static/style.css",
+    # 006 quickstart (shipped user-facing docs; NFR-13)
+    "specs/006-web-app/quickstart.md",
 ]
 
 

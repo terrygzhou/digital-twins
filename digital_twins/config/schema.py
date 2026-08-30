@@ -246,6 +246,7 @@ def validate(cfg: dict) -> dict:
     known_sections = {
         "state_dir", "config_dir", "qdrant", "neo4j", "llm",
         "embedding", "chunking", "scheduler", "sources",
+        "mcp", "web",
     }
     out = {}
     for key, value in cfg.items():
@@ -264,11 +265,18 @@ def validate(cfg: dict) -> dict:
                 )
         elif key in ("state_dir", "config_dir"):
             out[key] = coerce(key, value)
-        elif key in ("qdrant", "neo4j", "llm", "embedding", "chunking", "scheduler"):
+        elif key in ("qdrant", "neo4j", "llm", "embedding", "chunking",
+                     "scheduler", "mcp", "web"):
             if not isinstance(value, dict):
                 raise SchemaError(f"{key}: must be a mapping")
+            # For sections not in the legacy DEFAULTS registry (mcp, web),
+            # build the known sub-keys from the KNOBS registry instead.
             known_subs = {p.split(".", 1)[1] for p in DEFAULTS
                           if p.startswith(key + ".")}
+            if not known_subs:
+                from .knobs import KNOBS as _knoabs_registry
+                known_subs = {p.split(".", 1)[1] for p in _knoabs_registry
+                              if p.startswith(key + ".")}
             section = {}
             for sub, sub_value in value.items():
                 if sub not in known_subs:
@@ -281,14 +289,31 @@ def validate(cfg: dict) -> dict:
                 if sub.startswith(key + ".") and sub.split(".", 1)[1] not in section:
                     sub_key = sub.split(".", 1)[1]
                     section[sub_key] = coerce(f"{key}.{sub_key}", default)
+            # For sections not in DEFAULTS (mcp, web): fill from KNOBS
+            # registry defaults.
+            if not {p for p in DEFAULTS if p.startswith(key + ".")}:
+                from .knobs import KNOBS as _knobs_registry
+                for dotted, entry in _knobs_registry.items():
+                    if dotted.startswith(key + "."):
+                        sub_key = dotted.split(".", 1)[1]
+                        if sub_key not in section:
+                            section[sub_key] = entry["default"]
             out[key] = section
     # every section with a default is always present, even when omitted
-    for section_key in ("qdrant", "neo4j", "llm", "embedding", "chunking", "scheduler"):
+    for section_key in ("qdrant", "neo4j", "llm", "embedding", "chunking",
+                        "scheduler", "mcp", "web"):
         out.setdefault(section_key, {})
         for sub, default in DEFAULTS.items():
             if sub.startswith(section_key + "."):
                 sub_key = sub.split(".", 1)[1]
                 out[section_key].setdefault(sub_key, coerce(f"{section_key}.{sub_key}", default))
+        # Sections not in DEFAULTS (mcp, web): fill from KNOBS registry.
+        if not {p for p in DEFAULTS if p.startswith(section_key + ".")}:
+            from .knobs import KNOBS as _knobs_registry
+            for dotted, entry in _knobs_registry.items():
+                if dotted.startswith(section_key + "."):
+                    sub_key = dotted.split(".", 1)[1]
+                    out[section_key].setdefault(sub_key, entry["default"])
     # embedding.device must be one of the documented values
     device = get(out, "embedding.device")
     if device is not None and device not in EMBEDDING_DEVICES:

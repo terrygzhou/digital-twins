@@ -40,6 +40,12 @@ mcp:
   port: 8770                      # env: KB_MCP__PORT
   service_account_email: system  # env: KB_MCP__SERVICE_ACCOUNT_EMAIL
 
+# --- Web ---
+web:
+  bind: "127.0.0.1"            # address the web UI binds to (localhost-only by default)  # env: KB_WEB__BIND
+  port: 8767                   # TCP port for the web UI server                            # env: KB_WEB__PORT
+  base_url: "http://localhost:8767"  # public URL of the web UI, e.g. for links in tool output  # env: KB_WEB__BASE_URL
+
 # --- Sources (all disabled by default) ---
 sources:
   # Built-in sources (shipped with the package; enabled per install).
