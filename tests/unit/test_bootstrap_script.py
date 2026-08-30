@@ -86,6 +86,14 @@ if isinstance(entry, dict):
             if args_prefix.startswith(prefix):
                 entry = sub
                 break
+    # For curl, allow keying on a substring of the URL (argv[2]) so a single
+    # healthcheck endpoint can be unhealthy while others stay healthy (R3).
+    if cmd == "curl":
+        url = sys.argv[2] if len(sys.argv) > 2 else ""
+        for substring, sub in entry.get("curl_args", {}).items():
+            if substring in url:
+                entry = sub
+                break
     sys.stdout.write(entry.get("stdout", ""))
     if entry.get("stderr"):
         sys.stderr.write(entry["stderr"])
@@ -462,21 +470,23 @@ def test_embedding_model_healthcheck_fail_exit_0(
     reported explicitly, rest of stack up, exit 0, kb.local.yml with
     qdrant/neo4j endpoints, embedding.endpoint UNSET.
     """
-    # curl: embedding-model endpoint (port 8080) is unhealthy, others healthy
-    # The fake keys on first argv element; for curl we need to distinguish
-    # by URL. Use a docker_args-style mechanism: the script would call
-    # curl http://localhost:8080/... for embedding and curl http://localhost:6333/... for qdrant.
-    # Since our fake only keys on first argv, we use a special config:
-    # "curl" returns exit 1 for 8080, 0 for others — but the fake doesn't parse URLs.
-    # Instead: the script should check embedding-model health separately.
-    # For the stub this doesn't matter; for T033 the fake will be extended.
-    # Here we just set curl to unhealthy for all (simpler RED assertion).
+    # curl: embedding-model endpoint (port 8080) is unhealthy, others healthy.
+    # The fake exec now keys on the curl URL via "curl_args" (a substring of the
+    # URL), mirroring the docker_args prefix mechanism — so port 8080 returns
+    # unhealthy while qdrant/neo4j/llm stay healthy. This genuinely models the
+    # embedding-model healthcheck defect (R3) instead of treating all URLs as healthy.
     _write_config(
         fake_config,
         {
             "docker": {"exit": 0, "stdout": "", "docker_args": {}},
             "nvidia-smi": 127,
-            "curl": {"exit": 0, "stdout": "healthy"},
+            "curl": {
+                "exit": 0,
+                "stdout": "healthy",
+                "curl_args": {
+                    "8080": {"exit": 1, "stdout": "Service Unavailable"},
+                },
+            },
         },
     )
 

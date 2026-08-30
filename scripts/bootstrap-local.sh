@@ -295,27 +295,20 @@ HELP
 
   # --- 8) health poll loop ---
   local failed_services=()
-  local svc_state
   # Poll each service that is part of the stack we just started.
   local svc_to_check="qdrant neo4j"
   if [ "$gpu_present" -eq 1 ]; then
     svc_to_check="$svc_to_check llm"
   fi
   # Poll qdrant first (fastest to come up).
-  if health_poll "$QDRANT_URL"; then
-    svc_state="healthy"
-  else
+  if ! health_poll "$QDRANT_URL"; then
     failed_services+=("qdrant")
   fi
-  if health_poll "$NEO4J_URL"; then
-    svc_state="healthy"
-  else
+  if ! health_poll "$NEO4J_URL"; then
     failed_services+=("neo4j")
   fi
   if [ "$gpu_present" -eq 1 ]; then
-    if health_poll "$LLM_URL"; then
-      svc_state="healthy"
-    else
+    if ! health_poll "$LLM_URL"; then
       failed_services+=("llm")
     fi
   fi
