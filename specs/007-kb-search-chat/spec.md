@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-31
 
-**Status**: Draft
+**Status**: Complete (v0.7.0, all tasks done; T024 deferred fixes merged in 007-t024-followup)
 
 **Input**: Controller brief `.superpowers/sdd/007-kb-search-chat/007-brief.md`
 (binding scope document). 007 implements the KB read/ingest/health surface on

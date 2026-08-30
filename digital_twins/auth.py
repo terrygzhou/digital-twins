@@ -216,6 +216,9 @@ def create_session(db, account_email: str) -> tuple[str, str]:
     plaintext = os.urandom(32).hex()
     stored = hash_password(plaintext)
     created_at = _now_iso()
+    # created_at is truncated to whole seconds, so the TTL window starts
+    # up to 1 s in the past; recompute expires_at from the stored value
+    # so both columns stay mutually consistent on fast clocks.
     expires_at = (
         datetime.fromisoformat(created_at)
         + timedelta(hours=SESSION_TTL_HOURS)

@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-29
 
-**Status**: Draft
+**Status**: Complete (v0.2.0, all 20 tasks done)
 
 **Input**: User description: "BRD slice BR-11.3 (requirement.md §2): the scheduler surface — `digital-twins serve` (standalone scheduler) and `digital-twins run --once` (stateless one-shot for host cron), per-user/per-source schedules with preset cadences, resumable runs, per-run caps/timeouts, and a health/status endpoint. No cron parser (Q10)."
 

@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-30
 
-**Status**: Draft
+**Status**: Complete (v0.5.0, all tasks done)
 
 **Input**: User description: "006 — Web App First-Class Surface (BR-11.1.8): ship a web application under the `digital-twins` package so a user on a different machine (phone, laptop, remote host) can `pip install digital-twins`, point `KB_STATE_DIR` at their own Qdrant/Neo4j/LLM endpoints, widen the bind address via config (e.g. `web.bind=0.0.0.0` / `KB_WEB__BIND`), `digital-twins serve` a web UI, sign in with email + password (BR-11.4.1, Q8: open sign-up on a fresh install, no OAuth / email-verification / admin-gating), and query the KB / chat / trigger ingestion from the browser — no CLI required (BR-11.1.8)."
 

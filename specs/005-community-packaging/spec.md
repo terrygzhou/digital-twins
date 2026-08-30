@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-29
 
-**Status**: specify+clarify+plan complete
+**Status**: Complete (v0.4.0, all 19 tasks done)
 
 **Input**: User description: "BRD slice BR-11.6 (requirement.md §2) plus the 001 out-of-scope handoff items (Docker bundle, PyPI publication mechanics): community packaging & documentation — README with 5-minute quick start, MIT LICENSE (Q4), machine-readable issue tracker + semver policy, changelog-driven release notes, stable documented config schema, Docker bundle, PyPI publication."
 

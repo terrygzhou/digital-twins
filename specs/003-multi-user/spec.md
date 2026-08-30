@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-29
 
-**Status**: Draft (specify stage — clarify/plan/tasks pending)
+**Status**: Complete (v0.3.0, all 24 tasks done)
 
 **Input**: User description: "BRD slice BR-11.4 (requirement.md §2): multi-user sign-up & sign-in — simple email+password accounts (Q8), admin/scheduler/reader roles with last-admin guard (Q3), per-user config overrides + run history + personal tokens, v1 soft data isolation via owner tags (Q2: hard isolation is follow-up), sign-in on web UI / API / MCP / CLI."
 
