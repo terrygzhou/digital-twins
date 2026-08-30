@@ -224,6 +224,33 @@ def _kb_run_history_schema() -> dict:
     }
 
 
+def _kb_search_schema() -> dict:
+    """kb_search inputSchema (007-R1a).
+
+    ``query`` (string, required) — the search text to embed and query.
+    ``limit`` (integer, default 5, max 100) — max results to return.
+    ``agent_kind`` — the shared client-kind property.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description":
+                    "The search text. Embedded with the config-pinned "
+                    "model and run as an owner-scoped Qdrant query.",
+            },
+            "limit": {
+                "type": "integer",
+                "default": 5,
+                "description": "Max results to return (default 5, max 100).",
+            },
+            "agent_kind": _agent_kind_prop(),
+        },
+        "required": ["query"],
+    }
+
+
 def _stub_schema() -> dict:
     """Minimal inputSchema for the four BR-10 stubs (R10)."""
     return {
