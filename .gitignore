@@ -69,3 +69,4 @@ logs/
 *.bak
 # git worktrees (isolated SDD workspaces)
 .worktrees/
+.pi/
