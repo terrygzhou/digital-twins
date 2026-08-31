@@ -14,6 +14,7 @@
 
 - Q: Are credential fields (`qdrant.api_key`, `neo4j.user`/`neo4j.password`, `llm.api_key`, `embedding.api_key`) editable in the v1 panel, or is v1 URL-only with credentials via env/file/CLI? -> A: URL-only in v1 (recommended option accepted on the user's "proceed to tasks" directive). Credentials stay env/file/CLI; the panel shows only `*_set` booleans, preserving 008's secret-hygiene posture.
 - Q: How does an admin clear a previously saved url/credential from `kb.local.yml` (fall back to env/defaults) - explicit clear semantics, or overwrite-only in v1? -> A: Overwrite-only in v1; the panel has no clear/delete control.
+- NOTE (2026-08-31): the URL-only decision above was superseded by an owner-directed reversal — BR-12.2.1 already required credentials to be settable from the web admin UI. Credentials are now editable in the panel (write-only); delivered in slice 011-config-credentials, which supersedes FR-010.
 
 ## User Scenarios & Testing
 
