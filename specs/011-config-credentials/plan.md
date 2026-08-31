@@ -127,6 +127,8 @@ var document = {
 function el(id) { return document.getElementById(id); }
 function showError() {}
 function authHeaders() { return {}; }
+var SERVICE_KNOB = { qdrant: "url", neo4j: "url", llm: "endpoint", embedding: "endpoint" };
+function renderServices() {}
 var __captures = [];
 var fetch = function (url, opts) {
   __captures.push({ url: url, method: opts && opts.method, body: opts && opts.body });
@@ -147,12 +149,12 @@ def _eval_save_service(url_value, cred_values):
     if shutil.which("node") is None:
         pytest.skip("node not available for the JS-level save test")
     fn = _extract_function(_index_js(), "saveService")
-    payload = json.dumps({
-        "fn": fn, "url": url_value, "creds": cred_values,
-    })
+    payload = json.dumps({"url": url_value, "creds": cred_values})
     program = (
         "var p = JSON.parse(process.argv[1]);\n"
         + _NODE_PRELUDE
+        + "\n"
+        + fn
         + "\n"
         + "var urlInput = { value: p.url };\n"
         + "var credInputs = p.creds.map(function (v) { return { value: v }; });\n"
@@ -349,7 +351,7 @@ cd /home/terry/projects/digital-twins && .venv/bin/python -m pytest \
   tests/integration/test_web_config_credentials_ui.py -v
 ```
 
-Expected RED shape (run escalated — sockets): the static-contract test and the `renderCredInputs` test fail (markers absent); the three Node `saveService` tests fail at `_extract_function` (the 0.9.0 function has no `saveCredValues`/third parameter → `ValueError: unbalanced braces extracting 'saveService'` or an undefined-name `Error` from Node); the three API round-trip tests may already PASS (the API half shipped in 008) — that is expected and correct: they pin 011's save-body shape end-to-end and must be green both RED and GREEN.
+Expected RED shape (run escalated — sockets): `test_index_html_credential_inputs_static_contract` and `test_credential_inputs_never_prefilled` fail (markers/function absent); `test_save_service_includes_non_empty_credentials` fails on the body assert (the 0.9.0 two-parameter `saveService` ignores credential inputs); `test_save_service_omits_empty_credentials` + `test_save_service_whitespace_only_credentials_omitted` PASS at RED (trivially true with a URL-only body) and become locks; the three API round-trip tests already PASS (the API half shipped in 008) — expected and correct: they pin 011's save-body shape end-to-end and must stay green both RED and GREEN. Observed RED: 3 failed, 5 passed.
 
 - [ ] Step 1.1 done
 - [ ] Step 1.2 RED confirmed (record which tests fail and why)
