@@ -803,6 +803,9 @@ def _kb_search_body(ctx: MCPContext, args: dict) -> dict:
             },
         }
 
+    # The real qdrant-client ``query_points`` returns a ``QueryResponse``
+    # (points under ``.points``); test fakes may return a bare list.
+    points = results.points if hasattr(results, "points") else results
     rows = [
         {
             "score": r.score,
@@ -811,7 +814,7 @@ def _kb_search_body(ctx: MCPContext, args: dict) -> dict:
             "source": (r.payload or {}).get("source"),
             "chunk_index": (r.payload or {}).get("chunk_index"),
         }
-        for r in results
+        for r in points
     ]
     rows.sort(key=lambda row: row["score"] or 0.0, reverse=True)
     return {"ok": True, "results": rows, "count": len(rows)}

@@ -394,6 +394,10 @@ class _WebAppHandler(BaseHTTPRequestHandler):
     _QDRANT_UNAVAILABLE = (
         "qdrant unavailable: check qdrant.url (env: KB_QDRANT__URL) points "
         "at a live Qdrant host:port, and that the collection exists")
+    _EMBEDDING_UNAVAILABLE = (
+        "embedding unavailable: check embedding.model / embedding.device "
+        "(env: KB_EMBEDDING__MODEL / KB_EMBEDDING__DEVICE) point at a "
+        "loadable model; the query could not be embedded")
 
     def _qdrant_client(self):
         """Resolve the app's Qdrant client (T008/T010 shared surface).
@@ -580,10 +584,16 @@ class _WebAppHandler(BaseHTTPRequestHandler):
 
         Body: ``{"query": "<text>", "limit"?: int}`` (default limit 5, cap
         100).  Blank/missing query → 400 with the exact contract error.
-        The query is embedded via the config-pinned embedding model
-        (``digital_twins.ingest.embedding``) and searched on
-        ``personal_kb`` with the caller's ``owner_tag`` filter; no separate
-        search engine.  Qdrant/unavailable → 502/503 hint, never a traceback.
+
+        Pipeline:
+          1. Resolve the Qdrant client (unavailable → 503 qdrant hint).
+          2. Embed the query via the config-pinned model (pooled, loads
+             once per server; embedding failure → 503 embedding hint,
+             distinct from the qdrant hint).
+          3. Vector search on ``personal_kb`` with the caller's
+             ``owner_tag`` filter (transport failure → 503 qdrant hint).
+          4. Normalise result shape (QueryResponse → ``.points``; bare
+             list pass-through) and return.
         """
         body = self._read_json_body()
         query = body.get("query") if isinstance(body, dict) else None
@@ -596,25 +606,48 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             limit = 5
         limit = max(1, min(limit, 100))
         owner_tag = owner_tag_for(caller_email)
+        # 1. Resolve the Qdrant client (fail-closed: unconfigured/transport → 503).
         try:
             client = self._qdrant_client()
+        except QdrantUnavailable:
+            self._send_json(503, {"error": self._QDRANT_UNAVAILABLE})
+            return
+        except Exception:
+            self._send_json(503, {"error": self._QDRANT_UNAVAILABLE})
+            return
+        # 2. Embed the query via the pooled embedder (model loads once per
+        #    server).  Any embedding failure → clean 503 with the
+        #    embedding-specific hint (distinct from the qdrant hint).
+        try:
+            vectors = self._pooled_embedder()([query])
+            if hasattr(vectors, "tolist"):
+                vectors = vectors.tolist()
+            if not vectors:
+                raise ValueError("no embedding produced for the query")
+            query_vector = vectors[0]
+        except Exception:
+            self._send_json(503, {"error": self._EMBEDDING_UNAVAILABLE})
+            return
+        # 3. Vector search (owner-scoped).
+        try:
             from qdrant_client.models import (
                 FieldCondition, Filter, MatchValue)
             results = client.query_points(
                 QDRANT_COLLECTION,
+                query=query_vector,
                 query_filter=Filter(must=[FieldCondition(
                     key="owner_tag", match=MatchValue(value=owner_tag))]),
                 limit=limit,
                 with_payload=True,
             )
-        except QdrantUnavailable:
-            self._send_json(503, {"error": self._QDRANT_UNAVAILABLE})
-            return
         except Exception:
             # query_points call failure / transport down: the clean 503
             # hint — never a traceback.
             self._send_json(503, {"error": self._QDRANT_UNAVAILABLE})
             return
+        # 4. Normalise result shape (QueryResponse → .points; bare list
+        #    pass-through — the CountResult-aware pattern).
+        points = results.points if hasattr(results, "points") else results
         rows = [
             {
                 "score": r.score,
@@ -623,7 +656,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
                 "source": (r.payload or {}).get("source"),
                 "chunk_index": (r.payload or {}).get("chunk_index"),
             }
-            for r in results
+            for r in points
         ]
         rows.sort(key=lambda row: row["score"] or 0.0, reverse=True)
         self._send_json(200, {"results": rows})
