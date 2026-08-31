@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-31
 
-**Status**: Draft
+**Status**: Complete (v0.9.0, all 18 tasks done; full suite 964/964)
 
 **Input**: User description: "The web UI can/should set and test the endpoints of Qdrant and other dependent resources." 008 shipped the admin REST surface for service config (GET/POST `/api/config/services`, 008/US2 T023+T024) but the static UI never calls it, and no live connectivity test ("probe") exists anywhere on the web surface — the 4-service status table lives only in the CLI (`validate` / `health` via `health.preflight`).
 
