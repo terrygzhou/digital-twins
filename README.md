@@ -163,10 +163,3 @@ pytest -q
 KB_LIVE_QDRANT=... KB_LIVE_NEO4J=... pytest -m live
 ```
 
-Pre-commit hooks:
-
-```bash
-pip install pre-commit
-pre-commit install
-pre-commit run --all-files
-```

@@ -6,7 +6,7 @@
 
 ## Workflow
 - Work flows through the installed Spec-Kit workflow: `specify → clarify → plan → tasks → implement` (prompts in `.pi/prompts/speckit.*`, scripts in `.specify/`). No ad-hoc coding before the artifacts exist.
-- `.specify/memory/constitution.md` is filled and ratified (v1.0.0, six principles incl. Test-First) — the constitution gate applies. All features 001–007 are complete (v0.7.0); `specs/*/tasks.md` checkboxes must be kept in sync with commits (SDD ledgers in `.superpowers/sdd/` — `tasks-md/` for 001, per-feature dirs for 002–007, `deferred-minors/` for the 001 sub-plan — are the detailed records).
+- `.specify/memory/constitution.md` is filled and ratified (v1.0.0, six principles incl. Test-First) — the constitution gate applies. All features 001–008 are complete (v0.8.0); `specs/*/tasks.md` checkboxes must be kept in sync with commits (SDD ledgers in `.superpowers/sdd/` — `tasks-md/` for 001, per-feature dirs for 002–008, `deferred-minors/` for the 001 sub-plan — are the detailed records).
 
 ## Baseline pipeline (context, not a dependency)
 - The job being promoted lives outside this repo: `~/.hermes/skills/hermes/personal-kb/scripts/` + Hermes cron `e4735cf2a2f2` (`0 3 * * *`). Read it for context when implementing.
@@ -15,10 +15,10 @@
 ## Host pins that must NOT leak into the package
 - `python3.12` pin, `CUDA_VISIBLE_DEVICES=""`, absolute `~/.` source paths: all host-specific. BR-11.2 / NFR-13 — no host path, username, or install location in shipped code, config defaults, or docs. Everything resolves through the config layer at runtime.
 
-## Package & build/test (0.7.0)
-- Python package `digital_twins/`: `config/` (schema, loader, knobs, deprecation), `sources/` (base + fs/hermes/pi/dsh/paperclip/imap_mail/custom/session), `ingest/` (ids, chunking, embedding, pipeline), `state/` (db, models, migrations), `scheduler/` (presets, schedules, loop, status), `mcp/` (auth, registry, acl, dispatch, stdio, http), `web/` (server), `accounts.py`, `auth.py`, `user_config.py`, `health.py`, `cli.py`, `__main__.py`.
+## Package & build/test (0.8.0)
+- Python package `digital_twins/`: `config/` (schema, loader, knobs, deprecation, local_io), `sources/` (base + fs/hermes/pi/dsh/paperclip/imap_mail/custom/session), `ingest/` (ids, chunking, embedding, pipeline), `state/` (db, models, migrations), `scheduler/` (presets, schedules, loop, status), `mcp/` (auth, registry, acl, dispatch, stdio, http), `web/` (server), `accounts.py`, `auth.py`, `user_config.py`, `health.py`, `cli.py`, `__main__.py`.
 - Install/build: `pip install .` (hatchling); console script `digital-twins`; also `python -m digital_twins` (and `python -m digital_twins.mcp` for the MCP server).
-- Test: `pytest` (unit in `tests/unit/`, integration in `tests/integration/`; 831 tests at v0.7.0). Standing guards: `tests/integration/test_portability.py` (T006) and `tests/unit/test_knob_docs.py` (T027) must stay green.
+- Test: `pytest` (unit in `tests/unit/`, integration in `tests/integration/`; 942 tests at v0.8.0). Standing guards: `tests/integration/test_portability.py` (T006) and `tests/unit/test_knob_docs.py` (T027) must stay green.
 - Config precedence (deterministic): `env (incl. .env) → kb.local.yml → kb.yml → built-in defaults` (env wins; `KB_` prefix, `__` = nesting).
 - Version: `__version__` single-sourced in `digital_twins/__init__.py`; `digital-twins --version` / `--version-json`.
 

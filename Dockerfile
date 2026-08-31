@@ -1,4 +1,4 @@
-# digital-twins reference image (0.5.0)
+# digital-twins reference image (0.8.0)
 # Base: python:3.11-slim (image-reference form — passes the portability guard;
 #       matches the package's requires-python >= 3.11).
 # Install: PEP 517 hatchling build via pip install .
