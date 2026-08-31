@@ -115,6 +115,12 @@ def _content_type_for(path: str) -> str:
     return _MIME_TYPES.get(ext, "application/octet-stream")
 
 
+#: Per-service deadline for POST /api/config/services/probe (009 US2,
+#: SC-002).  Module constant on purpose - the knob surface (BR-11.6.4)
+#: has no probe-deadline knob and T027 guards against adding one.
+PROBE_PER_SERVICE_DEADLINE_S = 4.5
+
+
 class QdrantUnavailable(Exception):
     """Qdrant is unconfigured or unreachable for the /api/kb/* read surface.
 
@@ -263,6 +269,9 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/config/services" and method == "POST":
             self._handle_config_services_post(caller_email)
+            return
+        if path == "/api/config/services/probe" and method == "POST":
+            self._handle_config_probe(caller_email)
             return
         del method, query, caller_email  # wired up by the later handler tasks
         self._send_json(404, {"error": "not_found", "path": path})
@@ -1050,6 +1059,115 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         # response reflects the just-written value).
         view = self._config_services_view(config_dir, dict(os.environ))
         self._send_json(200, view)
+
+    # --- POST /api/config/services/probe (009/US2, T010) ------------------
+    #
+    # Admin-gated connectivity probe: runs the requested subset of the four
+    # health checks in parallel, each against its own per-service deadline
+    # (``PROBE_PER_SERVICE_DEADLINE_S`` - SC-002: the full four-service
+    # probe returns within 5.0 s).  A check that outlives the deadline is
+    # reported as ``unreachable`` with a remediation pointing at the URL
+    # knob + env var; the response is always a 200 with one entry per
+    # requested service, in request order.  Error shapes match the 008
+    # config surface: 400 ``invalid JSON body`` (body not a JSON object),
+    # 400 ``services must be a non-empty list``, 404
+    # ``unknown service "<name>"``.  Credential values never enter the
+    # response or the logs (the health checks already scrub, FR-004).
+
+    def _handle_config_probe(self, caller_email: str) -> None:
+        """POST /api/config/services/probe -> 200 probe results (admin)."""
+        if not self._require_admin(caller_email):
+            return
+        body = self._read_json_body()
+        if body is None:
+            self._send_json(400, {"error": "invalid JSON body"})
+            return
+        requested = body.get("services")
+        if requested is None:
+            names = list(self._CONFIG_SERVICES)
+        elif isinstance(requested, list) and requested:
+            names = list(requested)
+        else:
+            self._send_json(
+                400, {"error": "services must be a non-empty list"})
+            return
+        for name in names:
+            if name not in self._CONFIG_SERVICES:
+                self._send_json(
+                    404, {"error": f'unknown service "{name}"'})
+                return
+        # Re-read the effective config per request: a KB_* env override or a
+        # kb.local.yml edit is picked up without a restart (same four-layer
+        # precedence as the 008 GET/POST).
+        from digital_twins.config import loader as _loader
+        import os
+        try:
+            effective = _loader.load(
+                config_dir=_cfg_get(self.server.config, "config_dir"),
+                env=dict(os.environ))
+        except Exception:
+            effective = _merge_defaults({})
+        import concurrent.futures
+        import time
+        from digital_twins import health as _health_mod
+        from digital_twins.config.schema import env_var_for
+        services = {}
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(names))
+        try:
+            futures = {}
+            for name in names:
+                # Resolve by module attribute at request time so tests can
+                # monkeypatch digital_twins.health.check_<service>.
+                check = getattr(_health_mod, "check_" + name)
+                futures[name] = executor.submit(check, effective)
+            # One shared wall-clock deadline for the whole probe, not a
+            # per-call timeout (SC-002): with a per-call 4.5 s, the
+            # sequential loop could wait up to 4 x 4.5 s when results
+            # finish out of order.  The last check still gets the full
+            # per-service budget when it is the only one requested.
+            deadline = (time.monotonic()
+                        + PROBE_PER_SERVICE_DEADLINE_S)
+            for name in names:
+                remaining = deadline - time.monotonic()
+                try:
+                    res = futures[name].result(timeout=remaining)
+                except concurrent.futures.TimeoutError:
+                    # SC-002: a check that outlives the per-service
+                    # deadline is reported, not awaited - the probe
+                    # response still lands inside the 5.0 s budget.
+                    url_path, _creds = self._CONFIG_SERVICE_FIELDS[name]
+                    services[name] = {
+                        "status": "unreachable",
+                        "detail": ("probe timed out after "
+                                   f"{PROBE_PER_SERVICE_DEADLINE_S} s"),
+                        "remediation": (f"check {url_path} (env: "
+                                        f"{env_var_for(url_path)}) points "
+                                        f"at a live endpoint"),
+                    }
+                    continue
+                except Exception:
+                    services[name] = {
+                        "status": "unreachable",
+                        "detail": "probe failed unexpectedly",
+                        "remediation": "re-run the probe",
+                    }
+                    continue
+                status = res.status
+                if status not in _health_mod.VALID_STATUSES:
+                    # A genuinely ok result carries status="" (the
+                    # dataclass default) - map it to the UI's "ok".
+                    status = "ok" if res.ok else "unreachable"
+                services[name] = {
+                    "status": status,
+                    "detail": res.detail,
+                    "remediation": res.remediation,
+                }
+        finally:
+            # D3 (accepted limitation): timed-out checks keep running on
+            # their own socket timeout; never block the response on them.
+            executor.shutdown(wait=False)
+        self._send_json(200, {"services": services})
 
     # --- helpers -------------------------------------------------------------
 

@@ -21,12 +21,19 @@ This module hosts the 009 integration tests:
   ``embedding.endpoint``) must be accepted by the existing 008
   ``POST /api/config/services`` and visible in the post-write and the
   subsequent masked views.
+* **T006** (probe happy path, RED): monkeypatched ``digital_twins.health.check_*`` fakes covering all four statuses → ``POST /api/config/services/probe`` with ``{}`` → 200, canonical order, exact ``status|detail|remediation`` fields; a subset request is honored in request order; and one UN-mocked embedding probe against a real local ``http.server`` answering ``/models`` → ``ok`` (FR-003).
+* **T007** (probe errors, RED): a non-object JSON body → 400 ``invalid JSON body``; a non-list/empty ``services`` → 400 ``services must be a non-empty list``; an unknown name → 404 ``unknown service "x"`` (the 008 shapes, pinned for the probe).
+* **T008** (SC-002 budget, RED): all four checks sleeping past the per-service deadline → the full four-service response in ≤ 5.0 s, every entry ``unreachable`` with the timeout line.
 
 Harness: reuses the 008 fixture + http helpers from
 ``test_web_config_api`` (same directory; no ``tests/`` package, so a
 plain module import).
 """
 from __future__ import annotations
+
+import http.client
+import json
+import time
 
 import pytest
 
@@ -183,3 +190,292 @@ def test_save_mapping_round_trip(web_config_app, service, knob):
         f"GET /api/config/services after save must show "
         f"services.{service}.url == {new_url!r}, got {row2!r}"
     )
+
+
+# =============================================================================
+# T006 - probe happy path (admin, mocked checks + one real-network probe)
+# =============================================================================
+
+
+def _http_post_raw(host, port, path, raw_body, headers=None, timeout=5.0):
+    """POST a pre-serialized body (for malformed-JSON + long-poll tests).
+    Returns ``(status, parsed, raw)`` like ``_http_post``."""
+    conn = http.client.HTTPConnection(host, port, timeout=timeout)
+    try:
+        hdrs = {"Content-Type": "application/json"}
+        if headers:
+            hdrs.update(headers)
+        conn.request("POST", path, body=raw_body, headers=hdrs)
+        resp = conn.getresponse()
+        raw = resp.read()
+        try:
+            parsed = json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError:
+            parsed = None
+        return resp.status, parsed, raw
+    finally:
+        conn.close()
+
+
+def _fake_check(service, status, detail=None, remediation=None):
+    """Build a fake ``check_<service>`` that ignores its config and returns
+    a pinned ``HealthResult`` (the T010 handler maps the fields verbatim)."""
+    from digital_twins.health import HealthResult
+
+    def fake(cfg):
+        return HealthResult(
+            endpoint=service,
+            ok=(status == "ok"),
+            detail=detail if detail is not None else f"fake-{status}-detail",
+            remediation=(
+                remediation
+                if remediation is not None
+                else f"fake-{status}-remediation"
+            ),
+            status=status,
+        )
+
+    return fake
+
+
+def test_probe_all_four_200_canonical_order(web_config_app, monkeypatch):
+    """T006: POST /api/config/services/probe with ``{}`` as admin -> 200,
+    all four services in canonical order, each entry exactly
+    ``{status, detail, remediation}`` with the mocked statuses exact.
+
+    RED: the route does not exist yet (404 not_found).
+    """
+    import digital_twins.health as health
+
+    _app, _db, host, port, admin_token, _rt, _cd = web_config_app
+    monkeypatch.setattr(health, "check_qdrant",
+                        _fake_check("qdrant", "ok"))
+    monkeypatch.setattr(health, "check_neo4j",
+                        _fake_check("neo4j", "unconfigured"))
+    monkeypatch.setattr(health, "check_llm",
+                        _fake_check("llm", "unreachable"))
+    monkeypatch.setattr(health, "check_embedding",
+                        _fake_check("embedding", "auth-failed"))
+
+    code, parsed, raw = _http_post(
+        host, port, "/api/config/services/probe", {},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert code == 200, f"probe expected 200, got {code}: {raw[:300]!r}"
+    assert isinstance(parsed, dict), f"probe body must be JSON: {raw[:300]!r}"
+    services = parsed.get("services", {})
+    assert list(services) == ["qdrant", "neo4j", "llm", "embedding"], (
+        f"probe must return all four services in canonical order, got "
+        f"{list(services)!r}"
+    )
+    expected_statuses = {
+        "qdrant": "ok",
+        "neo4j": "unconfigured",
+        "llm": "unreachable",
+        "embedding": "auth-failed",
+    }
+    for name, entry in services.items():
+        assert set(entry) == {"status", "detail", "remediation"}, (
+            f"services.{name} must be exactly "
+            f"{{status, detail, remediation}}, got {sorted(entry)!r}"
+        )
+        assert entry["status"] == expected_statuses[name], (
+            f"services.{name}.status must be {expected_statuses[name]!r}, "
+            f"got {entry['status']!r}"
+        )
+        assert entry["detail"] == f"fake-{expected_statuses[name]}-detail"
+        assert entry["remediation"] == f"fake-{expected_statuses[name]}-remediation"
+
+
+def test_probe_subset_request_order(web_config_app, monkeypatch):
+    """T006: ``{"services": ["llm", "qdrant"]}`` probes exactly those two,
+    in request order."""
+    import digital_twins.health as health
+
+    _app, _db, host, port, admin_token, _rt, _cd = web_config_app
+    for name in ("qdrant", "neo4j", "llm", "embedding"):
+        monkeypatch.setattr(health, f"check_{name}",
+                            _fake_check(name, "ok"))
+
+    code, parsed, raw = _http_post(
+        host, port, "/api/config/services/probe",
+        {"services": ["llm", "qdrant"]},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert code == 200, f"subset probe expected 200, got {code}: {raw[:300]!r}"
+    services = parsed.get("services", {})
+    assert list(services) == ["llm", "qdrant"], (
+        f"subset probe must return exactly the requested services in "
+        f"request order, got {list(services)!r}"
+    )
+
+
+def test_probe_embedding_real_local_server(web_config_app, monkeypatch):
+    """T006 (FR-003): one probe is NOT mocked - ``embedding.endpoint``
+    points at a real local http.server answering ``/models`` and the
+    un-mocked ``check_embedding`` must read it as ``ok``."""
+    import threading
+
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class _ModelsHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.endswith("/models"):
+                body = b'{"data": []}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ModelsHandler)
+    # serve_forever() blocks the calling thread - run it in a daemon
+    # thread so the test thread can drive the probe request.
+    server_thread = threading.Thread(
+        target=server.serve_forever, daemon=True)
+    server_thread.start()
+    try:
+        srv_port = server.server_address[1]
+        _app, _db, host, port, admin_token, _rt, _cd = web_config_app
+        monkeypatch.setenv(
+            "KB_EMBEDDING__ENDPOINT", f"http://127.0.0.1:{srv_port}/v1")
+
+        code, parsed, raw = _http_post(
+            host, port, "/api/config/services/probe",
+            {"services": ["embedding"]},
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert code == 200, (
+            f"real-network embedding probe expected 200, got {code}: "
+            f"{raw[:300]!r}"
+        )
+        entry = parsed.get("services", {}).get("embedding", {})
+        assert entry.get("status") == "ok", (
+            f"un-mocked check_embedding against the local /models server "
+            f"must be ok, got {entry!r}"
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+# =============================================================================
+# T007 - probe error shapes (malformed body, bad services list, unknown name)
+# =============================================================================
+
+
+@pytest.mark.parametrize("raw_body", ["[1, 2]", "not json at all"])
+def test_probe_malformed_body_400(web_config_app, raw_body):
+    """T007: a body that is not a JSON object -> 400
+    ``{"error": "invalid JSON body"}`` (the 008 shape, pinned)."""
+    _app, _db, host, port, admin_token, _rt, _cd = web_config_app
+    code, parsed, raw = _http_post_raw(
+        host, port, "/api/config/services/probe", raw_body,
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert code == 400, (
+        f"probe with body {raw_body!r} expected 400, got {code}: "
+        f"{raw[:300]!r}"
+    )
+    assert parsed == {"error": "invalid JSON body"}, (
+        f"malformed probe body must yield the pinned 008 400 shape, got "
+        f"{parsed!r}"
+    )
+
+
+@pytest.mark.parametrize("bad", ["qdrant", [], 7])
+def test_probe_services_must_be_non_empty_list(web_config_app, bad):
+    """T007: ``services`` present but not a non-empty list -> 400 with the
+    pinned error string (D4 refinement)."""
+    _app, _db, host, port, admin_token, _rt, _cd = web_config_app
+    code, parsed, raw = _http_post(
+        host, port, "/api/config/services/probe", {"services": bad},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert code == 400, (
+        f"probe with services={bad!r} expected 400, got {code}: {raw[:300]!r}"
+    )
+    assert parsed == {"error": "services must be a non-empty list"}, (
+        f"non-list/empty services must yield the pinned 400 shape, got "
+        f"{parsed!r}"
+    )
+
+
+def test_probe_unknown_service_404(web_config_app):
+    """T007: an unknown name inside ``services`` -> 404 with the service
+    name quoted (the 008 unknown-service shape, pinned for the probe)."""
+    _app, _db, host, port, admin_token, _rt, _cd = web_config_app
+    code, parsed, raw = _http_post(
+        host, port, "/api/config/services/probe", {"services": ["x"]},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert code == 404, (
+        f"probe with unknown service expected 404, got {code}: {raw[:300]!r}"
+    )
+    assert parsed == {"error": 'unknown service "x"'}, (
+        f"unknown probe service must yield the pinned 404 shape, got "
+        f"{parsed!r}"
+    )
+
+
+# =============================================================================
+# T008 - SC-002 probe latency budget (parallel per-service deadline)
+# =============================================================================
+
+
+def test_probe_deadline_budget_sc002(web_config_app, monkeypatch):
+    """T008 (SC-002): every check sleeps past the per-service deadline
+    (``PROBE_PER_SERVICE_DEADLINE_S = 4.5``) -> the response still arrives
+    within the 5.0 s budget with all four entries present, each
+    ``status=="unreachable"`` carrying the timeout line.
+
+    RED: the route does not exist yet; GREEN only with T010's parallel
+    deadline (a sequential 4 x 6 s implementation would take > 24 s).
+    """
+    import digital_twins.health as health
+
+    def _slow(cfg):
+        time.sleep(6)
+        raise AssertionError("check outlived the probe deadline")
+
+    _app, _db, host, port, admin_token, _rt, _cd = web_config_app
+    for name in ("check_qdrant", "check_neo4j", "check_llm",
+                 "check_embedding"):
+        monkeypatch.setattr(health, name, _slow)
+
+    t0 = time.monotonic()
+    code, parsed, raw = _http_post_raw(
+        host, port, "/api/config/services/probe", "{}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        timeout=10.0,
+    )
+    elapsed = time.monotonic() - t0
+
+    assert code == 200, (
+        f"probe expected 200 within the SC-002 budget, got {code} after "
+        f"{elapsed:.2f}s: {raw[:300]!r}"
+    )
+    assert elapsed <= 5.0, (
+        f"probe took {elapsed:.2f}s; SC-002 requires the full four-service "
+        f"probe to return within 5.0 s"
+    )
+    services = parsed.get("services", {})
+    assert list(services) == ["qdrant", "neo4j", "llm", "embedding"], (
+        f"all four services must be present after a timeout, got "
+        f"{list(services)!r}"
+    )
+    for name, entry in services.items():
+        assert entry["status"] == "unreachable", (
+            f"services.{name} must be unreachable on timeout, got "
+            f"{entry!r}"
+        )
+        assert "timed out" in entry["detail"], (
+            f"services.{name}.detail must carry the timeout line, got "
+            f"{entry['detail']!r}"
+        )

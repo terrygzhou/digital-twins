@@ -29,6 +29,7 @@ RED expectations:
 * The example-file assertions are guard tests — expected GREEN on first
   run (the examples already carry placeholders); they protect against a
   GREEN-phase regression where a real-looking secret example slips in.
+* **009 T009** (web probe surface): probing all four services with all four obviously-fake credentials configured must surface no credential value in the probe response JSON nor in the captured ``digital_twins`` log records (FR-006 / SC-003).
 """
 from __future__ import annotations
 
@@ -331,3 +332,111 @@ def test_knobs_doc_does_not_echo_credential_values():
             f"{service} credential value {secret!r} appeared in "
             f"knobs.py (FR-004: committed files must not carry credentials)"
         )
+
+
+# =============================================================================
+# 5. Web probe response + logs: credentials absent (009 US2; FR-006 / SC-003)
+# =============================================================================
+
+
+def test_credential_absent_from_web_probe_response(tmp_path, logged_records):
+    """009 T009: probing all four services with all four obviously-fake
+    credentials configured (``kb.local.yml``) must not surface any
+    credential value in the probe response JSON or in any captured
+    ``digital_twins`` log record (FR-006 / SC-003).
+
+    The checks are NOT mocked: they run for real against the ``.example``
+    hostnames and fail fast (NXDOMAIN), so the response under test is what
+    the live probe route emits - and it must be credential-free.
+
+    RED: the probe route does not exist yet -> POST returns 404.
+    """
+    import http.client
+    import os
+    import time
+
+    import yaml
+
+    from digital_twins.accounts import create_account
+    from digital_twins.auth import create_session
+    from digital_twins.state import db as state_db
+    from digital_twins.web.app import build_web_app, serve
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "kb.local.yml").write_text(
+        yaml.safe_dump(
+            {
+                "qdrant": {"url": "http://qdrant.example:6333",
+                           "api_key": QDRANT_KEY},
+                "neo4j": {"url": "bolt://neo4j.example:7687",
+                          "user": "neo4j",
+                          "password": NEO4J_PASSWORD},
+                "llm": {"endpoint": "http://llm.example:8000/v1",
+                        "api_key": LLM_KEY},
+                "embedding": {"endpoint": "http://embed.example:8080/v1",
+                              "api_key": EMB_KEY},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    os.environ["KB_CONFIG_DIR"] = str(config_dir)
+
+    db = state_db.connect(tmp_path)
+    create_account(db, "admin@example.com", "admin-pw-123", role="admin")
+    token = create_session(db, "admin@example.com")[0]
+    db.commit()
+
+    app = build_web_app(
+        db,
+        {"state_dir": str(tmp_path), "sources": {},
+         "config_dir": str(config_dir)},
+        host="127.0.0.1", port=0,
+    )
+    serve(app)
+    host, port = app.server_address[:2]
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        try:
+            conn_probe = http.client.HTTPConnection(host, port, timeout=1.0)
+            conn_probe.request("GET", "/api/me",
+                               headers={"Authorization": f"Bearer {token}"})
+            conn_probe.getresponse().read()
+            conn_probe.close()
+            break
+        except OSError:
+            time.sleep(0.05)
+
+    try:
+        conn = http.client.HTTPConnection(host, port, timeout=30.0)
+        conn.request(
+            "POST", "/api/config/services/probe", body="{}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+        resp = conn.getresponse()
+        raw = resp.read()
+        conn.close()
+        assert resp.status == 200, (
+            f"probe expected 200, got {resp.status}: {raw[:300]!r} "
+            f"(RED: the route does not exist yet)"
+        )
+        response_blob = raw.decode("utf-8", "replace")
+        log_text = all_log_text(logged_records)
+        for service, secret in ALL_CREDENTIALS.items():
+            assert secret not in response_blob, (
+                f"{service} credential value appeared in the probe response "
+                f"JSON (FR-006): {response_blob!r}"
+            )
+            assert secret not in log_text, (
+                f"{service} credential value appeared in a log record while "
+                f"probing (FR-006)"
+            )
+    finally:
+        os.environ.pop("KB_CONFIG_DIR", None)
+        app.shutdown()
+        app.server_close()
+        db.close()

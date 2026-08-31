@@ -43,6 +43,10 @@ EXPECTED_FETCH_TARGETS = frozenset({
     "/api/ingest/run",
     "/api/audit/recent",
     "/api/kb/chat",
+    # 008/US2 admin config surface (009 US1 panel): masked GET/POST.
+    "/api/config/services",
+    # 009/US2 admin connectivity probe (panel Test / Test all).
+    "/api/config/services/probe",
 })
 
 _READY_TIMEOUT_S = 5.0
@@ -228,8 +232,10 @@ def test_get_static_style_css_200(web_app):
 
 
 def test_index_html_fetch_targets_are_api_paths(web_app):
-    """The index.html's ``fetch()`` calls target EXACTLY the 9 /api/*
-    paths from contracts/web-api.md — no others, no parallel logic.
+    """The index.html's ``fetch()`` calls target EXACTLY the 11 /api/*
+    paths from contracts/web-api.md + the 008/009 admin config
+    surface (GET/POST /api/config/services, 009 probe) — no
+    others, no parallel logic.
 
     RED (before T020): GET / returns a 404 JSON error (no HTML), so
     there are no ``fetch()`` calls to extract.  The extracted set is
@@ -244,7 +250,7 @@ def test_index_html_fetch_targets_are_api_paths(web_app):
     html = raw.decode("utf-8", errors="replace")
     targets = _extract_fetch_targets(html)
     assert targets == EXPECTED_FETCH_TARGETS, (
-        f"index.html fetch() targets must be EXACTLY the 9 /api/* paths.\n"
+        f"index.html fetch() targets must be EXACTLY the known /api/* paths.\n"
         f"Expected: {sorted(EXPECTED_FETCH_TARGETS)}\n"
         f"Got:      {sorted(targets)}\n"
         f"Missing:  {sorted(EXPECTED_FETCH_TARGETS - targets)}\n"

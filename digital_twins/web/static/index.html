@@ -459,6 +459,10 @@
         var test = document.createElement("button");
         test.className = "btn ghost small services-test-btn";
         test.textContent = "Test";
+        testButtons[service] = test;
+        test.addEventListener("click", function () {
+          testService(service);
+        });
         row.appendChild(test);
 
         var remediation = document.createElement("p");
@@ -494,6 +498,90 @@
       });
     }
 
+    // Probe wiring (009 US2): POST /api/config/services/probe with a
+    // services subset; one in-flight flag per service suppresses
+    // duplicate probes (double-click, or Test all + per-row Test), and
+    // the row Test / Test-all buttons are disabled while that service is
+    // in flight. Results land in the per-row status pill + remediation
+    // line; the initial pill value stays "not tested" until probed.
+    var probing = {};
+    var testButtons = {};
+
+    function applyProbeResult(service, entry) {
+      var pill = el("services-pill-" + service);
+      if (!pill) return;
+      var status = entry.status || "unreachable";
+      pill.className = "status-pill " + status;
+      pill.textContent = status;
+      var remediation = el("services-remediation-" + service);
+      if (remediation) {
+        remediation.textContent = (status === "ok")
+          ? ""
+          : (entry.remediation || "");
+      }
+    }
+
+    function probeServices(names, onDone) {
+      var body = {};
+      body.services = names;
+      fetch("/api/config/services/probe", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(body)
+      }).then(function (r) {
+        return r.json().catch(function () { return null; });
+      }).then(function (data) {
+        if (!data || data.error) {
+          showError("services-error", data);
+          onDone();
+          return;
+        }
+        var services = data.services || {};
+        names.forEach(function (service) {
+          var entry = services[service] || {
+            status: "unreachable",
+            remediation: "no result returned - re-run the probe"
+          };
+          applyProbeResult(service, entry);
+        });
+        onDone();
+      }).catch(function () {
+        showError("services-error", { error: "network error" });
+        onDone();
+      });
+    }
+
+    function testService(service) {
+      if (probing[service]) return;
+      probing[service] = true;
+      updateTestButtons();
+      probeServices([service], function () {
+        probing[service] = false;
+        updateTestButtons();
+      });
+    }
+
+    function testAllServices() {
+      var inFlight = SERVICES.some(function (s) { return probing[s]; });
+      if (inFlight) return;
+      SERVICES.forEach(function (s) { probing[s] = true; });
+      updateTestButtons();
+      // Single request, all four names (server runs them in parallel).
+      probeServices(SERVICES.slice(), function () {
+        SERVICES.forEach(function (s) { probing[s] = false; });
+        updateTestButtons();
+      });
+    }
+
+    function updateTestButtons() {
+      SERVICES.forEach(function (service) {
+        var btn = testButtons[service];
+        if (btn) btn.disabled = !!probing[service];
+      });
+      el("services-test-all-btn").disabled = SERVICES.some(
+        function (s) { return probing[s]; });
+    }
+
     // ---- boot ---------------------------------------------------------------
 
     function bootstrap() {
@@ -526,6 +614,7 @@
     el("chat-query").addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); doChat(); }
     });
+    el("services-test-all-btn").addEventListener("click", testAllServices);
 
     // On page load: check for a stored token, validate it against /api/me.
     // If valid → main UI; otherwise → sign-in / sign-up forms.
