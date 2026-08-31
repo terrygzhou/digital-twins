@@ -37,7 +37,7 @@ RED commit failing before the GREEN commit, per task.
 
 ## Task 3 — Verify: guards, full suite, live redeploy
 
-- [ ] T3 VERIFY: standing guards green
+- [x] T3 VERIFY: standing guards green
   (`tests/integration/test_portability.py`,
   `tests/unit/test_knob_docs.py`); full suite (expect 976);
   reinstall into `/tmp/dtkb-pypi` and restart the :8767 server
