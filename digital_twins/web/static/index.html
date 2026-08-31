@@ -411,8 +411,17 @@
           inp.type = "text";
         }
         inp.value = "";  // write-only: never pre-filled (FR-002)
+        // Visible field label (inputs are always empty, so the
+        // placeholder is always shown until the user types).
+        var labels = {
+          user: "username (blank = keep current)",
+          password: "password (blank = keep current)"
+        };
+        inp.placeholder = labels[spec.knob] ||
+          "API key (blank = keep current)";
         inp.setAttribute("aria-label",
-          service + "." + spec.knob + " (leave blank to keep current)");
+          service + "." + spec.knob + " — " +
+          inp.placeholder);
         row.appendChild(inp);
         inputs.push(inp);
       });
