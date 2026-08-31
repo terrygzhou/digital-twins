@@ -76,7 +76,10 @@ Request: `{"query": "<text>", "limit"?: int}` (default limit 5, cap 100).
   — top-N by descending `score`, scoped to the caller's `owner_tag`.
 - `400` `{"error":"query must be a non-empty string"}` — blank/missing query.
 - `401` — no/invalid token.
-- `502`/`503` — Qdrant unreachable.
+- `502`/`503` `{"error":"qdrant unavailable: <hint>"}` — Qdrant unreachable.
+- `503` `{"error":"embedding unavailable: <hint>"}` — the config-pinned embedding
+  model failed to load or encode the query (distinct from the Qdrant hint;
+  names `embedding.model` / `embedding.device`).
 
 ### `POST /api/ingest/run`
 
@@ -128,6 +131,7 @@ Request: `{"query": "<text>"}`.
 | `409` | duplicate email (signup) / enabled source missing prerequisites. |
 | `501` | chat surface, no LLM endpoint (not_implemented). |
 | `502`/`503` | Qdrant unreachable (count/search). |
+| `503` | Embedding unavailable (search: model load/encode failure). |
 
 ## Notes / parity
 
