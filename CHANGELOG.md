@@ -3,6 +3,38 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [0.9.0] - 2026-08-31
+
+### Added
+
+- **Web admin Services panel** (009, US1/FR-001/002): admin-only card on the
+  KB view showing the four hard services (qdrant / neo4j / llm / embedding)
+  from the 008 masked view — effective URL, `*_set` credential badges,
+  env-override badges, and per-row **Save** that persists display-field
+  → knob mappings through the existing 008
+  `POST /api/config/services` (atomic `kb.local.yml` merge; re-render from
+  the post-write view).
+- **Service probe route + Test / Test-all** (009, US2/FR-003, SC-002): new
+  admin-only `POST /api/config/services/probe` runs the requested
+  `digital_twins.health` checks in parallel under a shared 4.5 s wall-clock
+  deadline, so the full four-service probe always answers inside the 5.0 s
+  budget; timed-out entries return `unreachable` with the timeout line and a
+  remediation naming the url knob + env form. Per-row **Test** and
+  **Test all** buttons show a status pill + remediation line per service and
+  suppress duplicate probes in flight.
+- **Secret hygiene for the probe** (009, FR-006, SC-003): credentials are
+  never echoed in the probe response or in `digital_twins` log records
+  (existing hygiene contract extended to the new route; pinned by
+  `test_secret_hygiene.py`).
+- **Non-admins see nothing** (009, US3, SC-004): the panel is `hidden` in
+  the markup and un-hidden only behind the `me.role === "admin"` check;
+  non-admin probe requests get the pinned 403 `permission_denied` shape.
+
+### Notes
+
+- No new config knobs and no new dependencies — the panel is a presentation
+  layer over the 008 config API + `digital_twins.health` checks.
+
 ## [0.8.0] - 2026-08-31
 
 ### Added

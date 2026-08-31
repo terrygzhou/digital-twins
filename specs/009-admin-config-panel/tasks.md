@@ -73,10 +73,10 @@ No tasks — all prerequisites already shipped by 006/008: admin gate (`_require
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T015 [P] Standing guards green: `pytest -q tests/integration/test_portability.py tests/unit/test_knob_docs.py` (T006 / T027) — no host paths in new code/UI, no new knobs.
-- [ ] T016 Bump `__version__` to `0.9.0` in `digital_twins/__init__.py` (single source) and add the `CHANGELOG.md` `[0.9.0]` entry (Services panel + probe route + budget + no new knobs/deps).
-- [ ] T017 Full suite green: `pytest -q` (expect 942 + new tests), then manual quickstart.md §2–§4 pass on this host.
-- [ ] T018 Sync `specs/009-admin-config-panel/tasks.md` checkboxes with commits, complete `.superpowers/sdd/009-admin-config-panel/progress.md` (per-phase evidence + commit SHAs), commit; finish per `finishing-a-development-branch` (project convention: work lands on `main`).
+- [x] T015 [P] Standing guards green: `pytest -q tests/integration/test_portability.py tests/unit/test_knob_docs.py` (T006 / T027) — no host paths in new code/UI, no new knobs.
+- [x] T016 Bump `__version__` to `0.9.0` in `digital_twins/__init__.py` (single source) and add the `CHANGELOG.md` `[0.9.0]` entry (Services panel + probe route + budget + no new knobs/deps).
+- [x] T017 Full suite green: `pytest -q` (expect 942 + new tests), then manual quickstart.md §2–§4 pass on this host.
+- [x] T018 Sync `specs/009-admin-config-panel/tasks.md` checkboxes with commits, complete `.superpowers/sdd/009-admin-config-panel/progress.md` (per-phase evidence + commit SHAs), commit; finish per `finishing-a-development-branch` (project convention: work lands on `main`).
 
 ## Dependencies & Execution Order
 
