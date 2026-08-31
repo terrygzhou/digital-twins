@@ -63,7 +63,7 @@ pytest tests/integration/test_pypi_build.py -v
 It builds the wheel once (PEP 517, via `python -m build --wheel`), then
 asserts:
 
-- the wheel exists and is named `digital_twins-<version>-py3-none-any.whl`
+- the wheel exists and is named `digital_twins_kb-<version>-py3-none-any.whl`
   where `<version>` is the single-sourced `digital_twins.__version__`;
 - the wheel is a valid ZIP containing the required `.dist-info/METADATA`
   and `.dist-info/WHEEL` members;

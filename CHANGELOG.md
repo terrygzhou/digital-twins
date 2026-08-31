@@ -29,11 +29,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 - **Non-admins see nothing** (009, US3, SC-004): the panel is `hidden` in
   the markup and un-hidden only behind the `me.role === "admin"` check;
   non-admin probe requests get the pinned 403 `permission_denied` shape.
+- **Web admin credential fields** (011, FR-001..FR-003, SC-001/SC-002):
+  the 009 Services panel now carries write-only credential inputs —
+  `qdrant.api_key`, `neo4j.user` (plain text, not a secret),
+  `neo4j.password`, `llm.api_key`, `embedding.api_key` — always blank on
+  render, trimmed and omitted when blank on save, persisted through the
+  existing 008 `POST /api/config/services`. The `GET` response shape is
+  byte-identical to the 008/009 contract (values never echoed back;
+  `*_set` flags only) and `web/app.py` is untouched — the slice is
+  presentation-layer over the 008 config API.
+
+### Fixed
+
+- **`POST /api/kb/search` 500 on any query** (010, hotfix): the web
+  handler now embeds the query (the 007 MCP counterpart always did) and
+  iterates the real qdrant-client `QueryResponse` shape (`.points`), so
+  search answers 200 with results instead of 500ing on `AttributeError`;
+  an embedder failure returns the pinned 503
+  `embedding_unavailable` shape. The MCP `_kb_search_body` direct
+  iteration of the same `QueryResponse` is fixed too.
 
 ### Notes
 
-- No new config knobs and no new dependencies — the panel is a presentation
-  layer over the 008 config API + `digital_twins.health` checks.
+- No new config knobs and no new dependencies — the 009/011 UI is a
+  presentation layer over the 008 config API + `digital_twins.health`
+  checks. First PyPI upload of the 0.9.0 line: 0.8.0 was the only
+  previously published release.
 
 ## [0.8.0] - 2026-08-31
 
