@@ -24,6 +24,14 @@ This module hosts the 009 integration tests:
 * **T006** (probe happy path, RED): monkeypatched ``digital_twins.health.check_*`` fakes covering all four statuses → ``POST /api/config/services/probe`` with ``{}`` → 200, canonical order, exact ``status|detail|remediation`` fields; a subset request is honored in request order; and one UN-mocked embedding probe against a real local ``http.server`` answering ``/models`` → ``ok`` (FR-003).
 * **T007** (probe errors, RED): a non-object JSON body → 400 ``invalid JSON body``; a non-list/empty ``services`` → 400 ``services must be a non-empty list``; an unknown name → 404 ``unknown service "x"`` (the 008 shapes, pinned for the probe).
 * **T008** (SC-002 budget, RED): all four checks sleeping past the per-service deadline → the full four-service response in ≤ 5.0 s, every entry ``unreachable`` with the timeout line.
+* **T012** (US3 probe gating, expected GREEN on first run — gate
+  implemented in T010): reader token → ``POST /api/config/services/probe`` 403
+  with the exact ``permission_denied`` shape; missing bearer and a garbage
+  bearer → 401 ``unauthorized``; admin token → 200 contrast (mocked check).
+* **T013** (US3 DOM gating, expected GREEN on first run — gate
+  implemented in T004): served ``index.html`` keeps ``services-panel``
+  ``hidden`` by default and un-hides it ONLY behind the
+  ``me.role === "admin"`` check (static gate assertion, SC-004).
 
 Harness: reuses the 008 fixture + http helpers from
 ``test_web_config_api`` (same directory; no ``tests/`` package, so a
@@ -479,3 +487,121 @@ def test_probe_deadline_budget_sc002(web_config_app, monkeypatch):
             f"services.{name}.detail must carry the timeout line, got "
             f"{entry['detail']!r}"
         )
+
+
+# =============================================================================
+# T012 - US3: probe gating (reader 403 / no-or-bad bearer 401 / admin 200)
+# =============================================================================
+
+
+def test_probe_reader_403_permission_denied(web_config_app):
+    """T012: reader token → POST /api/config/services/probe → 403 with the
+    exact ``permission_denied`` shape (SC-004; gate from T010)."""
+    _app, _db, host, port, _admin, reader_token, _cd = web_config_app
+
+    code, parsed, raw = _http_post(
+        host, port, "/api/config/services/probe", {},
+        headers={"Authorization": f"Bearer {reader_token}"},
+    )
+    assert code == 403, (
+        f"POST /api/config/services/probe (reader) expected 403, got {code}: "
+        f"{raw[:300]!r}"
+    )
+    assert parsed == {
+        "error": "permission_denied",
+        "code": "permission_denied",
+        "message": "admin role required",
+    }, f"403 body must be the pinned permission_denied shape, got {parsed!r}"
+
+
+def test_probe_missing_bearer_401(web_config_app):
+    """T012: no Authorization header → 401 ``unauthorized`` (bearer gate
+    runs before any handler)."""
+    _app, _db, host, port, _admin, _reader, _cd = web_config_app
+
+    code, parsed, raw = _http_post(host, port, "/api/config/services/probe", {})
+    assert code == 401, (
+        f"POST /api/config/services/probe (no bearer) expected 401, got "
+        f"{code}: {raw[:300]!r}"
+    )
+    assert parsed == {"error": "unauthorized"}, (
+        f"401 body must be the pinned unauthorized shape, got {parsed!r}"
+    )
+
+
+def test_probe_invalid_bearer_401(web_config_app):
+    """T012: garbage bearer → 401 ``unauthorized``."""
+    _app, _db, host, port, _admin, _reader, _cd = web_config_app
+
+    code, parsed, raw = _http_post(
+        host, port, "/api/config/services/probe", {},
+        headers={"Authorization": "Bearer not-a-real-token"},
+    )
+    assert code == 401, (
+        f"POST /api/config/services/probe (bad bearer) expected 401, got "
+        f"{code}: {raw[:300]!r}"
+    )
+    assert parsed == {"error": "unauthorized"}, (
+        f"401 body must be the pinned unauthorized shape, got {parsed!r}"
+    )
+
+
+def test_probe_admin_200_contrast(web_config_app, monkeypatch):
+    """T012 contrast: admin token → 200 (gate passes; single-service
+    subset keeps this fast — full admin coverage lives in T006)."""
+    import digital_twins.health as health
+
+    _app, _db, host, port, admin_token, _reader, _cd = web_config_app
+    monkeypatch.setattr(health, "check_qdrant", _fake_check("qdrant", "ok"))
+
+    code, parsed, raw = _http_post(
+        host, port, "/api/config/services/probe", {"services": ["qdrant"]},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert code == 200, (
+        f"POST /api/config/services/probe (admin) expected 200, got {code}: "
+        f"{raw[:300]!r}"
+    )
+    assert parsed.get("services", {}).get("qdrant", {}).get("status") == "ok", (
+        f"admin probe must return the mocked ok result, got {parsed!r}"
+    )
+
+
+# =============================================================================
+# T013 - US3: DOM gating (panel hidden by default, un-hidden only for admin)
+# =============================================================================
+
+
+def test_index_html_services_panel_dom_gate(web_config_app):
+    """T013: static DOM gate (SC-004) — ``services-panel`` is ``hidden``
+    by default and the SINGLE un-hide sits behind the
+    ``me.role === "admin"`` check in the served ``index.html``."""
+    html = _get_index_html(web_config_app)
+
+    # (a) hidden by default in the markup
+    assert 'id="services-panel" hidden' in html, (
+        "services-panel must carry the hidden attribute in the markup"
+    )
+
+    # (b) exactly one un-hide, and it comes AFTER the admin check opens
+    unhide = 'el("services-panel").hidden = false;'
+    gate = 'if (me && me.role === "admin")'
+    assert html.count(unhide) == 1, (
+        f"exactly one un-hide of services-panel expected, found "
+        f"{html.count(unhide)}"
+    )
+    assert gate in html, "admin gate check missing from index.html"
+    assert html.find(gate) < html.find(unhide), (
+        "the un-hide of services-panel must occur after the "
+        'me.role === "admin" gate opens (SC-004)'
+    )
+
+    # (c) the else-branch re-hides for non-admins
+    rehide = 'el("services-panel").hidden = true;'
+    assert html.count(rehide) == 1, (
+        f"exactly one non-admin re-hide of services-panel expected, found "
+        f"{html.count(rehide)}"
+    )
+    assert html.find(unhide) < html.find(rehide), (
+        "the non-admin re-hide must follow the admin un-hide (else-branch)"
+    )

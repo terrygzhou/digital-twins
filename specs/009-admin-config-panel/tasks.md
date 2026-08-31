@@ -62,12 +62,12 @@ No tasks — all prerequisites already shipped by 006/008: admin gate (`_require
 
 ### Tests for User Story 3 (RED first) ⚠️
 
-- [ ] T012 [P] [US3] RED gating tests in `tests/integration/test_web_config_probe.py`: reader token → `POST /api/config/services/probe` 403 `permission_denied` (existing shape); missing bearer → 401; admin token → 200 (contrast); regression: existing 008 config routes still 403 for reader (covered by `tests/integration/test_web_config_api.py` — keep green).
-- [ ] T013 [P] [US3] RED DOM-gating test in `tests/integration/test_web_config_probe.py`: served `index.html` asserts the panel is `hidden` by default and is un-hidden ONLY behind the `me.role === "admin"` check (static assertion of the gate; no panel content reachable without admin role — SC-004).
+- [x] T012 [P] [US3] RED gating tests in `tests/integration/test_web_config_probe.py`: reader token → `POST /api/config/services/probe` 403 `permission_denied` (existing shape); missing bearer → 401; admin token → 200 (contrast); regression: existing 008 config routes still 403 for reader (covered by `tests/integration/test_web_config_api.py` — keep green).
+- [x] T013 [P] [US3] RED DOM-gating test in `tests/integration/test_web_config_probe.py`: served `index.html` asserts the panel is `hidden` by default and is un-hidden ONLY behind the `me.role === "admin"` check (static assertion of the gate; no panel content reachable without admin role — SC-004).
 
 ### Implementation for User Story 3
 
-- [ ] T014 [US3] Verify/close gaps: confirm `_handle_config_probe` routes through `_require_admin` (T010) and the JS gate hides the panel for non-admins (T004/T011); fix any gap found; re-run `tests/integration/test_web_config_api.py` (008 regression) + T012/T013.
+- [x] T014 [US3] Verify/close gaps: confirm `_handle_config_probe` routes through `_require_admin` (T010) and the JS gate hides the panel for non-admins (T004/T011); fix any gap found; re-run `tests/integration/test_web_config_api.py` (008 regression) + T012/T013.
 
 **Checkpoint**: All three user stories independently functional.
 
