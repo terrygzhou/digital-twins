@@ -75,3 +75,6 @@ logs/
 # git worktrees (isolated SDD workspaces)
 .worktrees/
 .pi/
+
+# Release build venv (docs/release-runbook.md §2; keep out of sdist like .venv)
+.venv-release/
