@@ -246,6 +246,22 @@ select:focus {
   font-size: 0.85rem;
 }
 
+/* 011: URL + write-only credential inputs share one flex cell so the
+   row's 6-column grid holds no matter how many credentials a service
+   has (neo4j has two). */
+.service-row .service-url-cell {
+  display: flex;
+  gap: 0.5rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.service-row .service-cred {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  width: 14rem;
+}
+
 .service-badges {
   display: flex;
   gap: 0.25rem;

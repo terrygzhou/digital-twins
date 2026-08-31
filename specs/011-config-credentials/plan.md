@@ -4,7 +4,7 @@
 
 **Goal:** The web admin Services panel can write service credentials (`qdrant.api_key`, `neo4j.user`, `neo4j.password`, `llm.api_key`, `embedding.api_key`) — write-only, never pre-filled, empty-on-save omits — closing the BR-12.2.1 loop 008 (API) and 009 (URL panel) left open.
 
-**Architecture:** UI-only delta in `digital_twins/web/static/index.html` inline JS: a `SERVICE_CREDENTIALS` map (service → credential knob list), a `renderCredInputs(service, row)` helper that builds empty write-only inputs (`type="password"` except `neo4j.user`), and `saveService(service, input, inputs)` that folds non-empty credential values into the existing `POST /api/config/services` body. The API (`web/app.py`), config schema, and persistence (`merge_write` → `kb.local.yml`) are untouched (FR-004).
+**Architecture:** UI-only delta in `digital_twins/web/static/index.html` inline JS (+ the panel's CSS in `digital_twins/web/static/style.css`): a `SERVICE_CREDENTIALS` map (service → credential knob list), a `renderCredInputs(service, row)` helper that builds empty write-only inputs (`type="password"` except `neo4j.user`), and `saveService(service, input, inputs)` that folds non-empty credential values into the existing `POST /api/config/services` body. The API (`web/app.py`), config schema, and persistence (`merge_write` → `kb.local.yml`) are untouched (FR-004).
 
 **Tech Stack:** Python 3.12, stdlib `http.server` web app, plain JS (no framework) inline in `index.html`; pytest + `http.client` for API round-trips; Node.js (`node --eval`, host has v22) to evaluate the extracted `saveService` function for JS-level behavior (omission on save, never pre-filled).
 
@@ -129,6 +129,12 @@ function showError() {}
 function authHeaders() { return {}; }
 var SERVICE_KNOB = { qdrant: "url", neo4j: "url", llm: "endpoint", embedding: "endpoint" };
 function renderServices() {}
+var SERVICE_CREDENTIALS = {
+  qdrant: [{ knob: "api_key" }],
+  neo4j: [{ knob: "user", plain: "plain" }, { knob: "password" }],
+  llm: [{ knob: "api_key" }],
+  embedding: [{ knob: "api_key" }]
+};
 var __captures = [];
 var fetch = function (url, opts) {
   __captures.push({ url: url, method: opts && opts.method, body: opts && opts.body });
@@ -149,10 +155,13 @@ def _eval_save_service(url_value, cred_values):
     if shutil.which("node") is None:
         pytest.skip("node not available for the JS-level save test")
     fn = _extract_function(_index_js(), "saveService")
+    cred_fn = _extract_function(_index_js(), "saveCredValues")
     payload = json.dumps({"url": url_value, "creds": cred_values})
     program = (
         "var p = JSON.parse(process.argv[1]);\n"
         + _NODE_PRELUDE
+        + "\n"
+        + cred_fn
         + "\n"
         + fn
         + "\n"
@@ -370,16 +379,20 @@ git commit -m "test(011): T1 RED — credential-UI static + Node save + round-tr
 ## Task 2 — GREEN: index.html credential inputs + save-omission
 
 **Files:**
-- Modify: `digital_twins/web/static/index.html` (ONLY file in this slice — FR-004: `web/app.py` is NOT touched)
+- Modify: `digital_twins/web/static/index.html` (panel JS) and
+  `digital_twins/web/static/style.css` (panel CSS) — ONLY these two
+  files in this slice (FR-004: `web/app.py` is NOT touched)
 
 **Step 2.1 — Add the credential map + build helper.** Immediately after the existing `SERVICE_KNOB` definition (~line 397), insert:
 
 ```js
     // 011: write-only credential inputs (supersedes 009 FR-010's
     // URL-only v1).  One input per credential knob a service has
-    // (FR-001); every one is type="password" except neo4j.user
-    // ("plain" — not a secret, FR-002).  Inputs are ALWAYS created
-    // empty: the GET view carries only *_set booleans, never values.
+    // (FR-001): qdrant.api_key, neo4j.user, neo4j.password,
+    // llm.api_key, embedding.api_key.  Every one is type="password"
+    // except neo4j.user ("plain" — not a secret, FR-002).  Inputs are
+    // ALWAYS created empty: the GET view carries only *_set booleans,
+    // never values.
     var SERVICE_CREDENTIALS = {
       qdrant: [{ knob: "api_key" }],
       neo4j: [{ knob: "user", plain: "plain" },
@@ -397,7 +410,10 @@ git commit -m "test(011): T1 RED — credential-UI static + Node save + round-tr
         var inp = document.createElement("input");
         inp.className = "service-cred";
         // "plain" (neo4j.user) is the one non-password credential.
-        inp.type = spec.plain === "plain" ? "text" : "password";
+        inp.type = "password";
+        if (spec.plain === "plain") {
+          inp.type = "text";
+        }
         inp.value = "";  // write-only: never pre-filled (FR-002)
         inp.setAttribute("aria-label",
           service + "." + spec.knob + " (leave blank to keep current)");
@@ -420,12 +436,27 @@ git commit -m "test(011): T1 RED — credential-UI static + Node save + round-tr
     }
 ```
 
-**Step 2.2 — Render the credential inputs per row.** In `renderServices`, after the URL input is appended (`row.appendChild(input);` ~line 424) and BEFORE `var badges = ...`, insert:
+**Step 2.2 — Render the credential inputs per row.** In `renderServices` (the URL input ~line 419), wrap the URL input and the credential inputs in ONE flex cell so the row's 6-column grid (`.service-row` in `style.css`) holds regardless of credential count (neo4j has two). Replace the URL-input block + `row.appendChild(input);`:
 
 ```js
+        // 011: the URL input and the write-only credential inputs
+        // share one grid cell (flex-wrapped) — rows keep their
+        // 6-column layout no matter how many credentials a service
+        // has (neo4j has two).
+        var urlCell = document.createElement("div");
+        urlCell.className = "service-url-cell";
+
+        var input = document.createElement("input");
+        input.type = "text";
+        input.className = "service-url";
+        input.value = s.url || "";
+        input.setAttribute("aria-label", service + " endpoint");
+        urlCell.appendChild(input);
+
         // 011: write-only credential inputs (order fixed by
         // SERVICE_CREDENTIALS; blank on save keeps the current value).
-        var credInputs = renderCredInputs(service, row);
+        var credInputs = renderCredInputs(service, urlCell);
+        row.appendChild(urlCell);
 ```
 
 **Step 2.3 — Change the Save wiring + saveService.** Replace the Save button's listener:
@@ -467,10 +498,24 @@ and replace the whole `saveService` function with:
     }
 ```
 
-**Step 2.4 — Style the credential inputs.** In the panel's `<style>` block (next to the existing `.service-url` rule), add:
+**Step 2.4 — Style the credential inputs.** In `digital_twins/web/static/style.css` (there is no inline `<style>` block — the panel CSS lives there), after the `.service-row .service-url` rule add:
 
 ```css
-    .service-cred { width: 140px; margin-left: 6px; }
+/* 011: URL + write-only credential inputs share one flex cell so the
+   row's 6-column grid holds no matter how many credentials a service
+   has (neo4j has two). */
+.service-row .service-url-cell {
+  display: flex;
+  gap: 0.5rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.service-row .service-cred {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  width: 14rem;
+}
 ```
 
 **Step 2.5 — Update the panel hint.** The section's hint line (line ~100) reads "Service endpoints (admin only). …" — extend it so the owner sees the credential behavior:
@@ -508,7 +553,7 @@ cd /home/terry/projects/digital-twins && .venv/bin/python -m pytest \
 **Step 2.8 — Commit:**
 
 ```bash
-git add digital_twins/web/static/index.html
+git add digital_twins/web/static/index.html digital_twins/web/static/style.css tests/integration/test_web_config_credentials_ui.py
 git commit -m "feat(011): T2 GREEN — write-only credential inputs in the Services panel"
 ```
 

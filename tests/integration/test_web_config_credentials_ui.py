@@ -80,6 +80,12 @@ function el(id) { return document.getElementById(id); }
 function showError() {}
 function authHeaders() { return {}; }
 var SERVICE_KNOB = { qdrant: "url", neo4j: "url", llm: "endpoint", embedding: "endpoint" };
+var SERVICE_CREDENTIALS = {
+  qdrant: [{ knob: "api_key" }],
+  neo4j: [{ knob: "user", plain: "plain" }, { knob: "password" }],
+  llm: [{ knob: "api_key" }],
+  embedding: [{ knob: "api_key" }]
+};
 function renderServices() {}
 var __captures = [];
 var fetch = function (url, opts) {
@@ -101,10 +107,13 @@ def _eval_save_service(url_value, cred_values):
     if shutil.which("node") is None:
         pytest.skip("node not available for the JS-level save test")
     fn = _extract_function(_index_js(), "saveService")
+    cred_fn = _extract_function(_index_js(), "saveCredValues")
     payload = json.dumps({"url": url_value, "creds": cred_values})
     program = (
         "var p = JSON.parse(process.argv[1]);\n"
         + _NODE_PRELUDE
+        + "\n"
+        + cred_fn
         + "\n"
         + fn
         + "\n"

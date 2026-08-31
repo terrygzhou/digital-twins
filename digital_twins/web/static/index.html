@@ -97,9 +97,11 @@
     <section class="card services-panel" id="services-panel" hidden>
       <h2>Services</h2>
       <p class="hint">
-        Service endpoints (admin only). Save writes to
-        <code>kb.local.yml</code>; an active <code>KB_*</code> environment
-        variable overrides the saved value until it is unset.
+        Service endpoints and credentials (admin only). Save writes to
+        <code>kb.local.yml</code>; credential fields are write-only
+        (leave a field blank to keep its current value). An active
+        <code>KB_*</code> environment variable overrides the saved
+        value until it is unset.
       </p>
       <div class="row">
         <button id="services-test-all-btn" class="btn ghost small">Test all</button>
@@ -380,6 +382,55 @@
       embedding: "endpoint"
     };
 
+    // 011: write-only credential inputs (supersedes 009 FR-010's
+    // URL-only v1).  One input per credential knob a service has
+    // (FR-001): qdrant.api_key, neo4j.user, neo4j.password,
+    // llm.api_key, embedding.api_key.  Every one is type="password"
+    // except neo4j.user ("plain" — not a secret, FR-002).  Inputs are
+    // ALWAYS created empty: the GET view carries only *_set booleans,
+    // never values.
+    var SERVICE_CREDENTIALS = {
+      qdrant: [{ knob: "api_key" }],
+      neo4j: [{ knob: "user", plain: "plain" },
+              { knob: "password" }],
+      llm: [{ knob: "api_key" }],
+      embedding: [{ knob: "api_key" }]
+    };
+
+    function renderCredInputs(service, row) {
+      // Returns the credential input elements in render order — the
+      // same order saveService receives them (saveCredValues maps by
+      // index against SERVICE_CREDENTIALS[service]).
+      var inputs = [];
+      (SERVICE_CREDENTIALS[service] || []).forEach(function (spec) {
+        var inp = document.createElement("input");
+        inp.className = "service-cred";
+        // "plain" (neo4j.user) is the one non-password credential.
+        inp.type = "password";
+        if (spec.plain === "plain") {
+          inp.type = "text";
+        }
+        inp.value = "";  // write-only: never pre-filled (FR-002)
+        inp.setAttribute("aria-label",
+          service + "." + spec.knob + " (leave blank to keep current)");
+        row.appendChild(inp);
+        inputs.push(inp);
+      });
+      return inputs;
+    }
+
+    function saveCredValues(service, inputs) {
+      // FR-003: only NON-EMPTY (trimmed) credential inputs join the
+      // save body; blank inputs omit the knob entirely (overwrite-only,
+      // no clear semantics).
+      var section = {};
+      (SERVICE_CREDENTIALS[service] || []).forEach(function (spec, i) {
+        var value = inputs[i] ? String(inputs[i].value).trim() : "";
+        if (value !== "") section[spec.knob] = value;
+      });
+      return section;
+    }
+
     function envVarsForService(service, env_overrides) {
       // A KB_* var belongs to the service when it targets one of the
       // service's knobs: KB_<SERVICE>__<KNOB> (e.g. KB_QDRANT__URL).
@@ -416,12 +467,24 @@
         name.textContent = service;
         row.appendChild(name);
 
+        // 011: the URL input and the write-only credential inputs
+        // share one grid cell (flex-wrapped) — rows keep their
+        // 6-column layout no matter how many credentials a service
+        // has (neo4j has two).
+        var urlCell = document.createElement("div");
+        urlCell.className = "service-url-cell";
+
         var input = document.createElement("input");
         input.type = "text";
         input.className = "service-url";
         input.value = s.url || "";
         input.setAttribute("aria-label", service + " endpoint");
-        row.appendChild(input);
+        urlCell.appendChild(input);
+
+        // 011: write-only credential inputs (order fixed by
+        // SERVICE_CREDENTIALS; blank on save keeps the current value).
+        var credInputs = renderCredInputs(service, urlCell);
+        row.appendChild(urlCell);
 
         var badges = document.createElement("span");
         badges.className = "service-badges";
@@ -452,7 +515,7 @@
         save.className = "btn ghost small services-save-btn";
         save.textContent = "Save";
         save.addEventListener("click", function () {
-          saveService(service, input);
+          saveService(service, input, credInputs);
         });
         row.appendChild(save);
 
@@ -474,11 +537,14 @@
       });
     }
 
-    function saveService(service, input) {
+    function saveService(service, input, credInputs) {
       var value = input.value.trim();
       showError("services-error", null);
       var section = {};
       section[SERVICE_KNOB[service]] = value;
+      // 011 FR-003: fold in the non-empty credential inputs only.
+      var creds = saveCredValues(service, credInputs || []);
+      Object.keys(creds).forEach(function (k) { section[k] = creds[k]; });
       var body = {};
       body[service] = section;
       fetch("/api/config/services", {

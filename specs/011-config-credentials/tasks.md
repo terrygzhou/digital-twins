@@ -7,7 +7,7 @@ RED commit failing before the GREEN commit, per task.
 
 ## Task 1 — RED: 011 credential-UI tests
 
-- [ ] T1 RED: `tests/integration/test_web_config_credentials_ui.py` —
+- [x] T1 RED: `tests/integration/test_web_config_credentials_ui.py` —
   (a) static contract: served index.html carries `SERVICE_CREDENTIALS`,
   the five credential knob names, `service-cred`, `type="password"`,
   the `"plain"` exception marker, and the `saveCredValues` helper
@@ -24,7 +24,7 @@ RED commit failing before the GREEN commit, per task.
 
 ## Task 2 — GREEN: index.html credential inputs + save-omission
 
-- [ ] T2 GREEN: `digital_twins/web/static/index.html` ONLY (FR-004 —
+- [x] T2 GREEN: `digital_twins/web/static/index.html` ONLY (FR-004 —
   `web/app.py` untouched): `SERVICE_CREDENTIALS` map +
   `renderCredInputs(service, row)` (empty inputs, `type="password"`
   except neo4j.user `"plain"` → text, aria-label, appended after the
