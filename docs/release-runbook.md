@@ -46,8 +46,8 @@ python -m pip install --upgrade pip build
 python -m build
 ```
 
-`python -m build` produces `dist/digital-twins-<version>-py3-none-any.whl`
-and `dist/digital-twins-<version>.tar.gz` through the PEP 517 backend
+`python -m build` produces `dist/digital_twins_kb-<version>-py3-none-any.whl`
+and `dist/digital_twins_kb-<version>.tar.gz` through the PEP 517 backend
 declared in `pyproject.toml` (hatchling). Confirm both artifacts exist in
 `dist/`.
 
@@ -90,10 +90,10 @@ Then verify the round-trip in a fresh venv:
 ```bash
 python -m venv .venv-testpypi
 . .venv-testpypi/bin/activate
-python -m pip install --index-url https://test.pypi.org/simple/ digital-twins
+python -m pip install --index-url https://test.pypi.org/simple/ digital-twins-kb
 python -m digital_twins --version
 # Confirm the license ships inside the installed distribution:
-python -m pip show digital-twins | grep -i license
+python -m pip show digital-twins-kb | grep -i license
 ```
 
 Confirm the reported version matches the bumped `__version__` and the

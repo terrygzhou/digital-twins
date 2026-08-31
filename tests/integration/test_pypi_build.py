@@ -23,7 +23,7 @@ import pytest
 import digital_twins
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WHEEL_NAME_RE = re.compile(r"^digital_twins-\d+\.\d+\.\d+-py3-none-any\.whl$")
+WHEEL_NAME_RE = re.compile(r"^digital_twins_kb-\d+\.\d+\.\d+-py3-none-any\.whl$")
 
 
 @pytest.fixture(scope="module")
@@ -48,7 +48,7 @@ def wheel_path(tmp_path_factory):
         f"wheel build failed (exit {proc.returncode})\n"
         f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     )
-    wheels = sorted(out_dir.glob("digital_twins-*-py3-none-any.whl"))
+    wheels = sorted(out_dir.glob("digital_twins_kb-*-py3-none-any.whl"))
     assert len(wheels) == 1, f"expected exactly one wheel, got {wheels}"
     return wheels[0]
 
@@ -58,10 +58,10 @@ def test_wheel_builds_and_name_matches(wheel_path):
     assert wheel_path.is_file(), f"wheel not found at {wheel_path}"
     assert WHEEL_NAME_RE.match(wheel_path.name), (
         f"wheel name {wheel_path.name!r} does not match "
-        f"{'digital_twins-<v>-py3-none-any.whl'}"
+        f"{'digital_twins_kb-<v>-py3-none-any.whl'}"
     )
     # The embedded version must be the single-sourced package version.
-    expected = f"digital_twins-{digital_twins.__version__}-py3-none-any.whl"
+    expected = f"digital_twins_kb-{digital_twins.__version__}-py3-none-any.whl"
     assert wheel_path.name == expected, (
         f"wheel name {wheel_path.name!r} != expected {expected!r} "
         f"(digital_twins.__version__ = {digital_twins.__version__!r})"

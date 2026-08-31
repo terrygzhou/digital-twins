@@ -53,6 +53,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
 ### Notes
 
+- **Distribution name:** the PyPI package is `digital-twins-kb` — the name `digital-twins` is blocked by PyPI's name-similarity policy (existing projects `digital-twin` / `digitaltwins` / `digital.twin`). The import package (`digital_twins`) and CLI command (`digital-twins`) are unchanged.
 - Quickstart §5 live-Docker proofs (clean GPU host, no-GPU host) remain
   manual follow-ups per A8 (005 c4 pattern); the mocked/static surface is
   fully green.

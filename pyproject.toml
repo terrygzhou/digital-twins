@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "digital-twins"
+name = "digital-twins-kb"
 dynamic = ["version"]
 description = "Environment-portable KB ingestion: layered config, fail-fast named sources, deterministic dedup-safe ingest into user-supplied Qdrant/Neo4j."
 readme = "README.md"

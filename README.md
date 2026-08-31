@@ -11,8 +11,10 @@ The exact install → init → validate path. Requires Python ≥ 3.11.
 ### 1 — Install
 
 ```bash
-pip install digital-twins
+pip install digital-twins-kb
 ```
+
+**PyPI name:** the distribution is published as `digital-twins-kb` (`digital-twins` is blocked by PyPI's name-similarity policy); the CLI command stays `digital-twins` and the import package stays `digital_twins`.
 
 From a checkout:
 
@@ -25,7 +27,7 @@ Install torch from the CPU wheel index first, then the package:
 
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install digital-twins
+pip install digital-twins-kb
 ```
 
 ### 2 — Initialise
@@ -111,7 +113,7 @@ before any mutating action. A `reader` is denied every mutating tool with
 A full MCP server (004) exposes the scheduler surface over stdio and
 HTTP/SSE so any MCP-capable agent can manage schedules and trigger runs.
 The `mcp` SDK is an optional extra
-(`pip install "digital-twins[mcp]"`); the server itself speaks raw JSON and
+(`pip install "digital-twins-kb[mcp]"`); the server itself speaks raw JSON and
 runs without it.
 
 Start the server:
