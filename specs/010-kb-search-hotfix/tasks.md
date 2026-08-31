@@ -56,7 +56,7 @@ RED commit failing before the GREEN commit, per task.
 
 - [x] V1: standing guards (`tests/integration/test_portability.py`,
   `tests/unit/test_knob_docs.py`) + full suite green (964 + new).
-- [ ] V2: rebuild sdist + wheel; reinstall into `/tmp/dtkb-pypi`;
+- [x] V2: rebuild sdist + wheel; reinstall into `/tmp/dtkb-pypi`;
   restart the local server; live `POST /api/kb/search` → 200 against
   the live Qdrant (owner with no points → `results: []` still proves
   the full path: embed → vector query → shape).
