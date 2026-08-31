@@ -430,3 +430,68 @@ class _Monkeypatcher:
             else:
                 setattr(target, name, old)
         self._saved = []
+
+
+# ---------------------------------------------------------------------------
+# 010 T3: QueryResponse shape — real qdrant-client returns .points, not a list
+# ---------------------------------------------------------------------------
+
+def test_kb_search_query_response_shape(db, monkeypatch):
+    """010 T3: ``_kb_search_body`` must handle the real qdrant-client
+    ``QueryResponse`` whose points live under ``.points``.
+
+    The real ``query_points`` returns a ``QueryResponse`` (pydantic model)
+    whose ``__iter__`` yields ``(field_name, value)`` tuples — NOT the
+    points themselves.  The body must read ``results.points`` (the same
+    CountResult-aware pattern used in ``web/app.py::_count_via_client``).
+
+    RED (pre-010): the body iterates the QueryResponse directly →
+    ``r.score`` raises AttributeError on a tuple → unhandled exception
+    propagates out of ``dispatch``.
+    GREEN (010 T3): the body normalises ``results.points`` → ok with
+    the correct rows.
+    """
+    import digital_twins.mcp.dispatch as dispatch_mod
+
+    rows = [
+        _FakeQueryPoint(0.9, {"source_url": "high", "text": "t",
+                              "source": "pi", "chunk_index": 0}),
+        _FakeQueryPoint(0.3, {"source_url": "low", "text": "t2",
+                              "source": "fs", "chunk_index": 1}),
+    ]
+
+    class _QueryResponseShaped:
+        """Mimics qdrant-client ``QueryResponse``: points under ``.points``;
+        iterating the object yields ``(field, value)`` tuples (pydantic
+        model ``__iter__``)."""
+        def __init__(self, points):
+            self.points = points
+            self.score_threshold = None
+        def __iter__(self):
+            return iter(self.__dict__.items())
+
+    def fake_qdrant_client(cfg):
+        class _Client:
+            def query_points(self, collection, query=None, query_filter=None,
+                             limit=None, with_payload=False, **kw):
+                return _QueryResponseShaped(rows)
+        return _Client()
+
+    def fake_embed_query(cfg, text):
+        return [0.1] * 384
+
+    monkeypatch.setattr(dispatch_mod, "_resolve_qdrant_client",
+                        fake_qdrant_client, raising=False)
+    monkeypatch.setattr(dispatch_mod, "_embed_query",
+                        fake_embed_query, raising=False)
+
+    result = dispatch(_ctx(db, config=dict(_BASE_CFG)), "kb_search",
+                      {"query": "find me"})
+
+    assert result["ok"] is True, (
+        f"expected ok=True with QueryResponse shape, got {result!r}")
+    assert result["count"] == 2
+    assert result["results"][0]["score"] == 0.9
+    assert result["results"][0]["source_url"] == "high"
+    scores = [r["score"] for r in result["results"]]
+    assert scores == sorted(scores, reverse=True)

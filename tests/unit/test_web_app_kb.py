@@ -436,6 +436,7 @@ class FakeQdrantClient:
         self.count_calls = 0
         self.scroll_calls = 0
         self.search_calls = 0
+        self.last_query = None
 
     # -- seeding ---------------------------------------------------------------
 
@@ -470,6 +471,7 @@ class FakeQdrantClient:
                      limit=None, with_payload=True, **_kw):
         """Owner-scoped search: filter, then rank by deterministic score."""
         self.search_calls += 1
+        self.last_query = query
         candidates = [
             p for p in self._points
             if self._matches(p.payload, query_filter)
@@ -562,6 +564,44 @@ def _seed_points(app, base_ts=1000, gap=100):
     fake._points[-1].payload["_score"] = 0.99
     app.qdrant_client = fake
     return fake
+
+
+class _FakeModel:
+    """A stand-in embedding model with a pinned 384-dim output."""
+    dim = 384
+
+    def __init__(self):
+        self.calls = []
+
+    def encode(self, texts):
+        self.calls.append(list(texts))
+
+        class _Batch:
+            def tolist(self):
+                return [[0.1] * _FakeModel.dim for _ in texts]
+        return _Batch()
+
+
+def _seed_embed_pool(app, failing=False):
+    """Seed the app's pooled embedder (``server._embed_pool``) per the
+    established contract — ``embed(texts) -> list of vectors`` (see
+    ``tests/integration/test_web_app.py::test_e2e_full_journey``).
+
+    The pre-fix web handler never touches the pool, so seeding it keeps the
+    two owner-scoped tests green in RED; the three new tests need the pool
+    to observe the embed + vector contract.  ``failing=True`` makes the
+    pooled embedder raise (the embedding-failure 503 path).
+    """
+    if failing:
+        def _embed(texts):
+            raise RuntimeError("embedding.model failed to load (fake)")
+        app._embed_pool = {"embed": _embed}
+        return None
+    model = _FakeModel()
+    app._fake_model = model
+    app._embed_pool = {
+        "embed": lambda texts: model.encode(list(texts)).tolist()}
+    return model
 
 
 # =============================================================================
@@ -776,6 +816,7 @@ def test_kb_search_top_n_owner_scoped(web_app):
     """
     _app, _db, host, port, session_token = web_app
     fake = _seed_points(_app)
+    _seed_embed_pool(_app)
     code, parsed, raw = _http_post(
         host, port, "/api/kb/search",
         {"query": "test", "limit": 2},
@@ -874,6 +915,7 @@ def test_kb_search_qdrant_unavailable(web_app):
     """
     _app, _db, host, port, session_token = web_app
     app = _app
+    _seed_embed_pool(_app)
 
     class _UnavailableQdrant:
         def __getattr__(self, name):
@@ -895,3 +937,133 @@ def test_kb_search_qdrant_unavailable(web_app):
         f"'error' must name Qdrant: {parsed['error']!r}")
     assert len(str(parsed["error"])) > 20, (
         f"'error' must carry a remediation hint, got {parsed['error']!r}")
+
+def test_kb_search_embeds_query_and_passes_vector(web_app):
+    """POST /api/kb/search embeds the query and passes the vector to Qdrant.
+
+    The query must be embedded via the config-pinned model (the pool), and
+    the resulting vector passed as ``query=<vector>`` to ``query_points`` —
+    a bare filtered scroll is not a vector search.
+
+    RED (pre-010): the handler never embeds and calls ``query_points`` with
+    no ``query`` → ``last_query`` stays None and the pool is never called.
+    GREEN (010 T2): the pool is called with the raw query text and the
+    recorded ``last_query`` is that embedding.
+    """
+    _app, _db, host, port, session_token = web_app
+    fake = _seed_points(_app)
+    model = _seed_embed_pool(_app)
+    code, parsed, raw = _http_post(
+        host, port, "/api/kb/search",
+        {"query": "embed me", "limit": 2},
+        headers={"Authorization": f"Bearer {session_token}"})
+    assert code == 200, (
+        f"POST /api/kb/search expected 200, got {code}: {raw[:300]!r}")
+    assert model.calls, (
+        "the query must be embedded via the pooled model; "
+        f"embed was never called: calls={model.calls!r}")
+    assert model.calls[-1] == ["embed me"], (
+        f"the pooled embed must be called with the raw query text, "
+        f"got {model.calls[-1]!r}")
+    assert fake.last_query is not None, (
+        "query_points must receive the query vector (query=...), "
+        f"but no vector was passed: last_query={fake.last_query!r}")
+    assert fake.last_query == [0.1] * 384, (
+        f"the passed vector must be the embedding of the query, "
+        f"got {fake.last_query!r}")
+
+
+def test_kb_search_query_response_shape(web_app):
+    """POST /api/kb/search handles the real qdrant-client QueryResponse.
+
+    A live qdrant-client ``query_points`` returns a ``QueryResponse`` whose
+    points live under ``.points`` (iterating the object itself yields
+    pydantic ``(field, value)`` tuples, so ``r.score`` is an AttributeError).
+    The handler must read ``results.points`` — the CountResult-aware
+    normalisation pattern — so both the real client and the bare-list test
+    fake are handled.
+
+    RED (pre-010): the handler iterates the QueryResponse directly →
+    AttributeError → the fail-closed 500 ``internal_error``.  GREEN (010
+    T2): the handler normalises to ``.points`` → 200 with the 4 owner rows,
+    descending by score (fs/two first at 0.9).
+    """
+    _app, _db, host, port, session_token = web_app
+    fake = _seed_points(_app)
+    _seed_embed_pool(_app)
+    owner_points = [
+        _ScoredPoint(p, p.payload.get("_score", 0.0))
+        for p in fake._points
+        if p.payload.get("owner_tag") == _CALLER_TAG
+    ]
+    assert len(owner_points) == 4
+
+    class _QueryResponseShaped:
+        """Mimics qdrant-client QueryResponse: points under ``.points``;
+        iterating the object yields ``(field, value)`` tuples (pydantic
+        model ``__iter__``)."""
+        def __init__(self, points):
+            self.points = points
+            self.score_threshold = None
+
+        def __iter__(self):
+            return iter(self.__dict__.items())
+
+    def _shaped_query_points(collection, query=None, query_filter=None,
+                             limit=None, with_payload=True, **_kw):
+        fake.last_query = query
+        return _QueryResponseShaped(owner_points)
+
+    fake.query_points = _shaped_query_points
+    code, parsed, raw = _http_post(
+        host, port, "/api/kb/search",
+        {"query": "find me", "limit": 10},
+        headers={"Authorization": f"Bearer {session_token}"})
+    assert code == 200, (
+        f"POST /api/kb/search expected 200 against a QueryResponse, "
+        f"got {code}: {raw[:300]!r}")
+    assert parsed is not None, f"body must be JSON: {raw[:300]!r}"
+    results = parsed.get("results")
+    assert isinstance(results, list), f"'results' must be a list: {parsed!r}"
+    assert len(results) == 4, (
+        f"all 4 owner-scoped points must be returned, "
+        f"got {len(results)}: {results!r}")
+    assert results[0]["source_url"] == "fs/two", (
+        f"top result must be fs/two (owner-scoped, score 0.9), "
+        f"got {results[0]!r}")
+    assert results[0]["score"] == pytest.approx(0.9)
+    scores = [r["score"] for r in results]
+    assert scores == sorted(scores, reverse=True), (
+        f"results must be descending by score: {scores!r}")
+
+
+def test_kb_search_embedding_unavailable_503(web_app):
+    """POST /api/kb/search with the embedder failing → clean 503 embedding.
+
+    A valid query + a live (fake) Qdrant, but the pooled embedder raises →
+    a clean 502/503 whose error names the embedding config (embedding.model
+    / embedding.device), DISTINCT from the qdrant-unavailable hint.  Fail-
+    closed: no traceback, and the request never reaches Qdrant.
+
+    RED (pre-010): the web handler has no embedding branch (it never embeds)
+    → 200, and no embedding hint exists.  GREEN (010 T2): a clean 503 naming
+    the embedding knobs, not the qdrant hint.
+    """
+    _app, _db, host, port, session_token = web_app
+    _seed_points(_app)
+    _seed_embed_pool(_app, failing=True)
+    code, parsed, raw = _http_post(
+        host, port, "/api/kb/search",
+        {"query": "valid query", "limit": 5},
+        headers={"Authorization": f"Bearer {session_token}"})
+    assert code in (502, 503), (
+        f"embedding-failure POST /api/kb/search expected 502/503, "
+        f"got {code}: {raw[:300]!r}")
+    assert parsed is not None, f"body must be JSON: {raw[:300]!r}"
+    assert "error" in parsed, f"missing 'error': {parsed!r}"
+    err = str(parsed["error"]).lower()
+    assert "embedding" in err, (
+        f"the 503 must name the embedding config, got {parsed['error']!r}")
+    assert "qdrant unavailable" not in err, (
+        f"the embedding 503 must be distinct from the qdrant hint, "
+        f"got {parsed['error']!r}")
