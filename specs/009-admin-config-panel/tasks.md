@@ -29,8 +29,8 @@ No tasks — all prerequisites already shipped by 006/008: admin gate (`_require
 
 ### Implementation for User Story 1
 
-- [ ] T004 [US1] Implement the Services panel in `digital_twins/web/static/index.html`: new `<section class="card services-panel" id="services-panel" hidden>` in `#kb-view`; inline JS in the existing IIFE — `loadServices()` (GET `/api/config/services`, render rows: URL `<input>` prefilled with effective value, `*_set` badges, env-override badge via `KB_<SERVICE>__` prefix mapping, remediation line), per-row **Save** (POST the knob-mapped single-service body; on 200 re-render from the post-write view; on 4xx show `#services-error` and keep input values), admin gate in `bootstrap()` (`me.role === "admin"` → unhide + load).
-- [ ] T005 [P] [US1] Panel styles in `digital_twins/web/static/style.css`: `.services-panel`, service-row grid, status-pill base, `.env-override` badge.
+- [x] T004 [US1] Implement the Services panel in `digital_twins/web/static/index.html`: new `<section class="card services-panel" id="services-panel" hidden>` in `#kb-view`; inline JS in the existing IIFE — `loadServices()` (GET `/api/config/services`, render rows: URL `<input>` prefilled with effective value, `*_set` badges, env-override badge via `KB_<SERVICE>__` prefix mapping, remediation line), per-row **Save** (POST the knob-mapped single-service body; on 200 re-render from the post-write view; on 4xx show `#services-error` and keep input values), admin gate in `bootstrap()` (`me.role === "admin"` → unhide + load).
+- [x] T005 [P] [US1] Panel styles in `digital_twins/web/static/style.css`: `.services-panel`, service-row grid, status-pill base, `.env-override` badge.
 
 **Checkpoint**: US1 fully functional (quickstart §2 steps 2–4 pass; T002/T003 GREEN).
 

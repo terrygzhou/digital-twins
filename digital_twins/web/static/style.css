@@ -219,3 +219,77 @@ select:focus {
   border-radius: 6px;
   padding: 0.5rem 0.75rem;
 }
+
+/* ---- services panel (009) -------------------------------------------------- */
+
+.services-panel .services-rows {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.service-row {
+  display: grid;
+  grid-template-columns: 6rem 1fr auto auto auto auto;
+  gap: 0.5rem;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.service-row .service-name {
+  font-weight: 600;
+}
+
+.service-row .service-url {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.service-badges {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.service-badges .badge {
+  font-size: 0.7rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  white-space: nowrap;
+}
+
+.env-override {
+  font-size: 0.7rem;
+  color: #8a5b00;
+  background: #fdf3dc;
+  border: 1px solid #e0b668;
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  white-space: nowrap;
+}
+
+.status-pill {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  white-space: nowrap;
+}
+
+.status-pill.ok { color: #1a7f37; border-color: #1a7f37; }
+.status-pill.unconfigured { color: var(--muted); }
+.status-pill.unreachable { color: #b42318; border-color: #b42318; }
+.status-pill.auth-failed { color: #b42318; border-color: #b42318; }
+
+.service-remediation {
+  grid-column: 2 / -1;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}

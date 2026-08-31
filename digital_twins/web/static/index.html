@@ -93,6 +93,20 @@
       <p id="chat-error" class="error" role="alert"></p>
       <div id="chat-answer" class="results"></div>
     </section>
+
+    <section class="card services-panel" id="services-panel" hidden>
+      <h2>Services</h2>
+      <p class="hint">
+        Service endpoints (admin only). Save writes to
+        <code>kb.local.yml</code>; an active <code>KB_*</code> environment
+        variable overrides the saved value until it is unset.
+      </p>
+      <div class="row">
+        <button id="services-test-all-btn" class="btn ghost small">Test all</button>
+      </div>
+      <p id="services-error" class="error" role="alert"></p>
+      <div id="services-rows" class="services-rows"></div>
+    </section>
   </main>
 
   <script>
@@ -145,6 +159,13 @@
         me ? me.email + " (" + me.role + ")" : "";
       refreshPoints();
       refreshAudit();
+      // Services panel: admin-only config surface (009 SC-004).
+      if (me && me.role === "admin") {
+        el("services-panel").hidden = false;
+        loadServices();
+      } else {
+        el("services-panel").hidden = true;
+      }
     }
 
     // ---- data loads ---------------------------------------------------------
@@ -339,6 +360,137 @@
           return;
         }
         el("chat-answer").textContent = data.answer;
+      });
+    }
+
+    // ---- services panel (009: admin config surface) --------------------------
+    //
+    // The panel is admin-only (SC-004): showKbView() unhides it only when
+    // me.role === "admin". Rows render from the 008 masked view
+    // (GET /api/config/services): effective url + *_set flags + env_overrides
+    // (credential values never reach the UI, FR-004). Save posts the
+    // display→knob mapping below; the 200 body is the post-write masked view,
+    // which re-renders the panel (FR-002).
+
+    var SERVICES = ["qdrant", "neo4j", "llm", "embedding"];
+    var SERVICE_KNOB = {
+      qdrant: "url",
+      neo4j: "url",
+      llm: "endpoint",
+      embedding: "endpoint"
+    };
+
+    function envVarsForService(service, env_overrides) {
+      // A KB_* var belongs to the service when it targets one of the
+      // service's knobs: KB_<SERVICE>__<KNOB> (e.g. KB_QDRANT__URL).
+      var prefix = "KB_" + service.toUpperCase() + "__";
+      return (env_overrides || []).filter(function (v) {
+        return v.indexOf(prefix) === 0;
+      });
+    }
+
+    function loadServices() {
+      fetch("/api/config/services", { headers: authHeaders() })
+        .then(function (r) { return r.json().catch(function () { return null; }); })
+        .then(function (data) {
+          if (!data || data.error) {
+            showError("services-error", data);
+            return;
+          }
+          renderServices(data);
+        });
+    }
+
+    function renderServices(view) {
+      var out = el("services-rows");
+      out.innerHTML = "";
+      var overrides = view.env_overrides || [];
+      SERVICES.forEach(function (service) {
+        var s = (view.services || {})[service] || {};
+
+        var row = document.createElement("div");
+        row.className = "service-row";
+
+        var name = document.createElement("span");
+        name.className = "service-name";
+        name.textContent = service;
+        row.appendChild(name);
+
+        var input = document.createElement("input");
+        input.type = "text";
+        input.className = "service-url";
+        input.value = s.url || "";
+        input.setAttribute("aria-label", service + " endpoint");
+        row.appendChild(input);
+
+        var badges = document.createElement("span");
+        badges.className = "service-badges";
+        ["api_key_set", "user_set", "password_set"].forEach(function (flag) {
+          if (s[flag]) {
+            var b = document.createElement("span");
+            b.className = "badge";
+            b.textContent = flag.replace("_set", "") + " set";
+            badges.appendChild(b);
+          }
+        });
+        var envVars = envVarsForService(service, overrides);
+        if (envVars.length) {
+          var e = document.createElement("span");
+          e.className = "env-override";
+          e.textContent = "env override in effect: " + envVars.join(", ");
+          badges.appendChild(e);
+        }
+        row.appendChild(badges);
+
+        var pill = document.createElement("span");
+        pill.className = "status-pill";
+        pill.id = "services-pill-" + service;
+        pill.textContent = "not tested";
+        row.appendChild(pill);
+
+        var save = document.createElement("button");
+        save.className = "btn ghost small services-save-btn";
+        save.textContent = "Save";
+        save.addEventListener("click", function () {
+          saveService(service, input);
+        });
+        row.appendChild(save);
+
+        var test = document.createElement("button");
+        test.className = "btn ghost small services-test-btn";
+        test.textContent = "Test";
+        row.appendChild(test);
+
+        var remediation = document.createElement("p");
+        remediation.className = "service-remediation";
+        remediation.id = "services-remediation-" + service;
+        row.appendChild(remediation);
+
+        out.appendChild(row);
+      });
+    }
+
+    function saveService(service, input) {
+      var value = input.value.trim();
+      showError("services-error", null);
+      var section = {};
+      section[SERVICE_KNOB[service]] = value;
+      var body = {};
+      body[service] = section;
+      fetch("/api/config/services", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(body)
+      }).then(function (r) {
+        return r.json().catch(function () { return null; });
+      }).then(function (data) {
+        if (!data || data.error) {
+          // Keep the input value on failure (FR-008: no lost edits).
+          showError("services-error", data);
+          return;
+        }
+        // The 200 body is the post-write masked view (FR-002).
+        renderServices(data);
       });
     }
 
