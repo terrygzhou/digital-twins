@@ -220,6 +220,25 @@ def test_save_service_whitespace_only_credentials_omitted():
     )
 
 
+def test_credential_inputs_have_visible_labels():
+    """Owner fix (post-release): credential inputs must be visually
+    identifiable — a visible placeholder naming the field
+    (password / username / API key) with the blank-means-keep hint,
+    not only an aria-label. renderCredInputs ships the literals."""
+    js = _index_js()
+    build = _extract_function(js, "renderCredInputs")
+    assert "placeholder" in build, (
+        "credential inputs need a visible placeholder (owner: the panel "
+        "showed unlabeled fields)"
+    )
+    for label in ("password (blank = keep current)",
+                  "username (blank = keep current)",
+                  "API key (blank = keep current)"):
+        assert label in build, (
+            f"renderCredInputs must carry the visible label {label!r}"
+        )
+
+
 def test_credential_inputs_never_prefilled():
     """FR-002: credential inputs are created empty and are never
     assigned the GET response (which cannot carry values anyway):
