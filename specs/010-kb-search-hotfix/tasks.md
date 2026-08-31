@@ -7,7 +7,7 @@ RED commit failing before the GREEN commit, per task.
 
 ## Task 1 — RED: web kb_search embed + QueryResponse shape
 
-- [ ] T1 RED: `tests/unit/test_web_app_kb.py` — `FakeQdrantClient`
+- [x] T1 RED: `tests/unit/test_web_app_kb.py` — `FakeQdrantClient`
   records `last_query`; new `_seed_embed_pool` helper (the
   `app._embed_pool` contract, mirroring
   `tests/integration/test_web_app.py::test_e2e_full_journey`);
@@ -23,7 +23,7 @@ RED commit failing before the GREEN commit, per task.
 
 ## Task 2 — GREEN: web handler embed + vector + shape
 
-- [ ] T2 GREEN: `digital_twins/web/app.py::_handle_kb_search` — resolve
+- [x] T2 GREEN: `digital_twins/web/app.py::_handle_kb_search` — resolve
   the qdrant client first (unchanged order for the unavailable
   contract), then embed via `self._pooled_embedder()([query])`
   (batch-with-`.tolist` or plain list; empty → embedding-failure 503),
@@ -36,25 +36,25 @@ RED commit failing before the GREEN commit, per task.
 
 ## Task 3 — RED + GREEN: MCP kb_search QueryResponse shape
 
-- [ ] T3 RED: `tests/unit/test_mcp_kb_search.py` — NEW
+- [x] T3 RED: `tests/unit/test_mcp_kb_search.py` — NEW
   `test_kb_search_query_response_shape` (the fake returns a
   QueryResponse-shaped `.points` object; assert `ok` + the rows).
   Verify RED (direct iteration breaks).
-- [ ] T3 GREEN: `digital_twins/mcp/dispatch.py::_kb_search_body` —
+- [x] T3 GREEN: `digital_twins/mcp/dispatch.py::_kb_search_body` —
   `points = results.points if hasattr(results, "points") else results`
   before the rows. Verify: `pytest tests/unit/test_mcp_kb_search.py
   tests/integration/test_mcp_kb_tools.py -q` green.
 
 ## Task 4 — contract doc
 
-- [ ] T4: `specs/006-web-app/contracts/web-api.md` — `/api/kb/search`:
+- [x] T4: `specs/006-web-app/contracts/web-api.md` — `/api/kb/search`:
   add the embedding-failure 503 line + the status-table note (the
   search path embeds the query via the config-pinned model before the
   vector query).
 
 ## Verify & close
 
-- [ ] V1: standing guards (`tests/integration/test_portability.py`,
+- [x] V1: standing guards (`tests/integration/test_portability.py`,
   `tests/unit/test_knob_docs.py`) + full suite green (964 + new).
 - [ ] V2: rebuild sdist + wheel; reinstall into `/tmp/dtkb-pypi`;
   restart the local server; live `POST /api/kb/search` → 200 against
