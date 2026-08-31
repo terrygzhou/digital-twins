@@ -3,6 +3,60 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [0.8.0] - 2026-08-31
+
+### Added
+
+- **Fail-fast service gate** (008, FR-001/002, SC-001): every trigger path
+  (scheduler, `run --once`, MCP, web UI, `serve` at startup) refuses to run
+  when a hard dependency is unconfigured / unreachable / auth-failed — 0
+  silent no-op runs. `validate`/`health` now render a 4-service status table
+  (qdrant / neo4j / llm / embedding) with per-service `status`
+  (`ok | unconfigured | unreachable | auth-failed`) and remediation naming the
+  exact knob + env form.
+- **External hosting mode** (008, FR-003/004, FR-010, SC-002): qdrant / neo4j
+  / llm endpoints and credentials configure via env/`.env`/`kb.local.yml`
+  (or the web admin API) and reach the clients on both validate and ingestion
+  paths. New knobs `embedding.endpoint` + `embedding.api_key` for an
+  OpenAI-compatible external embedder (`/v1/embeddings` via stdlib urllib,
+  retry-once on 5xx, strict dimension guard); in-process
+  BAAI/bge-small-en-v1.5 remains the default.
+- **Web admin API** `GET`/`POST /api/config/services`: admin-gated masked
+  view (credentials as `api_key_set` booleans + `env_overrides`), partial
+  updates persisted to `kb.local.yml` via atomic `merge_write` (401/403/404/422/409
+  error shapes; `chunking` accepted as the one non-service target).
+- **`scripts/bootstrap-local.sh`** (008, FR-005..008, SC-003/004): one-shot
+  local setup on a clean Docker host — docker/compose detection,
+  port-conflict probe (6333/7474/7687/8000/8080), GPU probe with
+  `LLM_SERVICE` override, pin-hash + image-presence check, pull/build only
+  when needed, health poll loop (`BOOTSTRAP_TIMEOUT_S`), `kb.local.yml`
+  written only when absent. Exit codes 0/1/2/3/4; `--status`/`--help`.
+  On no-GPU hosts the bundled llm service is skipped with a warning and
+  external-LLM remediation (BR-12.3.4).
+- **`digital_twins/config/local_io.py`**: machine-local config layer —
+  `local_config_path()` + `merge_write` (round-trip, preserves unrelated
+  keys, atomic, refuses unparseable/out-of-dir targets).
+- 111 new tests (831 → 942).
+
+### Changed
+
+- `run_pipeline` preflights before any write: on dependency failure raises
+  `ServiceDependencyError(service, status, remediation)` — no audit row, no
+  partial writes on the `run_pipeline` / CLI / MCP / web paths. The
+  scheduler keeps its pre-existing R-07 backstop (`failed` row, never
+  silent); the no-row rule and this ruling are recorded in
+  `specs/008-service-hosting/plan.md`.
+- `validate`/`health` CLI output: 4-service table with `status` +
+  remediation (`contracts/cli.md` updated).
+- Portability guard now scans `scripts/` + python-interpreter-pin patterns;
+  `test_knob_docs.py` covers the two new embedding knobs.
+
+### Notes
+
+- Quickstart §5 live-Docker proofs (clean GPU host, no-GPU host) remain
+  manual follow-ups per A8 (005 c4 pattern); the mocked/static surface is
+  fully green.
+
 ## [0.7.0] - 2026-08-31
 
 ### Added
