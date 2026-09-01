@@ -172,7 +172,7 @@ def _qdrant_factory(config) -> callable:
 
     def factory():
         if not url:
-            from digital_twins.config.schema import ConfigError
+            from digital_twins.config.loader import ConfigError
             raise ConfigError(
                 "qdrant.url is not set — run init or set KB_QDRANT__URL")
         from qdrant_client import QdrantClient
@@ -197,7 +197,7 @@ def _neo4j_driver_factory(config):
 
     def factory():
         if not (url and user and password):
-            from digital_twins.config.schema import ConfigError
+            from digital_twins.config.loader import ConfigError
             raise ConfigError(
                 "neo4j.url/neo4j.user/neo4j.password are not set — "
                 "run init or set KB_NEO4J__URL / KB_NEO4J__USER / "
