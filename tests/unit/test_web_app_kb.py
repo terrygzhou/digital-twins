@@ -449,12 +449,20 @@ class FakeQdrantClient:
 
     # -- qdrant_client surface --------------------------------------------------
 
-    def count(self, collection, filter=None, **_kw):
-        """Count points matching ``filter`` (0..2 FieldConditions)."""
+    def count(self, collection, count_filter=None, exact=True, **_kw):
+        """Count points matching ``count_filter`` (0..2 FieldConditions).
+
+        Mirrors the installed ``qdrant_client.count`` signature — the filter
+        is a ``count_filter=`` keyword, and unknown kwargs (e.g. a stale
+        ``filter=``) are rejected just like the real client's
+        ``Unknown arguments`` guard, so a regression to the old kwarg is a
+        hard failure rather than a silently-ignored filter.
+        """
+        assert not _kw, f"Unknown arguments: {sorted(_kw)}"
         self.count_calls += 1
         matches = [
             p for p in self._points
-            if self._matches(p.payload, filter)
+            if self._matches(p.payload, count_filter)
         ]
         return _CountResult(count=len(matches))
 

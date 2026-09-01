@@ -340,6 +340,50 @@ def test_me_valid_token_200(web_app, monkeypatch):
     )
 
 
+def test_me_point_count_reflects_owner_scope(web_app, monkeypatch):
+    """GET /api/me → point_count equals the owner_tag-scoped Qdrant count.
+
+    Pins the installed ``qdrant_client.count(count_filter=...)`` contract on
+    the ``/api/me`` path (``_count_points_for_owner``): the owner filter must
+    be passed as ``count_filter=``.  The stub mirrors the real client's
+    signature and rejects an unknown ``filter=`` kwarg the way the real
+    client's ``Unknown arguments`` guard does, so a regression to the old
+    kwarg degrades ``point_count`` to 0.
+    """
+    import digital_twins.mcp.dispatch as dispatch_mod
+    import qdrant_client as _qc
+
+    class _CountResult:
+        count = 3
+
+    class _StubQdrant:
+        def __init__(self, *a, **k):
+            pass
+
+        def count(self, collection, count_filter=None, exact=True, **_kw):
+            assert not _kw, f"Unknown arguments: {sorted(_kw)}"
+            return _CountResult()
+
+    monkeypatch.setattr(_qc, "QdrantClient", _StubQdrant)
+    monkeypatch.setattr(dispatch_mod, "QdrantClient", _StubQdrant,
+                        raising=False)
+    _app, _db, host, port = web_app
+    # Point the /api/me handler at a (fake) live Qdrant so it does not
+    # short-circuit on "qdrant.url unset".
+    _app.config.setdefault("qdrant", {})["url"] = "http://fake-qdrant:6333"
+    _http_post(host, port, "/api/auth/signup",
+               {"email": "first@example.com", "password": "pw12345"})
+    body = _signin(host, port, "first@example.com")
+    code, parsed, raw = _http_get(
+        host, port, "/api/me",
+        headers={"Authorization": f"Bearer {body['session_token']}"})
+    assert code == 200, f"/api/me expected 200, got {code}: {raw[:200]!r}"
+    assert parsed.get("point_count") == 3, (
+        f"point_count must be the owner_tag-scoped Qdrant count (3), "
+        f"got {parsed!r}"
+    )
+
+
 def test_me_no_token_401(web_app):
     """GET /api/me with no Authorization header → 401 (bearer gate)."""
     _app, _db, host, port = web_app

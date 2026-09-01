@@ -452,9 +452,11 @@ class _FakeQdrant:
         for p in points:
             self._points[p.id] = p.payload
 
-    def count(self, collection, filter=None, **_kw):
+    def count(self, collection, count_filter=None, exact=True, **_kw):
+        assert not _kw, f"Unknown arguments: {sorted(_kw)}"
         matches = [
-            p for p in self._points.values() if _matches_filter(p, filter)
+            p for p in self._points.values()
+            if _matches_filter(p, count_filter)
         ]
 
         class _CountResult:

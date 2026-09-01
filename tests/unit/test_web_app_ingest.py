@@ -170,7 +170,7 @@ class _InMemoryQdrant:
             by_id[p.id] = p  # deterministic-id upsert: replace, don't append
         self.points = list(by_id.values())
 
-    def count(self, collection, filter=None, **_kw):
+    def count(self, collection, count_filter=None, exact=True, **_kw):
         class _CountResult:
             count = len(self.points)
         return _CountResult()

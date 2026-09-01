@@ -375,7 +375,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
                 url=url, api_key=_cfg_get(config, "qdrant.api_key") or None)
             result = client.count(
                 QDRANT_COLLECTION,
-                filter=Filter(
+                count_filter=Filter(
                     must=[FieldCondition(
                         key="owner_tag", match=MatchValue(value=owner_tag))],
                 ),
@@ -433,7 +433,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
     def _count_via_client(self, client, filter_=None) -> int:
         """A Qdrant ``count`` through the shared client (CountResult-aware)."""
         result = client.count(
-            QDRANT_COLLECTION, filter=filter_) if filter_ else \
+            QDRANT_COLLECTION, count_filter=filter_) if filter_ else \
             client.count(QDRANT_COLLECTION)
         # The real Qdrant client returns a CountResult with .count;
         # test stubs may return a bare int — handle both.
