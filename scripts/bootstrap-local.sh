@@ -193,6 +193,13 @@ One invocation on a clean Docker host brings up the full local stack
 (qdrant, neo4j, llm, embedding-model, digital-twins) and writes a
 machine-local kb.local.yml with the local endpoints.
 
+Prerequisites (checked up front; any missing -> exit 1, remediation printed):
+  - docker CLI present, and its daemon reachable (start the daemon /
+    Docker Desktop if `docker info` fails).
+  - docker compose plugin (v2) or docker-compose (classic).
+  - GPU is optional: without nvidia-smi the bundled llm service is
+    skipped; point KB_LLM__ENDPOINT at an external LLM instead.
+
 Options:
   --status   Show per-service status only; no writes, no pulls, no builds.
   --help     Show this help.

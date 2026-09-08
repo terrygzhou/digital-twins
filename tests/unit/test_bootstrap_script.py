@@ -583,3 +583,30 @@ def test_bootstrap_script_no_bash4_only_syntax(tmp_path):
     if _re.search(r"&(?!&)\s*>|&\s*>", text):
         hits.append("&> redirection (bash 4.0+ only; macOS bash 3.2 lacks it)")
     assert not hits, "bash-4-only syntax in scripts/bootstrap-local.sh: " + "; ".join(hits)
+
+
+def test_help_lists_docker_prerequisites():
+    """--help must state the Docker precondition up front (owner feedback:
+    'if docker is mandatory, it should be part of the conditions of
+    running bootstrap'). The exit-1 fail-fast only tells the user AFTER
+    they run it; the help text must name the requirements BEFORE.
+    """
+    result = subprocess.run(
+        [str(SCRIPT), "--help"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "BOOTSTRAP_EXEC": ""},  # help path runs no externals
+    )
+    assert result.returncode == 0, f"--help exit {result.returncode}: {result.stderr}"
+    out = result.stdout
+    assert "Prerequisites" in out, "help lacks a Prerequisites section"
+    # The three contract exit-1 conditions, named up front:
+    assert "daemon" in out.lower(), "help does not name the running-daemon requirement"
+    assert "compose" in out.lower(), "help does not name the compose requirement"
+    assert "exit 1" in out, "help does not state the missing-Docker exit code"
+    # No-GPU hosts remain supported (LLM skipped), so the precondition list
+    # must not claim a GPU is required:
+    gpu_lines = [ln for ln in out.splitlines() if "GPU" in ln]
+    assert any("optional" in ln.lower() for ln in gpu_lines), (
+        "help must state GPU is optional (no-GPU host: bundled llm skipped)"
+    )
