@@ -6,4 +6,4 @@
       (cloud_bootstrap(), EXIT_CLOUD=5, arg parsing, help text).
 - [x] T3: contract sync — `specs/008-service-hosting/contracts/bootstrap-cli.md`
       (usage, env table, exit 5, cloud behavior).
-- [x] V1: full suite green (see progress.md); commit T11.
+- [x] V1: full suite green (see progress.md); commit f2820a5.

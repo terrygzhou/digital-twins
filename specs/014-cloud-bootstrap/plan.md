@@ -36,5 +36,5 @@ optional-key omission, exit-5 missing endpoints, stdin prompts,
 
 ## Status
 
-Complete — commit T11 below; guards (`test_portability.py`,
+Complete — commit f2820a5; guards (`test_portability.py`,
 `test_knob_docs.py`) green; full suite 985+ passed.
