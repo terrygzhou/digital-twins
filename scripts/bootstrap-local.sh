@@ -46,13 +46,18 @@ NEO4J_EP="bolt://localhost:7687"
 LLM_EP="http://localhost:8000/v1"
 EMBED_EP="http://localhost:8080/v1"
 # Port -> compose service name (for the port-conflict probe, exit 2).
-declare -A PORT_TO_SERVICE=(
-  [6333]=qdrant
-  [7474]=neo4j
-  [7687]=neo4j
-  [8000]=llm
-  [8080]=embedding-model
-)
+# case-based lookup (POSIX): macOS /bin/bash is 3.2, which lacks bash-4
+# associative arrays; a `case` works on 3.2, dash, and zsh alike.
+# (Pinned by test_bootstrap_script_no_bash4_only_syntax.)
+port_service() {
+  case "$1" in
+    6333)    echo "qdrant" ;;
+    7474|7687) echo "neo4j" ;;
+    8000)    echo "llm" ;;
+    8080)    echo "embedding-model" ;;
+    *)       echo "(unknown)" ;;
+  esac
+}
 
 # Exit codes (contract-pinned).
 EXIT_OK=0
@@ -229,7 +234,7 @@ HELP
   local port
   for port in 6333 7474 7687 8000 8080; do
     if port_in_use "$port"; then
-      local svc="${PORT_TO_SERVICE[$port]}"
+      local svc="$(port_service "$port")"
       echo "bootstrap: ERROR: port $port is already in use (service: $svc). Remediation: free the port or re-map it in docker-compose.yml, then re-run." >&2
       return "$EXIT_PORT"
     fi

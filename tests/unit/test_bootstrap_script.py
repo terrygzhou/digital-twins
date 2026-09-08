@@ -563,3 +563,23 @@ def test_embedding_model_healthcheck_fail_exit_0(
     assert "embedding" not in content, (
         f"embedding.endpoint should be UNSET in kb.local.yml; got: {content!r}"
     )
+
+
+def test_bootstrap_script_no_bash4_only_syntax(tmp_path):
+    """macOS /bin/bash is 3.2 (the `declare: [-afFirtx]` usage string is its
+    fingerprint): the script must parse and run under bash 3.2, so no
+    bash-4+ constructs — associative arrays (`declare -A`), global
+    `declare -g`, `mapfile`/`readarray`, or the `&>` redirection.
+    A 2026-09-08 macOS run died at `declare -A PORT_TO_SERVICE` (line 49).
+    """
+    script = REPO / "scripts" / "bootstrap-local.sh"
+    text = script.read_text(encoding="utf-8")
+    import re as _re
+    hits = []
+    if _re.search(r"declare\s+-[Ag]", text):
+        hits.append("declare -A/-g (bash 4.0+ only)")
+    if _re.search(r"\b(mapfile|readarray)\b", text):
+        hits.append("mapfile/readarray (bash 4.0+ only)")
+    if _re.search(r"&(?!&)\s*>|&\s*>", text):
+        hits.append("&> redirection (bash 4.0+ only; macOS bash 3.2 lacks it)")
+    assert not hits, "bash-4-only syntax in scripts/bootstrap-local.sh: " + "; ".join(hits)
