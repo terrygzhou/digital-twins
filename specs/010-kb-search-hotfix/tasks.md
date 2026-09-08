@@ -60,5 +60,7 @@ RED commit failing before the GREEN commit, per task.
   restart the local server; live `POST /api/kb/search` → 200 against
   the live Qdrant (owner with no points → `results: []` still proves
   the full path: embed → vector query → shape).
-- [ ] V3: ledger + tasks checkboxes synced; report to owner; re-ask the
+- [x] V3: ledger + tasks checkboxes synced; report to owner; re-ask the
   pending `twine upload dist/*` go-ahead (0.9.0 now includes the fix).
+  (Closed 2026-09-08: ledger synced at 9c798e9; tag v0.9.0 pushed; 0.9.0
+  uploaded to PyPI — see CHANGELOG 0.9.0 "First PyPI upload".)
