@@ -90,7 +90,7 @@ def serve_once_tick(db, config) -> dict:
             global config via :func:`merge_user_config` and passes that merged
             config to ``run_pipeline``. The global ``config`` is never mutated
             (SC-003 isolation at the serve level): two owners' merges are
-            independent, so alice's cap change never alters bob's run.
+            independent, so one owner's cap change never alters another's run.
 
     Returns:
         ``{"fired": [schedule id...], "skipped": [schedule id...],

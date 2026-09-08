@@ -152,3 +152,46 @@ def test_no_literal_usernames_in_multi_user_doc():
     assert not hits, (
         "literal usernames found in docs/multi-user.md:\n" + "\n".join(hits)
     )
+
+
+# Shipped web UI assets (the .py files are already covered by the
+# "digital_twins" directory entry; UI assets are non-Python).
+SHIPPED_UI_ASSETS = [
+    "digital_twins/web/static/index.html",
+    "digital_twins/web/static/style.css",
+]
+# Domain terms that legitimately appear in shipped code: `admin` (the role
+# name, C-4), `root` (CSS :root / URL root), `operator` (ops noun in the
+# stdio channel docstring). A concrete *identity* — terry, alice, bob,
+# johndoe, janedoe — is never intentional in code or UI.
+_DOMAIN_TERMS = {"admin", "root", "operator"}
+CONCRETE_USERNAMES = re.compile(
+    r"\b(terry|johndoe|janedoe|alice|bob)\b", re.IGNORECASE
+)
+
+
+def test_no_literal_usernames_in_shipped_code():
+    """NFR-13: no host-identity usernames in shipped code or UI assets.
+
+    The multi-user doc guard (T020) covers docs/multi-user.md; this one
+    covers the shipped code surface (digital_twins/**/*.py + web static
+    assets), where a username can only be a leak (docstring example,
+    comment, UI copy).  Domain terms (admin role, CSS :root, operator
+    noun) are allowed — concrete identity names are not.
+    """
+    files = []
+    for f in (REPO / "digital_twins").rglob("*.py"):
+        if f.is_file():
+            files.append(f)
+    for entry in SHIPPED_UI_ASSETS:
+        p = REPO / entry
+        if p.is_file():
+            files.append(p)
+    hits = []
+    for f in files:
+        for lineno, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            for m in CONCRETE_USERNAMES.finditer(line):
+                hits.append(f"{f.relative_to(REPO)}:{lineno}: {line.strip()} ({m.group(0)})")
+    assert not hits, (
+        "host-identity usernames found in shipped code/UI:\n" + "\n".join(hits)
+    )

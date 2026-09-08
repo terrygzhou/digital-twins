@@ -55,7 +55,7 @@ def build_content(messages, roles, max_chars: int = _MAX_CHARS) -> str:
 
 
 def project_label(dir_name: str) -> str:
-    """'--home-terry-proj-demo--' -> 'home/terry/proj/demo'."""
+    """'--home-dev-proj-demo--' -> 'home/dev/proj/demo'."""
     raw = dir_name.strip('-').replace('--', '/')
     raw = re.sub(r'[A-Z]', lambda m: '-' + m.group(0).lower(), raw)
     return raw.strip('/') or "(unknown project)"
