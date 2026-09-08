@@ -153,6 +153,8 @@ def _run_script(
     fake_config: Path,
     kb_config_dir: Path,
     extra_env: dict[str, str] | None = None,
+    args: list[str] | None = None,
+    stdin: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run the bootstrap script with the fake exec injected."""
     env = {
@@ -168,10 +170,12 @@ def _run_script(
     # Remove KB_CONFIG_DIR from real env if present
     env.pop("KB_CONFIG_DIR", None)
     env["KB_CONFIG_DIR"] = str(kb_config_dir)
+    cmd = [str(SCRIPT)] + (args or [])
     return subprocess.run(
-        [str(SCRIPT)],
+        cmd,
         capture_output=True,
         text=True,
+        input=stdin,
         env=env,
         timeout=30,
     )
@@ -610,3 +614,170 @@ def test_help_lists_docker_prerequisites():
     assert any("optional" in ln.lower() for ln in gpu_lines), (
         "help must state GPU is optional (no-GPU host: bundled llm skipped)"
     )
+
+
+# ---------------------------------------------------------------------------
+# --cloud mode (014): no Docker required — cloud-hosted endpoints
+# ---------------------------------------------------------------------------
+
+def test_cloud_mode_writes_cloud_endpoints_no_docker(
+    fake_exec, exec_log, fake_config, kb_config_dir
+):
+    """--cloud: zero container tooling calls; kb.local.yml carries the
+    cloud endpoints (required + optional keys, incl. neo4j credentials)."""
+    _write_config(fake_config, {})
+    result = _run_script(
+        fake_exec,
+        exec_log,
+        fake_config,
+        kb_config_dir,
+        extra_env={
+            "KB_QDRANT__URL": "https://q.example:6333",
+            "KB_NEO4J__URL": "https://n.example:7687",
+            "KB_NEO4J__USER": "svc",
+            "KB_NEO4J__PASSWORD": "secret",
+            "KB_LLM__ENDPOINT": "https://l.example/v1",
+            "KB_EMBEDDING__ENDPOINT": "https://e.example/v1",
+        },
+        args=["--cloud"],
+    )
+    assert result.returncode == 0, (
+        f"expected exit 0, got {result.returncode}; "
+        f"stderr={result.stderr!r}"
+    )
+    kb = _kb_local(kb_config_dir)
+    assert kb.exists(), "kb.local.yml must be written in cloud mode"
+    assert kb.read_text(encoding="utf-8") == (
+        "qdrant:\n"
+        "  url: https://q.example:6333\n"
+        "neo4j:\n"
+        "  url: https://n.example:7687\n"
+        "  user: svc\n"
+        "  password: secret\n"
+        "llm:\n"
+        "  endpoint: https://l.example/v1\n"
+        "embedding:\n"
+        "  endpoint: https://e.example/v1\n"
+        "\n"  # write_kb_local()'s trailing newline (same as local mode)
+    ), f"unexpected kb.local.yml content: {kb.read_text(encoding='utf-8')!r}"
+    # No external tooling at all: cloud mode must not touch docker,
+    # port probes, health curls, or the GPU probe.
+    entries = _exec_log_entries(exec_log)
+    tooling = [
+        e for e in entries if e and e[0] in ("docker", "ss", "netstat", "curl", "nvidia-smi")
+    ]
+    assert not tooling, f"cloud mode must not call container tooling: {tooling}"
+    assert "no docker" in result.stderr.lower(), (
+        f"cloud mode should say no Docker was required; stderr={result.stderr!r}"
+    )
+
+
+def test_cloud_mode_omits_optional_keys_when_unset(
+    fake_exec, exec_log, fake_config, kb_config_dir
+):
+    """Only the three required env vars set: no embedding/user/password keys."""
+    _write_config(fake_config, {})
+    result = _run_script(
+        fake_exec,
+        exec_log,
+        fake_config,
+        kb_config_dir,
+        extra_env={
+            "KB_QDRANT__URL": "https://q.example:6333",
+            "KB_NEO4J__URL": "https://n.example:7687",
+            "KB_LLM__ENDPOINT": "https://l.example/v1",
+        },
+        args=["--cloud"],
+    )
+    assert result.returncode == 0, f"stderr={result.stderr!r}"
+    text = _kb_local(kb_config_dir).read_text(encoding="utf-8")
+    assert "embedding:" not in text, f"embedding section must be omitted: {text!r}"
+    assert "user:" not in text and "password:" not in text, (
+        f"neo4j credentials must be omitted when unset: {text!r}"
+    )
+
+
+def test_cloud_mode_missing_endpoints_exits_5(
+    fake_exec, exec_log, fake_config, kb_config_dir
+):
+    """No env values, EOF on stdin -> exit 5, each missing var named,
+    kb.local.yml left unwritten."""
+    _write_config(fake_config, {})
+    result = _run_script(
+        fake_exec,
+        exec_log,
+        fake_config,
+        kb_config_dir,
+        extra_env={"KB_QDRANT__URL": "", "KB_NEO4J__URL": "", "KB_LLM__ENDPOINT": ""},
+        args=["--cloud"],
+        stdin="",
+    )
+    assert result.returncode == 5, (
+        f"expected exit 5, got {result.returncode}; stderr={result.stderr!r}"
+    )
+    for var in ("KB_QDRANT__URL", "KB_NEO4J__URL", "KB_LLM__ENDPOINT"):
+        assert var in result.stderr, f"remediation must name {var}"
+    assert not _kb_local(kb_config_dir).exists(), (
+        "kb.local.yml must NOT be written when required endpoints are missing"
+    )
+
+
+def test_cloud_mode_prompts_on_stdin(
+    fake_exec, exec_log, fake_config, kb_config_dir
+):
+    """Unset env vars are prompted on stdin; piped answers are written."""
+    _write_config(fake_config, {})
+    result = _run_script(
+        fake_exec,
+        exec_log,
+        fake_config,
+        kb_config_dir,
+        extra_env={"KB_QDRANT__URL": "", "KB_NEO4J__URL": "", "KB_LLM__ENDPOINT": ""},
+        args=["--cloud"],
+        stdin="https://q.example:6333\nhttps://n.example:7687\nhttps://l.example/v1\n",
+    )
+    assert result.returncode == 0, f"stderr={result.stderr!r}"
+    text = _kb_local(kb_config_dir).read_text(encoding="utf-8")
+    assert "url: https://q.example:6333" in text
+    assert "url: https://n.example:7687" in text
+    assert "endpoint: https://l.example/v1" in text
+    assert "KB_QDRANT__URL not set" in result.stdout, (
+        f"prompt must name the variable; stdout={result.stdout!r}"
+    )
+
+
+def test_cloud_and_status_are_mutually_exclusive(
+    fake_exec, exec_log, fake_config, kb_config_dir
+):
+    _write_config(fake_config, {})
+    result = _run_script(
+        fake_exec,
+        exec_log,
+        fake_config,
+        kb_config_dir,
+        args=["--cloud", "--status"],
+    )
+    assert result.returncode == 1, f"stderr={result.stderr!r}"
+    assert "mutually exclusive" in result.stderr.lower()
+    assert not _kb_local(kb_config_dir).exists()
+
+
+def test_help_documents_cloud_mode():
+    """:--help must advertise --cloud (no Docker required), the endpoint
+    env vars, and exit 5 — so the precondition story is complete before
+    anyone runs anything."""
+    result = subprocess.run(
+        [str(SCRIPT), "--help"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "BOOTSTRAP_EXEC": ""},
+    )
+    assert result.returncode == 0
+    out = result.stdout
+    assert "--cloud" in out, "help must advertise the --cloud option"
+    for var in ("KB_QDRANT__URL", "KB_NEO4J__URL", "KB_LLM__ENDPOINT"):
+        assert var in out, f"help must name {var}"
+    assert "exit 5" in out, "help must state the cloud-missing-endpoints exit code"
+    assert "no docker" in out.lower(), "help must say cloud mode needs no Docker"
+    # The existing local-mode prerequisite pins must stay intact:
+    assert "Prerequisites" in out

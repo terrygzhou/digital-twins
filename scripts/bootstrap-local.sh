@@ -10,6 +10,8 @@
 #   exit 2  port conflict on 6333/7474/7687/8000/8080 (service named)
 #   exit 3  health timeout (services named, `docker compose logs` hint printed)
 #   exit 4  config write error (file left unwritten or untouched)
+#   exit 5  cloud mode (--cloud): a required endpoint is not provided
+#           (the missing KB_* variable is named; no Docker is required)
 #
 # Host-neutral (NFR-13): no host paths, usernames, or interpreter pins.
 # No image refs (SC-005): docker-compose.yml is the single source of image
@@ -65,6 +67,7 @@ EXIT_DOCKER=1
 EXIT_PORT=2
 EXIT_HEALTH=3
 EXIT_CONFIG=4
+EXIT_CLOUD=5
 
 # --- helpers -----------------------------------------------------------------
 
@@ -177,6 +180,87 @@ write_kb_local() {
   return 0
 }
 
+# --- cloud mode (014) ----------------------------------------------------------------
+# No Docker: write kb.local.yml pointing at cloud-hosted endpoints.  The
+# required values come from env (KB_QDRANT__URL, KB_NEO4J__URL,
+# KB_LLM__ENDPOINT); optional: KB_EMBEDDING__ENDPOINT, KB_NEO4J__USER,
+# KB_NEO4J__PASSWORD.  An unset required value is prompted on stdin;
+# EOF/empty -> exit 5 with the missing variable named.  The same
+# write_kb_local() semantics apply: only when absent, diff+warn on
+# disagreement.
+cloud_bootstrap() {
+  local target="$1"
+
+  local qdrant_url="${KB_QDRANT__URL:-}"
+  local neo4j_url="${KB_NEO4J__URL:-}"
+  local llm_endpoint="${KB_LLM__ENDPOINT:-}"
+  local embed_endpoint="${KB_EMBEDDING__ENDPOINT:-}"
+  local neo4j_user="${KB_NEO4J__USER:-}"
+  local neo4j_password="${KB_NEO4J__PASSWORD:-}"
+
+  # Prompt for the required values that are unset (read -r: EOF -> "").
+  if [ -z "$qdrant_url" ]; then
+    echo "bootstrap: KB_QDRANT__URL not set. Enter the cloud qdrant URL:"
+    IFS= read -r qdrant_url || qdrant_url=""
+  fi
+  if [ -z "$neo4j_url" ]; then
+    echo "bootstrap: KB_NEO4J__URL not set. Enter the cloud neo4j URL (bolt:// or http(s)://):"
+    IFS= read -r neo4j_url || neo4j_url=""
+  fi
+  if [ -z "$llm_endpoint" ]; then
+    echo "bootstrap: KB_LLM__ENDPOINT not set. Enter the cloud LLM endpoint (OpenAI-compatible base, e.g. .../v1):"
+    IFS= read -r llm_endpoint || llm_endpoint=""
+  fi
+
+  local missing=""
+  if [ -z "$qdrant_url" ]; then
+    missing="$missing KB_QDRANT__URL"
+  fi
+  if [ -z "$neo4j_url" ]; then
+    missing="$missing KB_NEO4J__URL"
+  fi
+  if [ -z "$llm_endpoint" ]; then
+    missing="$missing KB_LLM__ENDPOINT"
+  fi
+  if [ -n "$missing" ]; then
+    echo "bootstrap: ERROR: cloud endpoint(s) not provided:$missing" >&2
+    echo "bootstrap: remediation: export the missing variable(s) and re-run 'bootstrap-local.sh --cloud' (or answer the prompts), or run without --cloud for the local Docker stack." >&2
+    return "$EXIT_CLOUD"
+  fi
+
+  local kb_content=""
+  kb_content+="qdrant:
+  url: $qdrant_url
+neo4j:
+  url: $neo4j_url
+"
+  if [ -n "$neo4j_user" ]; then
+    kb_content+="  user: $neo4j_user
+"
+  fi
+  if [ -n "$neo4j_password" ]; then
+    kb_content+="  password: $neo4j_password
+"
+  fi
+  kb_content+="llm:
+  endpoint: $llm_endpoint
+"
+  if [ -n "$embed_endpoint" ]; then
+    kb_content+="embedding:
+  endpoint: $embed_endpoint
+"
+  fi
+
+  local write_rc=0
+  write_kb_local "$target" "$kb_content" || write_rc=$?
+  if [ "$write_rc" -ne 0 ]; then
+    return "$EXIT_CONFIG"
+  fi
+
+  echo "bootstrap: cloud mode: no Docker required — $target now points at the cloud endpoints." >&2
+  return 0
+}
+
 # --- main --------------------------------------------------------------------
 
 main() {
@@ -184,16 +268,37 @@ main() {
   local mode="bootstrap"
   for arg in "$@"; do
     case "$arg" in
-      --status) mode="status" ;;
+      --status)
+        if [ "$mode" = "cloud" ]; then
+          echo "bootstrap: --cloud and --status are mutually exclusive (use --help)" >&2
+          return 1
+        fi
+        mode="status"
+        ;;
+      --cloud)
+        if [ "$mode" = "status" ]; then
+          echo "bootstrap: --cloud and --status are mutually exclusive (use --help)" >&2
+          return 1
+        fi
+        mode="cloud"
+        ;;
       --help|-h)
         cat <<'HELP'
-Usage: bootstrap-local.sh [--status | --help]
+Usage: bootstrap-local.sh [--status | --cloud | --help]
 
 One invocation on a clean Docker host brings up the full local stack
 (qdrant, neo4j, llm, embedding-model, digital-twins) and writes a
 machine-local kb.local.yml with the local endpoints.
 
-Prerequisites (checked up front; any missing -> exit 1, remediation printed):
+Cloud mode (--cloud): no Docker required.  For hosts that run the
+services in the cloud (or elsewhere), --cloud skips every container step
+and just writes kb.local.yml with the cloud endpoints:
+  required  KB_QDRANT__URL, KB_NEO4J__URL, KB_LLM__ENDPOINT
+  optional  KB_EMBEDDING__ENDPOINT, KB_NEO4J__USER, KB_NEO4J__PASSWORD
+An unset required value is prompted on stdin; still missing -> exit 5.
+
+Prerequisites (default local mode only, checked up front; any missing ->
+exit 1, remediation printed):
   - docker CLI present, and its daemon reachable (start the daemon /
     Docker Desktop if `docker info` fails).
   - docker compose plugin (v2) or docker-compose (classic).
@@ -202,6 +307,9 @@ Prerequisites (checked up front; any missing -> exit 1, remediation printed):
 
 Options:
   --status   Show per-service status only; no writes, no pulls, no builds.
+             (local Docker stack; mutually exclusive with --cloud)
+  --cloud    No Docker: write kb.local.yml with cloud endpoints (see
+             above).  Exits 5 when a required endpoint is missing.
   --help     Show this help.
 
 Environment overrides:
@@ -229,6 +337,13 @@ HELP
   local kb_dir="${KB_CONFIG_DIR:-$HOME/.config/digital-twins}"
   local kb_target="$kb_dir/kb.local.yml"
   local timeout_s="${BOOTSTRAP_TIMEOUT_S:-600}"
+
+  # --- 0) cloud mode: no Docker required; write cloud endpoints and stop ---
+  if [ "$mode" = "cloud" ]; then
+    local cloud_rc=0
+    cloud_bootstrap "$kb_target" || cloud_rc=$?
+    return "$cloud_rc"
+  fi
 
   # --- 1) docker + compose detection (exit 1 on failure) ---
   local rc=0
