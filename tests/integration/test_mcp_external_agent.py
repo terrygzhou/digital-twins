@@ -421,11 +421,15 @@ def test_kb_schedule_run_success(ctx_alice, qdrant, tmp_path, monkeypatch):
     assert data["agent_kind"] == "external-agent"
     # Audit row exists with trigger='mcp' + scheduled_by=caller:
     rows = ctx_alice.db.execute(
-        "SELECT trigger, scheduled_by, status FROM audit_runs "
+        "SELECT trigger, scheduled_by, status, per_source_counts FROM audit_runs "
         "WHERE trigger='mcp'"
     ).fetchall()
     assert len(rows) >= 1
     assert rows[0][1] == "alice@example.com"
+    # D6: agent_kind is stamped onto the audit row's per_source_counts JSON.
+    import json as _json
+    stamped = _json.loads(rows[0][3]) if rows[0][3] else {}
+    assert stamped.get("agent_kind") == "external-agent"
 
 
 def test_kb_schedule_run_source_disabled(ctx_alice):
@@ -445,7 +449,6 @@ def test_kb_schedule_run_source_disabled(ctx_alice):
 
 def test_kb_schedule_run_failure(ctx_alice, monkeypatch):
     """Pipeline raises → run_failed error code + failed audit row (R11)."""
-    import json as _json
     from digital_twins.scheduler.schedules import create_schedule
     sched = create_schedule(db=ctx_alice.db, owner="alice@example.com",
                             source="fs", preset="daily")
@@ -1040,3 +1043,96 @@ def test_http_non_object_body(db, alice_token, tmp_path, monkeypatch):
     server.shutdown()
     server.server_close()
     t.join(timeout=5)
+
+
+def test_http_reader_ingest_denied(db, carol, carol_session, tmp_path,
+                                   monkeypatch):
+    """Reader token on kb_ingest → 200 + permission_denied (body-level gate).
+
+    The HTTP layer does NOT map the dispatch-level ``permission_denied``
+    to a 403; it returns HTTP 200 with the error payload.  The 403 path
+    at http.py:122-131 only fires when the account no longer exists
+    (a race between auth and role lookup).  A live reader account
+    therefore gets 200 + permission_denied.
+    """
+    server = mcp_http.serve(db, port=0,
+                            service_account_email="system",
+                            config={"sources": {"fs": {"enabled": True}}})
+    port = server.server_address[1]
+    import threading
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    url = f"http://127.0.0.1:{port}/mcp"
+    import urllib.request
+    req = urllib.request.Request(
+        url,
+        data=json.dumps({"tool": "kb_ingest", "args": {}}).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {carol_session}",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        assert resp.status == 200
+        body = json.loads(resp.read().decode("utf-8"))
+    assert body["ok"] is False
+    assert body["error"]["code"] == "permission_denied"
+    assert "trigger_run" in body["error"]["message"]
+    server.shutdown()
+    server.server_close()
+    t.join(timeout=5)
+
+
+def test_http_revoked_session_401(db, carol, tmp_path, monkeypatch):
+    """Revoked session token → 401 unauthorized.
+
+    ``verify_session`` returns None for a revoked token (auth.py:250-251),
+    so the authenticator maps it to the unknown-credential case → 401.
+    The 403 path (auth.py:73-83) only fires for a *live* credential whose
+    account has since been deleted (``get_role`` returns None).
+    """
+    from digital_twins.auth import create_session, revoke_session
+    session_tok, _ = create_session(db, carol)
+    revoke_session(db, session_tok)
+    server = mcp_http.serve(db, port=0,
+                            service_account_email="system")
+    port = server.server_address[1]
+    import threading
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    url = f"http://127.0.0.1:{port}/mcp"
+    import urllib.request
+    import urllib.error
+    req = urllib.request.Request(
+        url,
+        data=json.dumps({"tool": "kb_schedule_list", "args": {}}).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {session_tok}",
+        },
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req, timeout=10)
+    assert exc.value.code == 401
+    body = json.loads(exc.value.read().decode("utf-8"))
+    assert body["error"]["code"] == "unauthorized"
+    server.shutdown()
+    server.server_close()
+    t.join(timeout=5)
+
+
+def test_stdio_json_array_body(db, alice, alice_token, monkeypatch):
+    """stdio request that is a JSON array → internal_error."""
+    monkeypatch.delenv("DT_SERVICE_TOKEN", raising=False)
+    monkeypatch.setenv("DT_PERSONAL_TOKEN", alice_token)
+    in_stream = io.StringIO(json.dumps(["1", "2", "3"]) + "\n")
+    out_stream = io.StringIO()
+    mcp_stdio.serve(in_stream, out_stream, db,
+                    service_account_email="system",
+                    config={"sources": {}})
+    parsed = json.loads(out_stream.getvalue().strip())
+    assert parsed["ok"] is False
+    assert parsed["error"]["code"] == "internal_error"
+    assert "JSON object" in parsed["error"]["message"]
