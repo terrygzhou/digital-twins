@@ -5,11 +5,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-21
+
+### Added
+
+- **Install-path hardening**: compose file shipped in the wheel so `setup`
+  works from a plain `pip install` (no git checkout required);
+  `llm`/`embedding-model` ports published for host-side CLI access
+
 ### Fixed
 
 - **embedding-model compose service (A5)**: the reference service now runs a
   deterministic 384-dim embedding stand-in with a working healthcheck;
-  digital-twins image tag bumped 0.5.0 → 0.9.0
+  digital-twins image tag bumped 0.5.0 → 0.10.0
 
 ## [0.9.0] - 2026-08-31
 
