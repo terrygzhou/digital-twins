@@ -25,10 +25,12 @@ and the top-level run_setup() composes them.
 
 from __future__ import annotations
 
+import importlib.resources
 import os
 import secrets
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -155,8 +157,33 @@ def _gpu_present() -> bool:
         return False
 
 
-def _docker_compose(args: list, compose_file: str = "docker-compose.yml") -> int:
-    """Run `docker compose -f <file> <args>`; return the exit code."""
+def _resolve_compose_file() -> str:
+    """Locate the compose file: CWD (git checkout) or the shipped package
+    copy (plain pip install). The package copy is extracted to a stable
+    temp path so `docker compose -f` can use it.
+
+    Returns a path string that exists on disk.
+    """
+    cwd_path = Path("docker-compose.yml")
+    if cwd_path.is_file():
+        return str(cwd_path)
+    # Shipped copy: digital_twins/compose/docker-compose.yml (force-included
+    # in the wheel via pyproject.toml).
+    pkg_file = importlib.resources.files("digital_twins.compose") / "docker-compose.yml"
+    # Copy to a stable, host-writable temp location (docker compose needs a
+    # real file path, not a zip-entry URI).
+    tmp = Path(tempfile.gettempdir()) / "digital-twins-compose.yml"
+    tmp.write_text(pkg_file.read_text(encoding="utf-8"), encoding="utf-8")
+    return str(tmp)
+
+
+def _docker_compose(args: list, compose_file: str | None = None) -> int:
+    """Run `docker compose -f <file> <args>`; return the exit code.
+
+    compose_file: explicit path; when None, resolved via _resolve_compose_file().
+    """
+    if compose_file is None:
+        compose_file = _resolve_compose_file()
     result = subprocess.run(
         ["docker", "compose", "-f", compose_file, *args],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -186,10 +213,12 @@ def run_local_stack(prompt: Callable = click.confirm,
     Returns True when the stack is up (or when it was already up and the
     config file matched), False on any hard failure.
     """
-    # Pull + build only when something is not already running.
+    # Pull the backend images (qdrant + neo4j are pre-built; llm and
+    # embedding-model use standard images — no build step needed).
     _docker_compose(["pull", "qdrant", "neo4j"])
-    _docker_compose(["build", "digital-twins"])
-    up_services = ["qdrant", "neo4j", "embedding-model", "digital-twins"]
+    # digital-twins service is optional (the CLI runs on the host); only
+    # include it when the compose file was found in a git checkout.
+    up_services = ["qdrant", "neo4j", "embedding-model"]
     # GPU probe (mirror of bootstrap-local.sh: actually RUN `nvidia-smi -L`
     # and check for non-empty output — the binary can exist without a
     # working driver/GPU, and the no-GPU path must skip the bundled llm

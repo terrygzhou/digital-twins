@@ -33,6 +33,9 @@ digital-twins = "digital_twins.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["digital_twins"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"docker-compose.yml" = "digital_twins/compose/docker-compose.yml"
+
 [tool.hatch.version]
 path = "digital_twins/__init__.py"
 
