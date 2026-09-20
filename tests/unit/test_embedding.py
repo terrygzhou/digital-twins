@@ -61,3 +61,48 @@ def test_device_out_of_range_rejected_by_schema(tmp_path):
         "embedding:\n  device: tpu\n", encoding="utf-8")
     with pytest.raises(SchemaError, match="device"):
         load(cwd=tmp_path, config_dir=tmp_path)
+
+
+# --- 0.10.0 fail-fast paths (local-embedding extra) -----------------------
+
+def test_load_embedder_missing_extra_raises_with_remediation(monkeypatch):
+    """When sentence_transformers is not installed, load_embedder raises
+    LocalEmbedderError whose message names the extra and the endpoint
+    alternative (no raw ImportError traceback)."""
+    import digital_twins.ingest.embedding as emb
+
+    def _fake_import(name, *a, **kw):
+        raise ImportError("No module named 'sentence_transformers'")
+    # Block the sentence_transformers import path.
+    import builtins, sys
+    real_import = builtins.__import__
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+    def _guarded_import(name, *a, **kw):
+        if name == "sentence_transformers":
+            raise ImportError("No module named 'sentence_transformers'")
+        return real_import(name, *a, **kw)
+    monkeypatch.setattr(builtins, "__import__", _guarded_import, raising=False)
+
+    with pytest.raises(emb.LocalEmbedderError, match="local-embedding"):
+        emb.load_embedder()
+
+
+def test_load_embedder_download_failure_raises_with_remediation(monkeypatch):
+    """When SentenceTransformer construction fails (e.g. offline HF
+    download), load_embedder raises LocalEmbedderError naming the
+    endpoint alternative — not a raw traceback."""
+    import digital_twins.ingest.embedding as emb
+
+    class _FakeST:
+        def __init__(self, model, device="cpu"):
+            raise OSError("HTTPConnectionPool: Connection broken — offline")
+    monkeypatch.setattr(
+        emb, "SentenceTransformer", _FakeST, raising=False)
+    # Also make the module-level import succeed by injecting a fake module.
+    import sys, types
+    fake_mod = types.ModuleType("sentence_transformers")
+    fake_mod.SentenceTransformer = _FakeST
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_mod)
+
+    with pytest.raises(emb.LocalEmbedderError, match="KB_EMBEDDING__ENDPOINT"):
+        emb.load_embedder()

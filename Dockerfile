@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir --upgrade pip
 # Copy the package source and install via the hatchling build backend.
 WORKDIR /app
 COPY . .
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir .[local-embedding]
 
 # The package's state directory (KB_STATE_DIR default resolves here at runtime;
 # the config layer sets the actual path — this is just a writable volume mount

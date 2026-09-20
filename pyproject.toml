@@ -16,12 +16,17 @@ dependencies = [
   "python-dotenv>=1.0",
   "qdrant-client>=1.7",
   "neo4j>=5.0",
-  "sentence-transformers>=3.0",
-  "torch>=2.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Local in-process embedding (the pinned BGE model via sentence-transformers).
+# A ~5 GB install with the CUDA-bundled torch wheel on GPU hosts; on
+# CPU-only hosts install the CPU wheel first (see README):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install "digital-twins-kb[local-embedding]"
+# Endpoint mode (embedding.endpoint) needs neither of these.
+local-embedding = ["sentence-transformers>=3.0", "torch>=2.0"]
 # MCP SDK is an OPTIONAL extra (research D2): the 004 server speaks raw
 # JSON over stdio/HTTP, so it runs WITHOUT the mcp SDK. Clients that want
 # a real MCP client stack install the extra.

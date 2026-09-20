@@ -15,6 +15,7 @@ from digital_twins.config.schema import BUILTIN_SOURCES, get
 from digital_twins.state.db import connect
 from digital_twins.state.migrations import migrate
 from digital_twins.state.models import finish_audit_run, start_audit_run
+from digital_twins.ingest.embedding import LocalEmbedderError, EndpointEmbedderError
 
 # knobs init resolves: path, prompt label, hide input
 _ENDPOINT_PROMPTS = (
@@ -372,6 +373,12 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
             raise SystemExit(1)
         except (ConfigError, UnknownSourceError, CustomSourceError) as exc:
             raise SystemExit(f"config error: {exc}")
+        except LocalEmbedderError as exc:
+            click.echo(f"embedding unavailable: {exc}", err=True)
+            raise SystemExit(2)
+        except EndpointEmbedderError as exc:
+            click.echo(f"embedding endpoint error: {exc}", err=True)
+            raise SystemExit(2)
 
         for name in sorted(summary.counts):
             click.echo(f"{name}: {summary.counts[name]} item(s)")
@@ -382,7 +389,7 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
 
 
 def _make_embedder(cfg):
-    from digital_twins.ingest.embedding import load_embedder, build_endpoint_embedder
+    from digital_twins.ingest.embedding import build_endpoint_embedder, load_embedder
 
     # FR-003: endpoint-aware embedder when embedding.endpoint is set,
     # in-process pinned model otherwise (additive, unchanged default).
