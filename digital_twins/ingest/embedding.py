@@ -40,11 +40,37 @@ def resolve_device(device: str) -> str:
     )
 
 
+class LocalEmbedderError(Exception):
+    """In-process embedding is unavailable (extra not installed or model
+    download failed). The message carries the remediation line."""
+
+
 def load_embedder(model: str = DEFAULT_MODEL, device: str = "auto"):
-    """Load the pinned model on the resolved device (lazy heavy import)."""
-    from sentence_transformers import SentenceTransformer
+    """Load the pinned model on the resolved device (lazy heavy import).
+
+    Raises LocalEmbedderError with a remediation line when
+    sentence-transformers is not installed (the ``local-embedding``
+    extra) or the pinned model cannot be loaded/downloaded.
+    """
     model_dimension(model)  # fail fast on unpinned models
-    return SentenceTransformer(model, device=resolve_device(device))
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as exc:
+        raise LocalEmbedderError(
+            "in-process embedding needs the 'local-embedding' extra: "
+            "pip install 'digital-twins-kb[local-embedding]' — or set "
+            "embedding.endpoint (env KB_EMBEDDING__ENDPOINT) to an "
+            "OpenAI-compatible embedding endpoint"
+        ) from exc
+    try:
+        return SentenceTransformer(model, device=resolve_device(device))
+    except Exception as exc:
+        raise LocalEmbedderError(
+            f"could not load pinned embedding model {model!r} ({exc}); "
+            "ensure network access for the model download, or set "
+            "embedding.endpoint (env KB_EMBEDDING__ENDPOINT) to an "
+            "OpenAI-compatible embedding endpoint"
+        ) from exc
 
 
 class EndpointEmbedderError(Exception):
