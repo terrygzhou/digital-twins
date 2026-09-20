@@ -346,6 +346,195 @@ def test_health_check_failure_returns_exit_code_1(_isolate_config,
     assert rc == 1
 
 
+def test_skip_services_precedence_over_valid_config(_isolate_config,
+                                                    monkeypatch):
+    """B1 regression: --skip-services must win even when kb.local.yml is
+    valid — no docker probe, no cloud prompt, no service startup."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    # A valid local config: without skip_services the wizard would skip
+    # service startup anyway, but it must NOT probe docker. With
+    # skip_services the probe must not happen regardless.
+    (config_dir / "kb.local.yml").parent.mkdir(parents=True)
+    (config_dir / "kb.local.yml").write_text(
+        yaml.safe_dump({"qdrant": {"url": "http://q:6333"}}),
+        encoding="utf-8")
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "run_health_checks",
+                        lambda cfg: [_ok_check(n) for n in
+                                     ("qdrant", "neo4j", "llm", "embedding")])
+
+    def _no_probe(*a, **kw):
+        raise AssertionError("skip_services must not probe docker or cloud")
+    monkeypatch.setattr(setup_mod, "docker_available", _no_probe)
+    monkeypatch.setattr(setup_mod, "run_local_stack", _no_probe)
+    monkeypatch.setattr(setup_mod, "run_cloud_stack", _no_probe)
+
+    rc = setup_mod.run_setup(
+        prompt=lambda q: "unused",
+        confirm=lambda q: True,
+        echo=lambda msg: None,
+        skip_services=True)
+    assert rc == 0
+
+
+def test_skip_services_with_cloud_envs_still_no_service(_isolate_config,
+                                                        monkeypatch):
+    """--skip-services takes precedence over force_cloud + env vars:
+    even with KB_QDRANT__URL set, no cloud stack runs."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "run_health_checks",
+                        lambda cfg: [_ok_check(n) for n in
+                                     ("qdrant", "neo4j", "llm", "embedding")])
+    monkeypatch.setenv("KB_QDRANT__URL", "http://cloud-q:6333")
+    monkeypatch.setenv("KB_NEO4J__URL", "bolt://cloud-n:7687")
+    monkeypatch.setenv("KB_LLM__ENDPOINT", "http://cloud-llm/v1")
+
+    def _no_probe(*a, **kw):
+        raise AssertionError("skip_services must win over force_cloud")
+    monkeypatch.setattr(setup_mod, "docker_available", _no_probe)
+    monkeypatch.setattr(setup_mod, "run_local_stack", _no_probe)
+    monkeypatch.setattr(setup_mod, "run_cloud_stack", _no_probe)
+
+    rc = setup_mod.run_setup(
+        prompt=lambda q: "unused",
+        confirm=lambda q: True,
+        echo=lambda msg: None,
+        force_cloud=True,
+        skip_services=True)
+    assert rc == 0
+    # No kb.local.yml should have been written by the cloud path.
+    assert not (config_dir / "kb.local.yml").is_file()
+
+
+def test_cloud_empty_env_vars_fail_with_named_vars(_isolate_config,
+                                                    monkeypatch):
+    """M1 regression: env vars set to empty string are honored as
+    'set but empty' (no prompt fallthrough) and the gate names the exact
+    vars that are empty."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    prompts = []
+    monkeypatch.setenv("KB_QDRANT__URL", "http://q:6333")
+    monkeypatch.setenv("KB_NEO4J__URL", "")  # explicitly empty
+    monkeypatch.delenv("KB_LLM__ENDPOINT", raising=False)
+
+    # Call the real run_cloud_stack: qdrant from env, neo4j empty (no
+    # prompt), llm unset (prompt). The gate must fail on neo4j and name
+    # it; the prompt for llm must NOT have been reached.
+    prompt_calls = []
+    def fake_prompt(label):
+        prompt_calls.append(label)
+        return "http://llm-answered:8000/v1"
+    monkeypatch.setenv("KB_LLM__ENDPOINT", "")  # also empty
+    ok = setup_mod.run_cloud_stack(prompt_text=fake_prompt,
+                                    echo=lambda m: None)
+    assert ok is False
+    # No prompt should have been shown: all three vars were set (even if
+    # two are empty), so the gate runs against the empty values.
+    assert prompt_calls == []
+
+
+def test_cloud_unset_env_vars_prompt_and_write(_isolate_config,
+                                               monkeypatch):
+    """When the 3 required vars are unset, the prompts fire; the answered
+    values land in kb.local.yml (plus optional keys when set)."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    monkeypatch.delenv("KB_QDRANT__URL", raising=False)
+    monkeypatch.delenv("KB_NEO4J__URL", raising=False)
+    monkeypatch.delenv("KB_LLM__ENDPOINT", raising=False)
+    monkeypatch.delenv("KB_EMBEDDING__ENDPOINT", raising=False)
+    monkeypatch.delenv("KB_NEO4J__USER", raising=False)
+    monkeypatch.delenv("KB_NEO4J__PASSWORD", raising=False)
+    monkeypatch.setenv("KB_EMBEDDING__ENDPOINT", "http://embed:8080/v1")
+    monkeypatch.setenv("KB_NEO4J__USER", "neo4j-user")
+    monkeypatch.setenv("KB_NEO4J__PASSWORD", "neo4j-pw")
+
+    answers = iter([
+        "http://cloud-q:6333",
+        "bolt://cloud-n:7687",
+        "http://cloud-llm:8000/v1",
+    ])
+    ok = setup_mod.run_cloud_stack(prompt_text=lambda label: next(answers),
+                                   echo=lambda m: None)
+    assert ok is True
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["qdrant"]["url"] == "http://cloud-q:6333"
+    assert data["neo4j"]["url"] == "bolt://cloud-n:7687"
+    assert data["neo4j"]["user"] == "neo4j-user"
+    assert data["neo4j"]["password"] == "neo4j-pw"
+    assert data["llm"]["endpoint"] == "http://cloud-llm:8000/v1"
+    assert data["embedding"]["endpoint"] == "http://embed:8080/v1"
+
+
+def test_local_stack_no_gpu_omits_llm_and_embedding(_isolate_config,
+                                                    monkeypatch):
+    """No-GPU path: _gpu_present() False -> llm excluded from up_services,
+    written kb.local.yml omits llm.endpoint + embedding.endpoint."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    # No nvidia-smi binary: the _gpu_present probe reports False.
+    monkeypatch.setattr(setup_mod, "_gpu_present", lambda: False)
+    # Capture what up_services would be by looking at the compose args.
+    compose_args = []
+    def fake_compose(args, **kw):
+        compose_args.append(list(args))
+        return 0
+    monkeypatch.setattr(setup_mod, "_docker_compose", fake_compose)
+
+    ok = setup_mod.run_local_stack(prompt=lambda q: "unused",
+                                   echo=lambda m: None)
+    assert ok is True
+    # The up call's args should not include 'llm'.
+    up_call = [a for a in compose_args if a[0] == "up"]
+    assert up_call, "expected a 'docker compose up' call"
+    up_services = up_call[0][2:]
+    assert "llm" not in up_services
+    # kb.local.yml omits llm + embedding.
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert "llm" not in data
+    assert "embedding" not in data
+    assert "qdrant" in data
+    assert "neo4j" in data
+
+
+def test_local_stack_half_up_polls_survivors(_isolate_config, monkeypatch):
+    """M3 regression: when `docker compose up` fails (rc!=0) the
+    wizard still health-polls the mandatory services and, when they
+    are healthy, writes kb.local.yml and returns True (not False/exit 3)."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    monkeypatch.setattr(setup_mod, "_gpu_present", lambda: False)
+
+    def fake_compose(args, **kw):
+        # `up` fails; everything else succeeds.
+        return 1 if args[0] == "up" else 0
+    monkeypatch.setattr(setup_mod, "_docker_compose", fake_compose)
+    monkeypatch.setattr(setup_mod, "_poll_url", lambda url, **kw: True)
+
+    ok = setup_mod.run_local_stack(prompt=lambda q: "unused",
+                                   echo=lambda m: None)
+    assert ok is True
+    # kb.local.yml was written despite up failing.
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["qdrant"]["url"] == "http://localhost:6333"
+
+
 def test_create_admin_account_idempotent(_isolate_config, monkeypatch):
     """Two consecutive calls: first creates (returns the password), the
     second reads the existing row back (empty password, no second row)."""
@@ -368,6 +557,36 @@ def test_create_admin_account_idempotent(_isolate_config, monkeypatch):
     rows = _admin_rows(db)
     db.close()
     assert [r[0] for r in rows] == ["first@example.com"]
+
+
+def test_admin_created_when_first_row_is_reader(_isolate_config, monkeypatch):
+    """M5 regression: a pre-existing non-admin row (reader) does NOT count
+    as 'admin exists' — the wizard creates an admin alongside it."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    from digital_twins.accounts import create_account
+    create_account(db, "reader@example.com", "pw", role="reader")
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+
+    email, pw = setup_mod.create_admin_account(state_dir)
+    assert pw, "a fresh admin password must be generated even when a reader exists"
+    assert email != "reader@example.com"
+    # The reader row is untouched; an admin row now exists.
+    db = _fake_connect(state_dir)
+    rows = db.execute(
+        "SELECT email, role FROM accounts ORDER BY rowid").fetchall()
+    db.close()
+    by_email = {r[0]: r[1] for r in rows}
+    assert by_email["reader@example.com"] == "reader"
+    assert by_email[email] == "admin"
+    # The credentials file points at the new admin, not the reader.
+    cred = (state_dir / "admin-credentials.txt").read_text(encoding="utf-8")
+    assert f"email: {email}" in cred
+    assert "reader@example.com" not in cred
 
 
 def test_write_kb_local_leaves_existing_file_alone(_isolate_config):

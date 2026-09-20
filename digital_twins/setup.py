@@ -223,9 +223,20 @@ def run_local_stack(prompt: Callable = click.confirm,
         echo("embedding-model: UNHEALTHY — embedding falls back to the "
              "in-process default; the rest of the stack is kept.")
     if failed:
-        echo(f"ERROR: service(s) did not become healthy: {', '.join(failed)}")
-        echo("remediation: run 'docker compose logs <service>', then re-run setup.")
+        if up_failed:
+            echo("remediation: some services are up (re-run setup to "
+                 "finish); run 'docker compose logs <service>' for the "
+                 "failed ones.")
+        else:
+            echo("ERROR: service(s) did not become healthy: "
+                 f"{', '.join(failed)}")
+            echo("remediation: run 'docker compose logs <service>', "
+                 "then re-run setup.")
         return False
+    if up_failed:
+        echo("some services failed to start but the mandatory ones are "
+             "healthy — continuing with the config that points at what "
+             "is up.")
 
     content = _kb_local_content(local=True)
     # On no-GPU hosts the bundled llm/embedding are not part of the stack:
