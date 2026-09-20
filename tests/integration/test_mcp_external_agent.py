@@ -444,14 +444,23 @@ def test_kb_schedule_run_source_disabled(ctx_alice):
 
 
 def test_kb_schedule_run_failure(ctx_alice, monkeypatch):
-    """Pipeline raises → run_failed error code."""
+    """Pipeline raises → run_failed error code + failed audit row (R11)."""
+    import json as _json
     from digital_twins.scheduler.schedules import create_schedule
     sched = create_schedule(db=ctx_alice.db, owner="alice@example.com",
                             source="fs", preset="daily")
 
     import digital_twins.ingest.pipeline as pipeline_mod
 
-    def _failing_pipeline(*a, **kw):
+    def _failing_pipeline(config, db, qdrant, embedder, **kwargs):
+        # Mirror the real pipeline's exception-path contract (pipeline.py:254-256):
+        # start_audit_run → work → finish_audit_run("failed") → re-raise.
+        from digital_twins.state.models import start_audit_run, finish_audit_run
+        import uuid as _uuid
+        run_id = "mock-" + _uuid.uuid4().hex[:12]
+        start_audit_run(db, run_id, trigger=kwargs.get("trigger", "mcp"),
+                        scheduled_by=kwargs.get("scheduled_by", "system"))
+        finish_audit_run(db, run_id, "failed", {})
         raise RuntimeError("simulated pipeline crash")
 
     monkeypatch.setattr(pipeline_mod, "run_pipeline", _failing_pipeline)
@@ -461,6 +470,13 @@ def test_kb_schedule_run_failure(ctx_alice, monkeypatch):
     assert result["ok"] is False
     assert result["error"]["code"] == "run_failed"
     assert "simulated pipeline crash" in result["error"]["message"]
+    # R11: the pipeline's exception path wrote a `failed` audit row with trigger='mcp'.
+    rows = ctx_alice.db.execute(
+        "SELECT run_id, status, trigger FROM audit_runs WHERE trigger='mcp'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][1] == "failed"
+    assert rows[0][2] == "mcp"
 
 
 # ---------------------------------------------------------------------------
@@ -596,10 +612,10 @@ def test_kb_search_embedding_unavailable(ctx_alice, monkeypatch):
 def test_kb_search_limit_clamping(ctx_alice, qdrant):
     """Limit clamping: <1 → 1, >100 → 100, non-int → 5.
 
-    Seed 3 points, verify the effective limit is applied:
+    Seed 7 points so the effective limit is observable in the count:
       limit=0     → clamped to 1   → count == 1
-      limit=500   → clamped to 100 → count == 3 (only 3 exist)
-      limit="abc" → falls back to 5 → count == 3 (only 3 exist)
+      limit=500   → clamped to 100 → count == 7  (only 7 exist, not 100)
+      limit="abc" → falls back to 5 → count == 5
     """
     from qdrant_client.models import PointStruct
     qdrant.upsert(
@@ -609,7 +625,7 @@ def test_kb_search_limit_clamping(ctx_alice, qdrant):
                         payload={"text": f"doc {i}", "source_url": "https://x",
                                  "source": "fs", "chunk_index": 0,
                                  "owner_tag": "alice@example.com-ingest"})
-            for i in range(3)
+            for i in range(7)
         ],
     )
     r1 = _call(ctx_alice, "kb_search", {"query": "x", "limit": 0})
@@ -617,10 +633,10 @@ def test_kb_search_limit_clamping(ctx_alice, qdrant):
     assert r1["count"] == 1
     r2 = _call(ctx_alice, "kb_search", {"query": "x", "limit": 500})
     assert r2["ok"] is True
-    assert r2["count"] == 3
+    assert r2["count"] == 7
     r3 = _call(ctx_alice, "kb_search", {"query": "x", "limit": "abc"})
     assert r3["ok"] is True
-    assert r3["count"] == 3
+    assert r3["count"] == 5
 
 
 # ---------------------------------------------------------------------------
