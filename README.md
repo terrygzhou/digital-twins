@@ -15,21 +15,42 @@ digital-twins run --source fs  # your first ingest
 ```
 
 The `setup` wizard detects the backend: when Docker is available it offers
-to start the bundled local stack (qdrant + neo4j + embedding-model) and
-writes `kb.local.yml` for you; when it is not, it prompts for the three
-cloud endpoints instead. In either case it creates the state DB, the first
-admin account (a generated password is shown once and written to
-`admin-credentials.txt` in your state dir — delete it after your first
-login), runs the health checks, and prints the next step.
+to start the bundled local stack (qdrant + neo4j + embedding-model, plus
+the bundled LLM when a GPU is present — a host with `nvidia-smi`
+installed but no usable GPU is treated as no-GPU, same as the
+bootstrap script) and writes `kb.local.yml` for you; when it is not, it
+prompts for the three cloud endpoints instead. In either case it creates
+the state DB, the first admin account (a generated password is shown
+once and written to `admin-credentials.txt` in your state dir, created
+with mode 600 — delete it after your first login), runs the health
+checks, and prints the next step. Re-running `setup` on a machine with a
+valid `kb.local.yml` skips service startup; `--skip-services` forces that
+skip regardless of config state.
 
-Flags:
-- `--cloud` — skip Docker detection, go straight to cloud mode.
-- `--skip-services` — assume the backend is already up; only do
-  init + admin + health checks.
+Flags (precedence: `--skip-services` wins over everything):
+- `--skip-services` — "I handle backends myself": never probe Docker,
+  never prompt for endpoints, never write `kb.local.yml`; only
+  init + admin + health checks run. Use on a re-run where the backend
+  is already up.
+- `--cloud` — skip Docker detection, go straight to cloud mode (prompts
+  for the three required endpoints). Set via env (`KB_QDRANT__URL`,
+  `KB_NEO4J__URL`, `KB_LLM__ENDPOINT`) or answer the prompts;
+  optional `KB_EMBEDDING__ENDPOINT`, `KB_NEO4J__USER`,
+  `KB_NEO4J__PASSWORD`.
 
-Exit codes: `0` all checks pass, `1` a check failed (a remediation line
-is printed), `3` the local stack failed to start, `5` cloud endpoints
-could not be resolved.
+Exit codes:
+- `0` all checks pass.
+- `1` a check failed (a remediation line names the failing endpoint
+  and how to fix it).
+- `3` the local stack's mandatory services did not become healthy
+  (a half-up stack where the survivors answer the health poll still
+  writes `kb.local.yml` and continues — you only get 3 when the
+  survivors also fail).
+- `5` cloud endpoints could not be resolved (the remediation names
+  exactly which of `KB_QDRANT__URL` / `KB_NEO4J__URL` /
+  `KB_LLM__ENDPOINT` are empty; an env var set to an empty string is
+  honored as "set but empty" — it fails the gate, it does not fall
+  through to the prompt).
 
 The detailed step-by-step below is still available if you want to do it
 manually, or if you need to re-do one specific step.
