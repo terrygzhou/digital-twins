@@ -163,7 +163,13 @@ write_kb_local() {
     if [ "$existing" != "$content" ]; then
       echo "bootstrap: WARNING: kb.local.yml already exists with different endpoints." >&2
       echo "bootstrap: diff (existing -> bootstrap would write):" >&2
-      diff -u <(printf '%s\n' "$existing") <(printf '%s\n' "$content") >&2 || true
+      # POSIX-portable diff (no process substitution): pipe the two blocks
+      # through diff -u - -.  All external commands route through run_cmd().
+      {
+        printf '%s\n' "$existing"
+        printf '\n---\n'
+        printf '%s\n' "$content"
+      } | run_cmd diff -u - - >&2 || true
       echo "bootstrap: WARNING: leaving kb.local.yml untouched (review the diff and adjust manually if needed)." >&2
       return 0
     fi
@@ -450,7 +456,11 @@ HELP
   run_cmd docker compose -f "$COMPOSE_FILE" up -d $up_services
 
   # --- 8) health poll loop ---
-  local failed_services=()
+  # POSIX-portable: use a plain space-separated string instead of a bash 4
+  # array (bash 3.2 on macOS lacks the `+=` array-append syntax; the
+  # `failed_services` string is only used for the error message at line 9
+  # of main() and never indexed).
+  local failed_services=""
   # Poll each service that is part of the stack we just started.
   local svc_to_check="qdrant neo4j"
   if [ "$gpu_present" -eq 1 ]; then
@@ -458,14 +468,14 @@ HELP
   fi
   # Poll qdrant first (fastest to come up).
   if ! health_poll "$QDRANT_URL"; then
-    failed_services+=("qdrant")
+    failed_services="${failed_services:+$failed_services }qdrant"
   fi
   if ! health_poll "$NEO4J_URL"; then
-    failed_services+=("neo4j")
+    failed_services="${failed_services:+$failed_services }neo4j"
   fi
   if [ "$gpu_present" -eq 1 ]; then
     if ! health_poll "$LLM_URL"; then
-      failed_services+=("llm")
+      failed_services="${failed_services:+$failed_services }llm"
     fi
   fi
 
@@ -486,8 +496,8 @@ HELP
   # --- 9) any non-llm service failed health within the timeout -> exit 3 ---
   # (llm failure is non-fatal: it is only present when a GPU is detected,
   #  and a GPU failure degrades to an external-LLM hint, not a hard exit.)
-  if [ "${#failed_services[@]}" -gt 0 ]; then
-    echo "bootstrap: ERROR: the following service(s) did not become healthy within ${timeout_s}s: ${failed_services[*]}" >&2
+  if [ -n "$failed_services" ]; then
+    echo "bootstrap: ERROR: the following service(s) did not become healthy within ${timeout_s}s: $failed_services" >&2
     echo "bootstrap: remediation: run 'docker compose -f $COMPOSE_FILE logs <service>' to inspect the failing service, then re-run." >&2
     return "$EXIT_HEALTH"
   fi
