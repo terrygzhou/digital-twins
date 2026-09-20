@@ -76,13 +76,19 @@ step tells you exactly what to type and what success looks like.
 python3 -m venv .venv
 . .venv/bin/activate
 
-# CPU-only hosts: PyPI's default `torch` wheel is ~5 GB with CUDA bundled.
-# Install the CPU wheel first, then the package:
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+# Base install is lightweight (no torch): endpoint-based embedding
+# (embedding.endpoint in kb.local.yml) and all non-embed commands work.
 pip install digital-twins-kb
+
+# Optional: in-process embedding (the pinned BGE model, no endpoint needed).
+# PyPI's default torch wheel is ~5 GB with CUDA bundled; on CPU-only hosts
+# install the CPU wheel first:
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install "digital-twins-kb[local-embedding]"
 ```
 
-On a GPU host you can skip the torch line and just `pip install digital-twins-kb`.
+On a GPU host skip the CPU-wheel line and just
+`pip install "digital-twins-kb[local-embedding]"`.
 
 From a git checkout instead of PyPI:
 
