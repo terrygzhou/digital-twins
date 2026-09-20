@@ -1,0 +1,24 @@
+# Keep the build context lean: COPY . . must still deliver the package
+# source (digital_twins/ + pyproject.toml) and the install metadata
+# (README.md / LICENSE, consumed by the hatchling build backend).
+.git
+.venv
+.venv-release
+.deploy-test
+.worktrees
+.specify
+.pi
+.codex
+.agents
+.github
+.pytest_cache
+.ruff_cache
+.superpowers
+specs
+docs
+tests
+scripts
+dist
+.env*
+.env.example
+docker-compose.yml

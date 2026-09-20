@@ -228,20 +228,29 @@ cloud_bootstrap() {
     return "$EXIT_CLOUD"
   fi
 
-  local kb_content=""
-  kb_content+="qdrant:
-  url: $qdrant_url
-neo4j:
+  # Build the neo4j: section as one contiguous block: accumulate its lines
+  # in a scratch variable, then append the whole section at once.  The
+  # optional user/password keys are omitted entirely when their env vars
+  # are unset (no empty keys).  The generated kb.local.yml content is
+  # byte-identical to what the previous fragment-by-fragment appends
+  # produced.
+  local neo4j_section="neo4j:
   url: $neo4j_url
 "
   if [ -n "$neo4j_user" ]; then
-    kb_content+="  user: $neo4j_user
+    neo4j_section+="  user: $neo4j_user
 "
   fi
   if [ -n "$neo4j_password" ]; then
-    kb_content+="  password: $neo4j_password
+    neo4j_section+="  password: $neo4j_password
 "
   fi
+
+  local kb_content=""
+  kb_content+="qdrant:
+  url: $qdrant_url
+"
+  kb_content+="$neo4j_section"
   kb_content+="llm:
   endpoint: $llm_endpoint
 "

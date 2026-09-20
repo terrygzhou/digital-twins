@@ -3,6 +3,14 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [Unreleased]
+
+### Fixed
+
+- **embedding-model compose service (A5)**: the reference service now runs a
+  deterministic 384-dim embedding stand-in with a working healthcheck;
+  digital-twins image tag bumped 0.5.0 → 0.9.0
+
 ## [0.9.0] - 2026-08-31
 
 ### Added
