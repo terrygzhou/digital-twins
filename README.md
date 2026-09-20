@@ -4,6 +4,36 @@ Environment-portable KB ingestion: layered config, fail-fast named sources, and
 deterministic dedup-safe ingest into user-supplied Qdrant + Neo4j. Built per
 `specs/001-package-foundation/` (see `AGENTS.md` for sources of truth).
 
+## Fast path (3 commands, new machine to first ingest)
+
+```bash
+pip install digital-twins-kb   # into a venv; CPU-only hosts: install the
+                                # CPU-only torch wheel first (see Step 1)
+digital-twins setup            # wizard: local Docker stack or cloud
+                                # endpoints + init + first admin account
+digital-twins run --source fs  # your first ingest
+```
+
+The `setup` wizard detects the backend: when Docker is available it offers
+to start the bundled local stack (qdrant + neo4j + embedding-model) and
+writes `kb.local.yml` for you; when it is not, it prompts for the three
+cloud endpoints instead. In either case it creates the state DB, the first
+admin account (a generated password is shown once and written to
+`admin-credentials.txt` in your state dir — delete it after your first
+login), runs the health checks, and prints the next step.
+
+Flags:
+- `--cloud` — skip Docker detection, go straight to cloud mode.
+- `--skip-services` — assume the backend is already up; only do
+  init + admin + health checks.
+
+Exit codes: `0` all checks pass, `1` a check failed (a remediation line
+is printed), `3` the local stack failed to start, `5` cloud endpoints
+could not be resolved.
+
+The detailed step-by-step below is still available if you want to do it
+manually, or if you need to re-do one specific step.
+
 ## Step-by-step onboarding (new machine, zero to first ingest)
 
 Everything below runs on a fresh machine. Follow the steps in order — each

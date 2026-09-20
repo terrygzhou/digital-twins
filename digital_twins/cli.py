@@ -167,6 +167,34 @@ def validate() -> None:
 
 
 @cli.command()
+@click.option("--cloud", "force_cloud", is_flag=True,
+              help="Force cloud mode: skip Docker detection and the local "
+                   "stack; prompt for the cloud endpoints instead.")
+@click.option("--skip-services", is_flag=True,
+              help="Assume the backend is already up; skip service startup "
+                   "and do init + admin account + health checks only.")
+def setup(force_cloud: bool, skip_services: bool) -> None:
+    """First-run wizard: backend (local Docker or cloud) + init + first
+    admin account + health report in one command.
+
+    Detects the backend: a valid kb.local.yml skips service startup; when
+    Docker is available the bundled local stack is offered (qdrant + neo4j
+    + embedding-model); otherwise it falls back to cloud mode with prompts
+    for the three required endpoints. The state DB is created and migrated,
+    the first admin account is created with a generated password (shown
+    once, also written to <state_dir>/admin-credentials.txt), and the
+    health checks run with a remediation line for any failing endpoint.
+
+    Exits 0 when all health checks pass; 1 on a failing check; 3 when the
+    local stack failed to start; 5 when cloud endpoints could not be
+    resolved.
+    """
+    from digital_twins.setup import run_setup
+    raise SystemExit(run_setup(force_cloud=force_cloud,
+                               skip_services=skip_services))
+
+
+@cli.command()
 @click.option("--source", "source_names", multiple=True,
               help="Only these source names (they must be enabled in config).")
 @click.option("--max-items", type=int, default=None,
