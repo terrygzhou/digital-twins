@@ -38,11 +38,11 @@ import urllib.request
 import click
 import yaml
 
+from digital_twins.accounts import create_account
 from digital_twins.config import load
 from digital_twins.config.loader import local_config_path
 from digital_twins.health import run_health_checks
 from digital_twins.state.db import connect
-from digital_twins.state.migrations import migrate
 
 # Local-stack endpoints written to kb.local.yml (mirror of the
 # bootstrap-local.sh constants — keep in sync with docker-compose.yml).
@@ -136,6 +136,25 @@ def write_kb_local(data: dict) -> Path:
 # Local-stack bootstrap (in-Python port of scripts/bootstrap-local.sh)
 # ---------------------------------------------------------------------------
 
+def _gpu_present() -> bool:
+    """True when a GPU is actually usable: `nvidia-smi -L` prints at least
+    one GPU. A host where nvidia-smi is installed but the driver is
+    missing (or no GPU is attached) reports False, matching the
+    bootstrap-local.sh contract (which runs the binary, not just checks
+    PATH)."""
+    if shutil.which("nvidia-smi") is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "-L"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+        return bool(result.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _docker_compose(args: list, compose_file: str = "docker-compose.yml") -> int:
     """Run `docker compose -f <file> <args>`; return the exit code."""
     result = subprocess.run(
@@ -171,16 +190,24 @@ def run_local_stack(prompt: Callable = click.confirm,
     _docker_compose(["pull", "qdrant", "neo4j"])
     _docker_compose(["build", "digital-twins"])
     up_services = ["qdrant", "neo4j", "embedding-model", "digital-twins"]
-    # GPU: probe nvidia-smi; when absent the bundled llm is intentionally
-    # skipped (the no-GPU path documented in the README).
-    gpu = shutil.which("nvidia-smi") is not None
+    # GPU probe (mirror of bootstrap-local.sh: actually RUN `nvidia-smi -L`
+    # and check for non-empty output — the binary can exist without a
+    # working driver/GPU, and the no-GPU path must skip the bundled llm
+    # service, not waste a 300s health poll on it).
+    gpu = _gpu_present()
     if gpu:
         up_services.append("llm")
     echo(f"starting local stack: {', '.join(up_services)}")
     rc = _docker_compose(["up", "-d", *up_services])
     if rc != 0:
-        echo("docker compose up failed — run 'docker compose logs' to inspect.")
-        return False
+        echo("docker compose up failed — some services may already be up "
+             "from a previous run; checking health anyway.")
+        # Do NOT give up: the stack may be partially up. Fall through to
+        # the health poll; if the mandatory services answer we still write
+        # kb.local.yml so the host config points at what is actually up.
+        up_failed = True
+    else:
+        up_failed = False
 
     # Health-poll the mandatory services (llm is non-fatal when skipped).
     failed = []
@@ -220,20 +247,44 @@ def run_local_stack(prompt: Callable = click.confirm,
 
 def run_cloud_stack(prompt_text: Callable = click.prompt,
                     echo: Callable = click.echo) -> bool:
-    """Prompt for cloud endpoints and write kb.local.yml."""
-    qdrant = os.environ.get("KB_QDRANT__URL") or prompt_text(
-        "Cloud Qdrant URL (e.g. https://host:6333)")
-    neo4j = os.environ.get("KB_NEO4J__URL") or prompt_text(
-        "Cloud Neo4j URL (bolt:// or https://)")
-    llm = os.environ.get("KB_LLM__ENDPOINT") or prompt_text(
-        "Cloud LLM endpoint (OpenAI-compatible base URL, e.g. https://host/v1)")
-    embedding = os.environ.get("KB_EMBEDDING__ENDPOINT") or ""
-    neo4j_user = os.environ.get("KB_NEO4J__USER") or ""
-    neo4j_password = os.environ.get("KB_NEO4J__PASSWORD") or ""
+    """Prompt for cloud endpoints and write kb.local.yml.
+
+    Env vars take precedence over prompts; a var set to an *empty string*
+    is honored as "set but empty" (no prompt), which then fails the
+    required-non-empty gate with a remediation naming exactly which vars
+    are empty. Unset vars fall through to the prompt.
+    """
+    def _env_or_prompt(var: str, label: str, required: bool) -> str:
+        value = os.environ.get(var)
+        if value is not None:
+            return value
+        if not required:
+            return ""
+        return prompt_text(label)
+    qdrant = _env_or_prompt("KB_QDRANT__URL",
+                            "Cloud Qdrant URL (e.g. https://host:6333)",
+                            required=True)
+    neo4j = _env_or_prompt("KB_NEO4J__URL",
+                           "Cloud Neo4j URL (bolt:// or https://)",
+                           required=True)
+    llm = _env_or_prompt("KB_LLM__ENDPOINT",
+                         "Cloud LLM endpoint (OpenAI-compatible base URL, "
+                         "e.g. https://host/v1)", required=True)
+    embedding = _env_or_prompt("KB_EMBEDDING__ENDPOINT",
+                               "Cloud embedding endpoint (optional)",
+                               required=False)
+    neo4j_user = _env_or_prompt("KB_NEO4J__USER",
+                                "Cloud Neo4j user (optional)", required=False)
+    neo4j_password = _env_or_prompt("KB_NEO4J__PASSWORD",
+                                    "Cloud Neo4j password (optional)",
+                                    required=False)
     if not (qdrant and neo4j and llm):
-        echo("ERROR: cloud endpoints must be non-empty "
-             "(set KB_QDRANT__URL / KB_NEO4J__URL / KB_LLM__ENDPOINT "
-             "or answer the prompts).")
+        empty = [name for name, value in (
+            ("KB_QDRANT__URL", qdrant), ("KB_NEO4J__URL", neo4j),
+            ("KB_LLM__ENDPOINT", llm)) if not value]
+        echo(f"ERROR: cloud endpoints must be non-empty — "
+             f"{' and '.join(empty)} is empty. Set it, or unset it and "
+             f"re-run to answer the prompt.")
         return False
     write_kb_local(_cloud_content(qdrant, neo4j, llm,
                                   embedding, neo4j_user, neo4j_password))
@@ -253,27 +304,36 @@ def create_admin_account(state_dir: Path,
                          email: Optional[str] = None) -> tuple:
     """Create the first admin account with a generated password.
 
-    Returns (email, password). Idempotent: when the accounts table is
-    non-empty, reads the first row back instead of creating a second admin.
+    Returns (email, password). Idempotent: when an admin account already
+    exists, reads it back (empty password) instead of creating a second
+    admin. A non-admin row (e.g. reader/scheduler) does NOT count as
+    "admin exists" — a new admin is created alongside it.
+
+    The generated password is shown once on stdout AND persisted to
+    <state_dir>/admin-credentials.txt (created with mode 600 atomically —
+    no world-readable window). Delete the file after first login.
     """
     email = os.environ.get("INIT_ADMIN_EMAIL") or email or ADMIN_EMAIL_DEFAULT
     conn = connect(state_dir)
     try:
-        first = conn.execute(
-            "SELECT email FROM accounts ORDER BY rowid LIMIT 1").fetchone()
-        if first is not None:
-            return first[0], ""  # already exists; no new password generated
-        password = secrets.token_urlsafe(16)
-        from digital_twins.accounts import create_account
-        create_account(conn, email, password)
-        # Persist the generated password so the user can find it later
-        # (chmod 600 — same directory as state.db).
+        existing_admin = conn.execute(
+            "SELECT email FROM accounts WHERE role='admin' "
+            "ORDER BY rowid LIMIT 1").fetchone()
+        if existing_admin is not None:
+            return existing_admin[0], ""  # admin exists; nothing to do
+        password = secrets.token_urlsafe(24)
+        create_account(conn, email, password, role="admin")
+        # Persist the generated password so the user can find it later.
+        # Open with O_CREAT|O_EXCL + mode 600: the file is never created
+        # world-readable, even briefly (no write→chmod window).
         cred_path = state_dir / "admin-credentials.txt"
-        cred_path.write_text(
-            f"email: {email}\npassword: {password}\n"
-            f"# written by 'digital-twins setup' — delete after first login.\n",
-            encoding="utf-8")
-        cred_path.chmod(0o600)
+        fd = os.open(str(cred_path),
+                      os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(
+                f"email: {email}\npassword: {password}\n"
+                f"# written by 'digital-twins setup' — delete after "
+                f"first login.\n")
         return email, password
     finally:
         conn.close()
@@ -291,11 +351,15 @@ def run_setup(prompt: Callable = click.prompt,
     """Run the full setup wizard. Returns the process exit code.
 
     force_cloud: skip docker detection, go straight to the cloud path.
-    skip_services: assume the backend is already up; only do init + admin
-    + validate (the "re-run" fast path).
+    skip_services: explicit "I handle backends myself" — takes precedence
+    over everything: never probe Docker, never prompt for endpoints, never
+    write kb.local.yml; only init + admin + validate run (the re-run fast
+    path).
     """
     # --- 1) backend mode ---------------------------------------------------
-    if force_cloud:
+    if skip_services:
+        echo("skipping service startup (--skip-services).")
+    elif force_cloud:
         if not run_cloud_stack(prompt, echo):
             return 5
     elif has_valid_local_config():
@@ -316,14 +380,12 @@ def run_setup(prompt: Callable = click.prompt,
             return 5
 
     # --- 2) init (state DB + migrations, no endpoint prompts) --------------
+    # connect() already migrates on open (state.db.connect); no second
+    # migrate call needed.
     cfg = load()
     state_dir = Path(cfg["state_dir"]).expanduser()
-    state_dir.mkdir(parents=True, exist_ok=True)
     conn = connect(state_dir)
-    try:
-        migrate(conn)
-    finally:
-        conn.close()
+    conn.close()
 
     # --- 3) first admin account --------------------------------------------
     admin_email, admin_pw = create_admin_account(state_dir)
