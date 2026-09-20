@@ -54,7 +54,7 @@ digital-twins --version
 ### Step 2 — Start the backend services (pick one)
 
 The tool ingests into **your** Qdrant + Neo4j and uses an OpenAI-compatible
-LLM + embedding endpoint. Two ways to get them:
+LLM + embedding endpoint. Three ways to get them:
 
 **Option A — bundled local stack (Docker), one command:**
 
@@ -71,9 +71,31 @@ Tear down with `docker compose down`.
 Exit codes: `0` healthy · `1` docker missing/down · `2` port conflict
 (names the service) · `3` health timeout (prints `docker compose logs` hint).
 
-**Option B — your own services:** skip the script and make sure Qdrant,
-Neo4j, the LLM and the embedding endpoint are reachable; you'll tell the
-tool where they live in Step 3.
+> **Note:** run this with `bash`, not `sh`. The script uses
+> `set -o pipefail` (line 19) which dash does not support; on systems where
+> `sh` is dash, `sh scripts/bootstrap-local.sh` will fail immediately.
+
+**Option B — cloud or external services (no Docker):**
+
+```bash
+bash scripts/bootstrap-local.sh --cloud
+```
+
+Set the required env vars (or answer the interactive prompts on stdin):
+
+- `KB_QDRANT__URL` — Qdrant URL (e.g. `https://host:6333`)
+- `KB_NEO4J__URL` — Neo4j URL (`bolt://` or `http(s)://`)
+- `KB_LLM__ENDPOINT` — OpenAI-compatible LLM base URL
+
+Optional: `KB_EMBEDDING__ENDPOINT`, `KB_NEO4J__USER`, `KB_NEO4J__PASSWORD`.
+
+Writes `~/.config/digital-twins/kb.local.yml` pointing at the cloud
+endpoints. No Docker required. Exit codes: `0` success · `5` a required
+endpoint was not provided (names the missing variable(s)).
+
+**Option C — your own services (manual):** skip the script and make sure
+Qdrant, Neo4j, the LLM and the embedding endpoint are reachable; you'll tell
+the tool where they live in Step 3.
 
 ### Step 3 — Initialise
 
