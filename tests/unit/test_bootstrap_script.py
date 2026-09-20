@@ -521,6 +521,51 @@ def test_kb_local_yml_disagreeing_endpoints_untouched(
     )
 
 
+def test_kb_local_rerun_no_spurious_warning(
+    fake_exec, exec_log, fake_config, kb_config_dir
+):
+    """Regression: a re-run must NOT warn 'different endpoints' when the file
+    on disk was written by this very script (its own printf '%s' writer).
+
+    Runs the script TWICE against the same fresh config dir.  The first run
+    writes kb.local.yml through the script's own writer (no pre-write), so any
+    trailing-newline asymmetry between the writer and the re-run comparison
+    would surface here as a spurious diff warning.
+    """
+    # No-GPU fake: nvidia-smi -> 127 (absent), curl -> healthy, docker ps -> empty.
+    _write_config(
+        fake_config,
+        {
+            "docker": {"exit": 0, "stdout": "", "docker_args": {}},
+            "nvidia-smi": 127,
+            "curl": {"exit": 0, "stdout": "healthy"},
+        },
+    )
+
+    # --- first run: fresh config dir, script writes kb.local.yml itself ---
+    result1 = _run_script(fake_exec, exec_log, fake_config, kb_config_dir)
+    assert result1.returncode == 0, (
+        f"first run: expected exit 0, got {result1.returncode}; "
+        f"stdout={result1.stdout!r}; stderr={result1.stderr!r}"
+    )
+    kb = _kb_local(kb_config_dir)
+    assert kb.exists(), "first run must write kb.local.yml"
+
+    # --- second run: same env, file untouched between runs ---
+    result2 = _run_script(fake_exec, exec_log, fake_config, kb_config_dir)
+    assert result2.returncode == 0, (
+        f"second run: expected exit 0, got {result2.returncode}; "
+        f"stdout={result2.stdout!r}; stderr={result2.stderr!r}"
+    )
+    combined2 = result2.stdout + result2.stderr
+    assert "different endpoints" not in combined2, (
+        f"spurious 'different endpoints' warning on re-run: {combined2!r}"
+    )
+    assert "already matches" in combined2, (
+        f"expected 'already matches; no write.' on re-run; got: {combined2!r}"
+    )
+
+
 def test_embedding_model_healthcheck_fail_exit_0(
     fake_exec, exec_log, fake_config, kb_config_dir
 ):
@@ -658,7 +703,6 @@ def test_cloud_mode_writes_cloud_endpoints_no_docker(
         "  endpoint: https://l.example/v1\n"
         "embedding:\n"
         "  endpoint: https://e.example/v1\n"
-        "\n"  # write_kb_local()'s trailing newline (same as local mode)
     ), f"unexpected kb.local.yml content: {kb.read_text(encoding='utf-8')!r}"
     # No external tooling at all: cloud mode must not touch docker,
     # port probes, health curls, or the GPU probe.

@@ -150,17 +150,24 @@ health_poll() {
 
 # Write kb.local.yml ONLY when the file is absent.  If it exists with
 # disagreeing endpoints, print diff + warning and leave it untouched.
+# The content blocks (local mode and cloud mode) carry their own trailing
+# newline; the writer must therefore use printf '%s' (NOT '%s\n') so the
+# on-disk file ends with a single \n and re-runs compare equal.
+# The comparison normalizes trailing whitespace on both sides (printf '%s'
+# strips trailing newlines) so a legacy file ending \n\n still matches.
 # Returns 0 on success (write or no-op), 4 on write error.
 write_kb_local() {
   local target="$1"
   local content="$2"
   if [ -f "$target" ]; then
     # File exists: compare the endpoint values we would write against the
-    # existing content.  If they disagree, print a diff + warning and return
-    # 0 (leave it untouched).
+    # existing content.  Trailing newlines are normalized on both sides
+    # (printf '%s') so a file written by this script (single trailing \n)
+    # compares equal to the in-memory content on re-run.  If they disagree,
+    # print a diff + warning and return 0 (leave it untouched).
     local existing
     existing="$(cat "$target")"
-    if [ "$existing" != "$content" ]; then
+    if [ "$(printf '%s' "$existing")" != "$(printf '%s' "$content")" ]; then
       echo "bootstrap: WARNING: kb.local.yml already exists with different endpoints." >&2
       echo "bootstrap: diff (existing -> bootstrap would write):" >&2
       # POSIX-portable diff (no process substitution): pipe the two blocks
@@ -176,9 +183,11 @@ write_kb_local() {
     echo "bootstrap: kb.local.yml already matches; no write." >&2
     return 0
   fi
-  # File absent: write it.
+  # File absent: write it.  printf '%s' (NOT '%s\n'): the content blocks
+  # already carry their own trailing newline, so '%s\n' would double it and
+  # every re-run would see a spurious "different endpoints" diff.
   mkdir -p "$(dirname "$target")"
-  if ! printf '%s\n' "$content" > "$target"; then
+  if ! printf '%s' "$content" > "$target"; then
     echo "bootstrap: ERROR: failed to write kb.local.yml (remediation: check permissions on the config dir, then re-run)." >&2
     return "$EXIT_CONFIG"
   fi
