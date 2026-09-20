@@ -6,7 +6,7 @@ tags: [knowledge, requirements, packaging, mcp, scheduler, ingestion, auth, port
 
 # Digital Twins — Portable, Multi-User Edition
 
-> **Status:** Draft v0.3 (2026-08-30) — owner decisions Q1/Q2/Q3/Q4/Q5/Q6/Q7/Q8/Q9/Q10/Q11 all locked in.
+> **Status:** Draft v0.4 (2026-09-09) — owner decisions Q1/Q2/Q3/Q4/Q5/Q6/Q7/Q8/Q9/Q10/Q11/Q12 all locked in.
 > **Owner:** project owner
 > **Base:** Extends `docs/business-requirements.md` (BR-1..BR-10, NFR-1..11).
 > This document defines NEW requirements (BR-11, BR-12) for turning the host-specific
@@ -363,26 +363,36 @@ This BR defines how those services are declared, configured, and hosted.
   BR-11.1.6 / feature 005) is the **preferred and supported** local
   deployment.
 - **BR-12.3.2** The package SHALL ship a **bootstrap script included in the
-  codebase** (e.g. `scripts/bootstrap-local.sh`) that, on a clean host with
-  Docker, performs the **image pull** (and the v1 user-builds equivalent for
-  images built from the in-repo Dockerfile) and the **initial setting**:
-  starts the local stack, waits for service health, and writes the
-  machine-local config (`kb.local.yml` / `.env`) with the local endpoints.
-  One script invocation on a clean Docker host MUST reach a healthy local
-  stack — no hand-authored compose files, no registry account required. The
-  script MUST be **idempotent**: re-running it against an already-healthy
-  stack MUST NOT re-pull, re-build, or corrupt state, and MUST report
-  per-service status.
+  codebase** (e.g. `scripts/bootstrap-local.sh`) that completes a first-run
+  setup on a clean host **without requiring Docker, a GPU, or any external
+  service**: no Qdrant, Neo4j, LLM, or embedding instance MAY need to exist
+  or be running for the script to succeed. The script performs the
+  **initial setting**: creates the machine-local config (`kb.local.yml` /
+  `.env`) scaffold, initializes state, and starts `digital-twins` itself.
+  Service **endpoints and access credentials are configured later, by the
+  user's choice** — in the **web admin UI** (BR-12.2.1) or through the
+  config layer — pointing at **either** the local Docker stack (BR-12.3.1,
+  started separately via `docker compose up` against the shipped
+  `docker-compose.yml`) **or** external / cloud-hosted endpoints. While a
+  service is unconfigured, `validate`/`health` MUST report it as
+  unconfigured with a remediation message pointing at the admin UI
+  (NFR-18). The script MUST be **idempotent**: re-running it against an
+  already-initialized host MUST NOT corrupt state, and MUST report
+  per-service status. *(Supersedes Q11's "one invocation → healthy local
+  stack" clause; the local Docker stack, image pins, and startup remain
+  unchanged — Q12, 2026-09-09.)*
 - **BR-12.3.3** The bootstrap script MUST satisfy the host-neutrality guard
   (NFR-13, `tests/integration/test_portability.py` extended to `scripts/`):
   no host paths, usernames, or interpreter pins in the shipped script.
-- **BR-12.3.4** A suitable GPU MUST NOT be a mandatory condition for
-  bootstrap. On a host without a suitable GPU, the script MUST bring up the
-  remaining services (Qdrant, Neo4j, embedding model), skip the bundled LLM
-  service with a clear warning, and direct the user to configure an external
-  LLM API (endpoint + credential via the config layer or the admin UI).
-  **BYO-LLM** beyond the standard endpoint + credential configuration knobs
-  is out of scope for v1 (owner refinement, 2026-08-30).
+- **BR-12.3.4** A suitable GPU MUST NOT be a mandatory condition for any
+  hosted setup. When the user brings up the **local Docker stack**, a host
+  without a suitable GPU runs the stack without the bundled LLM service
+  (Qdrant, Neo4j, and the embedding model only), with a clear warning
+  directing the user to configure an external LLM API (endpoint +
+  credential) via the config layer or the admin UI. **BYO-LLM** beyond the
+  standard endpoint + credential configuration knobs is out of scope for
+  v1 (owner refinement, 2026-08-30; restated 2026-09-09 under Q12 — the
+  GPU condition now applies to the local-stack option, not to bootstrap).
 
 #### BR-12.4 — Hosting-mode parity
 
@@ -397,13 +407,13 @@ This BR defines how those services are declared, configured, and hosted.
 
 | ID | Requirement |
 |----|-------------|
-| NFR-12 | **Portability** — a fresh host with Docker (or Python + the declared dependencies) and network access can install, init, and run a first ingestion run in < 30 minutes without reading source code. |
+| NFR-12 | **Portability** — a fresh host with Python + the declared dependencies (Docker optional) and network access can install, init, and — after the user configures service endpoints (local Docker or external/cloud, via the admin UI or the config layer) — run a first ingestion run in < 30 minutes without reading source code. |
 | NFR-13 | **Environment neutrality** — no host-specific path, username, or install location appears in the shipped code, config defaults, or docs. All such values are resolved through the config layer at runtime. |
 | NFR-14 | **Idempotent scheduling** — firing the same schedule twice (e.g. clock drift + manual re-run) does not duplicate points (NFR-1 still applies; the scheduler is one more trigger under BR-4). |
 | NFR-15 | **Upgrade safety** — an in-place upgrade (new package version over an existing install) MUST not lose state: `.kbstate/`, the account DB, and the config survive; a migration step (if schema changed) runs before the new code starts. |
 | NFR-16 | **Per-user auditability** — every run is attributable to a user (or `system`); a user can list only their own runs; an admin can list all. |
 | NFR-17 | **Credential scoping** — a user's personal token grants only that user's role; it MUST NOT grant access to another user's run history or config (NFR-5/11 extended to tokens). |
-| NFR-18 | **Service dependency visibility** — `validate`/`health` report reachability and auth status per hard service dependency (Qdrant, Neo4j, LLM, embedding model); a fresh GPU-capable Docker host reaches a fully healthy local stack by running only the shipped bootstrap script; a CPU-only host reaches a healthy partial stack (LLM excluded) with documented external-LLM guidance (BR-12.3.4). |
+| NFR-18 | **Service dependency visibility** — `validate`/`health` report status per hard service dependency (Qdrant, Neo4j, LLM, embedding model): **unconfigured / reachable / auth status**, each with a remediation message; unconfigured services point the user at the admin UI or config layer. The bootstrap script completes on a clean host with **no external service configured** (Q12). A user who starts the local Docker stack reaches a fully healthy stack (GPU-capable) or a documented partial stack with external-LLM guidance (GPU-absent, BR-12.3.4); a user who configures external / cloud endpoints reaches full health without Docker (BR-12.2). |
 
 ---
 
@@ -475,21 +485,28 @@ This BR defines how those services are declared, configured, and hosted.
       UI (admin-gated, secret-safe — values never echoed in UI responses,
       logs, or audit); after external configuration via the UI, `validate`
       passes and runs work (BR-12.2.1).
-- [ ] On a fresh GPU-capable Docker host, one invocation of the shipped
-      bootstrap script pulls/builds the pinned images, starts the full local
-      stack, writes the machine-local config, and `validate` passes —
-      re-running the script is a no-op on a healthy stack (BR-12.3, NFR-18,
-      Q11).
-- [ ] On a CPU-only Docker host, the same script brings up Qdrant / Neo4j /
-      embedding, skips the bundled LLM service with a warning + external-LLM
-      guidance, and exits 0 (BR-12.3.4).
+- [ ] On a clean host **without Docker and without any running external
+      service**, one invocation of the shipped bootstrap script completes the
+      first-run setup and exits 0, with every service reported **unconfigured**
+      (remediation: configure endpoints + secrets in the admin UI);
+      re-running the script is a no-op (BR-12.3.2, NFR-18, Q12).
+- [ ] The user then chooses the hosting mode and configures it later: either
+      starts the local Docker stack (`docker compose up`, pulling / building
+      the pinned images) or points the admin UI / config layer at external
+      / cloud endpoints + credentials; after either, `validate` passes and
+      ingestion runs (BR-12.2, BR-12.3, Q12).
+- [ ] When the user brings up the local Docker stack on a host without a
+      suitable GPU, the bundled LLM service is skipped with a warning +
+      external-LLM guidance and the remaining services are healthy
+      (BR-12.3.4).
 
 ---
 
 ## 5. Open Questions (need owner decision)
 
-All eleven questions are now **DECIDED** (Q1–Q10 on 2026-08-29, Q11 on
-2026-08-30). No open items remain; the document is ready to drive implementation.
+All twelve questions are now **DECIDED** (Q1–Q10 on 2026-08-29, Q11 on
+2026-08-30, Q12 on 2026-09-09). No open items remain; the document is
+ready to drive implementation.
 
 - **Q1 (BR-11.1.1):** ✅ **DECIDED 2026-08-29** — PyPI public, plus a web
   application surface so users can access the KB from anywhere (browser,
@@ -536,6 +553,22 @@ All eleven questions are now **DECIDED** (Q1–Q10 on 2026-08-29, Q11 on
   bootstrap; on CPU-only hosts the bundled LLM service is skipped and an
   external LLM API is configured via the config layer or admin UI; BYO-LLM
   beyond endpoint + credential knobs is out of scope (BR-12.3.4).
+  **Refined by Q12 (2026-09-09)**: bootstrap no longer requires Docker or
+  any external service — see Q12 (BR-12.3.2).
+
+- **Q12 (BR-12.3):** ✅ **DECIDED 2026-09-09** — **Bootstrap does not
+  require external services.** The shipped bootstrap script completes a
+  first-run setup on a clean host **without Docker, a GPU, or any
+  running/installed service instance**: no Qdrant / Neo4j / LLM / embedding
+  endpoint needs to be reachable, and none is started by the script.
+  Services are left **unconfigured**, and the user configures **endpoints
+  and secrets later — in the web admin UI** (or the config layer) —
+  choosing, per host, between the **local Docker stack** (still the
+  supported local deployment, BR-12.3.1, started separately via
+  `docker compose up`) and **external / cloud endpoints** (BR-12.2).
+  **Refines Q11**: supersedes its "one invocation → healthy local stack"
+  clause; the local stack, image pins, and no-GPU LLM-skip (BR-12.3.4) are
+  unchanged. Locked in BR-12.3.2 / NFR-12 / NFR-18.
 
 ---
 
