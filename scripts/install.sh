@@ -211,7 +211,10 @@ main() {
     [ "$CLOUD" -eq 1 ]         && setup_args+=("--cloud")
     [ "$SKIP_SERVICES" -eq 1 ] && setup_args+=("--skip-services")
     note "running the first-run wizard: $venv_bin setup${setup_args[*]:+ ${setup_args[*]}}"
-    run_cmd "$venv_bin" setup "${setup_args[@]}" || setup_rc=$?
+    # ${arr[@]+"$@"} is the set -u-safe empty-array expansion: it expands to
+    # the flags when setup_args is non-empty and to nothing when it is empty
+    # (bash 3.2 / macOS treats bare ${arr[@]} on an empty array as unbound).
+    run_cmd "$venv_bin" setup "${setup_args[@]+"${setup_args[@]}"}" || setup_rc=$?
     case "$setup_rc" in
       0) note "setup: all health checks passed." ;;
       1) note "setup: a health check failed (see the report above); re-run '$venv_bin setup' after fixing the endpoint." ;;
