@@ -448,6 +448,23 @@ bash scripts/uninstall-local.sh --skip-docker         # cloud/external hosts
 > `set -o pipefail`, which dash does not support (same caveat as the
 > bootstrap script).
 
+> **Warning — `--tear-down-volumes` on shared infrastructure:**
+> the shipped `docker-compose.yml` uses **named** volumes (`qdrant-data`,
+> `neo4j-data`, `digital-twins-state`). Docker volume names are **global**
+> across the whole daemon, not per compose project — if you run another
+> stack (yours or a teammate's) that references the same volume names,
+> `docker compose down -v` will delete **their** data too, not just the
+> local stack's. Check `docker volume inspect qdrant-data` before answering
+> "y" to the confirmation prompt.
+>
+> If your qdrant/neo4j are shared, long-lived, or bind-mounted from a host
+> path you maintain yourself: **don't run `--tear-down-volumes` at all** —
+> use the plain `bash scripts/uninstall-local.sh` (instances stopped, data
+> kept) and let whoever owns the data decide when to remove the volumes
+> manually. Note that `down -v` also does *not* delete local images
+> (`qdrant:1.9.7`, `neo4j:5.18-community`, the built `digital-twins` image);
+> that's a separate manual `docker rmi` step this script does not touch.
+
 What each flag does (all off by default):
 
 | Flag | Effect |
