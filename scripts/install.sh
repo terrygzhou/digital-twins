@@ -2,7 +2,7 @@
 # install.sh — remote one-liner installer (the `curl -fsSL …/install.sh | bash`
 # entry point). A non-technical user's whole journey is:
 #
-#   curl -fsSL https://raw.githubusercontent.com/<user>/digital-twins/<ref>/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/terrygzhou/digital-twins/main/scripts/install.sh | bash
 #
 # What it does, in order (each step is a no-op when its target is present,
 # so a re-run on an installed host just re-validates):
@@ -32,9 +32,9 @@
 #   5  `digital-twins setup` could not resolve cloud endpoints
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/<user>/digital-twins/<ref>/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/terrygzhou/digital-twins/main/scripts/install.sh | bash
 #   # or, with options, download first then run:
-#   curl -fsSL …/install.sh -o install.sh && bash install.sh [options]
+#   curl -fsSL https://raw.githubusercontent.com/terrygzhou/digital-twins/main/scripts/install.sh -o install.sh && bash install.sh [options]
 #
 #   Options:
 #     --extras LIST       Comma-separated extras (default: mcp). "" for base.
