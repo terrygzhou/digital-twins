@@ -405,8 +405,6 @@ def run_setup(prompt: Callable = click.prompt,
     elif has_valid_local_config():
         echo("kb.local.yml already has valid endpoints — skipping service "
              "startup (re-run 'digital-twins setup --cloud' to force cloud).")
-    elif skip_services:
-        pass
     elif docker_available() and confirm(
             "Docker is available. Start the bundled local stack? "
             "(qdrant + neo4j + embedding-model, ~1-2 min on first run)"):

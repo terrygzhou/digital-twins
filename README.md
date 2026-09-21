@@ -7,12 +7,22 @@ deterministic dedup-safe ingest into user-supplied Qdrant + Neo4j. Built per
 ## Fast path (3 commands, new machine to first ingest)
 
 ```bash
-pip install digital-twins-kb   # into a venv; CPU-only hosts: install the
-                                # CPU-only torch wheel first (see Step 1)
-digital-twins setup            # wizard: local Docker stack or cloud
-                                # endpoints + init + first admin account
+pip install digital-twins-kb   # into a venv
+digital-twins setup            # wizard: backend detection + init + admin + health
 digital-twins run --source fs  # your first ingest
 ```
+
+> **CPU-only host?** PyPI's default torch wheel is ~5 GB with CUDA bundled.
+> If you plan to use in-process embedding (`[local-embedding]` extra) on a
+> machine without a GPU, install the CPU wheel first:
+>
+> ```bash
+> pip install torch --index-url https://download.pytorch.org/whl/cpu
+> pip install "digital-twins-kb[local-embedding]"
+> ```
+>
+> On a GPU host skip the CPU-wheel line and just
+> `pip install "digital-twins-kb[local-embedding]"`.
 
 The `setup` wizard detects the backend: when Docker is available it offers
 to start the bundled local stack (qdrant + neo4j + embedding-model, plus
@@ -23,52 +33,39 @@ prompts for the three cloud endpoints instead. In either case it creates
 the state DB, the first admin account (a generated password is shown
 once and written to `admin-credentials.txt` in your state dir, created
 with mode 600 — delete it after your first login), runs the health
-checks, and prints the next step. Re-running `setup` on a machine with a
-valid `kb.local.yml` skips service startup; `--skip-services` forces that
-skip regardless of config state.
+checks, and prints the next step.
 
-Flags (precedence: `--skip-services` wins over everything):
-- `--skip-services` — "I handle backends myself": never probe Docker,
-  never prompt for endpoints, never write `kb.local.yml`; only
-  init + admin + health checks run. Use on a re-run where the backend
-  is already up.
-- `--cloud` — skip Docker detection, go straight to cloud mode (prompts
-  for the three required endpoints). Set via env (`KB_QDRANT__URL`,
-  `KB_NEO4J__URL`, `KB_LLM__ENDPOINT`) or answer the prompts;
-  optional `KB_EMBEDDING__ENDPOINT`, `KB_NEO4J__USER`,
-  `KB_NEO4J__PASSWORD`.
+Flags:
 
-Exit codes:
-- `0` all checks pass.
-- `1` a check failed (a remediation line names the failing endpoint
-  and how to fix it).
-- `3` the local stack's mandatory services did not become healthy
-  (a half-up stack where the survivors answer the health poll still
-  writes `kb.local.yml` and continues — you only get 3 when the
-  survivors also fail).
-- `5` cloud endpoints could not be resolved (the remediation names
-  exactly which of `KB_QDRANT__URL` / `KB_NEO4J__URL` /
-  `KB_LLM__ENDPOINT` are empty; an env var set to an empty string is
-  honored as "set but empty" — it fails the gate, it does not fall
-  through to the prompt).
+| Flag | Effect |
+|------|--------|
+| `--skip-services` | "I handle backends myself": never probe Docker, never prompt, never write `kb.local.yml`; only init + admin + health checks. **Takes precedence over `--cloud` and over a valid `kb.local.yml`** (a re-run where the backend is already up). |
+| `--cloud` | Skip Docker detection, go straight to cloud mode (prompts for the three required endpoints). Set via env (`KB_QDRANT__URL`, `KB_NEO4J__URL`, `KB_LLM__ENDPOINT`) or answer the prompts; optional `KB_EMBEDDING__ENDPOINT`, `KB_NEO4J__USER`, `KB_NEO4J__PASSWORD`. |
 
-The detailed step-by-step below is still available if you want to do it
-manually, or if you need to re-do one specific step.
+Exit codes: `0` all checks pass · `1` a check failed (remediation names
+the endpoint) · `3` local stack's mandatory services did not become
+healthy (a half-up stack where the survivors answer the health poll still
+writes `kb.local.yml` and continues — you only get 3 when the survivors
+also fail) · `5` cloud endpoints could not be resolved (the remediation
+names exactly which of `KB_QDRANT__URL` / `KB_NEO4J__URL` /
+`KB_LLM__ENDPOINT` are empty; an env var set to an empty string is
+honored as "set but empty" — it fails the gate, it does not fall through
+to the prompt).
 
-## Step-by-step onboarding (new machine, zero to first ingest)
+## Manual onboarding (reference)
 
-Everything below runs on a fresh machine. Follow the steps in order — each
-step tells you exactly what to type and what success looks like.
+The steps below are what `digital-twins setup` does for you. Use them
+if you want to do it manually, or to re-do one specific step.
 
-### Step 0 — Prerequisites
+### Prerequisites
 
 - **Python ≥ 3.11** (`python3 --version`)
-- Either **Docker** (for the bundled local stack, Step 2) **or** already-running
-  Qdrant + Neo4j + an OpenAI-compatible LLM + embedding endpoint you can point
-  at.
-- A GPU is optional — CPU-only hosts work (see the install note below).
+- Either **Docker** (for the bundled local stack) **or** already-running
+  Qdrant + Neo4j + an OpenAI-compatible LLM + embedding endpoint you can
+  point at.
+- A GPU is optional — CPU-only hosts work (see the install note above).
 
-### Step 1 — Install the package
+### Install the package
 
 ```bash
 # Create a venv (recommended: system Python on many distros is
@@ -81,14 +78,9 @@ python3 -m venv .venv
 pip install digital-twins-kb
 
 # Optional: in-process embedding (the pinned BGE model, no endpoint needed).
-# PyPI's default torch wheel is ~5 GB with CUDA bundled; on CPU-only hosts
-# install the CPU wheel first:
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+# See the CPU-only note in the fast path above.
 pip install "digital-twins-kb[local-embedding]"
 ```
-
-On a GPU host skip the CPU-wheel line and just
-`pip install "digital-twins-kb[local-embedding]"`.
 
 From a git checkout instead of PyPI:
 
@@ -108,7 +100,7 @@ digital-twins --version
 > command stays `digital-twins` and the import package stays `digital_twins`.
 > `python -m digital_twins` works too.
 
-### Step 2 — Start the backend services (pick one)
+### Start the backend services (pick one)
 
 The tool ingests into **your** Qdrant + Neo4j and uses an OpenAI-compatible
 LLM + embedding endpoint. Three ways to get them:
@@ -152,14 +144,13 @@ endpoint was not provided (names the missing variable(s)).
 
 **Option C — your own services (manual):** skip the script and make sure
 Qdrant, Neo4j, the LLM and the embedding endpoint are reachable; you'll tell
-the tool where they live in Step 3.
+the tool where they live in the init step below.
 
-### Step 3 — Initialise
+### Initialise
 
 ```bash
 digital-twins init
 ```
-
 
 The wizard prompts, in order:
 
@@ -177,7 +168,7 @@ service plus how to fix it — fix it and re-run `digital-twins init --yes`.
 Re-running is safe (idempotent): existing values are kept, only missing
 pieces are added.
 
-### Step 4 — Validate
+### Validate
 
 ```bash
 digital-twins validate
@@ -188,7 +179,7 @@ collection vector size matching the embedding model. A dimension mismatch is
 a hard error naming the mismatch and the remediation ("re-embed, or point at
 a new collection"), exit 1.
 
-### Step 5 — Enable a source and run your first ingest
+### Enable a source and run your first ingest
 
 Point a source at real content. The `fs` source is the simplest demo:
 
@@ -216,7 +207,7 @@ Dedup-safe and deterministic: the same content ingested via schedule,
 > (required by sources.yahoo)`). Nothing is ingested; the failed run is still
 > audited.
 
-### Step 6 — Put it on a schedule (and/or expose it)
+### Put it on a schedule (and/or expose it)
 
 Pick the surface(s) you need:
 
@@ -236,72 +227,109 @@ digital-twins run --once
 # 6c — web app: UI + /api/* REST
 digital-twins web
 
-# 6d — MCP server for agent clients (stdio or HTTP/SSE)
-digital-twins serve-mcp --transport stdio            # newline-delimited JSON
-digital-twins serve-mcp --transport http --port 8770 # HTTP/SSE on 127.0.0.1
+# 6d — MCP server for external agents (stdio, default; or HTTP)
+digital-twins serve-mcp            # stdio NDJSON
+digital-twins serve-mcp --http     # POST /mcp on 127.0.0.1:8770
+digital-twins serve-mcp --http --port 9000
 ```
 
-**Check** for 6a/6b: the scheduler status endpoint reports the next fire
-time; due schedules fire and their runs land in `digital-twins run-history`.
-Full detail:
-[`docs/scheduling.md`](docs/scheduling.md),
-[`docs/references/agent-guides.md`](docs/references/agent-guides.md).
+> **6b vs `run --once`:** `serve` keeps a long-running process that fires
+> due schedules on their exact times; `run --once` fires whatever is due
+> **now** and exits, for a host cron. Pick one, not both (double-fire).
+> **6c vs `serve`:** the web app is for humans (UI + REST); `serve` is the
+> scheduler.
 
-### You're done
+## Architecture
 
-You have a first admin account, validated endpoints, a working one-shot
-ingest, and a choice of schedule / web / MCP surfaces. Everything is
-auditable in the state DB (`run-history`) and the Qdrant/Neo4j collections.
+```
+                ┌──────────────────────────────────────────────┐
+                │           digital_twins (package)            │
+                │                                              │
+user ──────────▶ │  cli.py  ──▶  config/  ──▶  4-layer load   │
+                │   (all cmds)    schema     env→local→yml→def│
+                │              │                              │
+                │              ▼                              │
+                │  sources/ ──▶  ingest/  ──▶  state/        │
+                │  (8 named)     ids+chunks   SQLite (WAL)    │
+                │                    │              │         │
+                │                    ▼              ▼         │
+                │              Qdrant (vector)  Neo4j (graph) │
+                │                                              │
+                │  scheduler/  ◀── cron (host) or serve loop │
+                │  web/        ◀── UI + /api/* (REST)         │
+                │  mcp/        ◀── NDJSON stdio / POST /mcp   │
+                └──────────────────────────────────────────────┘
+```
+
+- **config** — 4-layer, env wins; `KB_` prefix, `__` = nesting; local
+  secrets in `kb.local.yml` (gitignored).
+- **sources** — fail-fast prerequisite check; `fs` needs no credential;
+  others need an env var (see `docs/configuration.md`).
+- **ingest** — content-addressed chunk ids; deterministic; dedup-safe.
+- **state** — SQLite in `~/.digital-twins` (WAL, FK on); runs + access
+  log + user config overrides.
+- **scheduler / web / mcp** — three independent surfaces that all call the
+  same `ingest` core (NFR-14: one point, not four).
 
 ## Configuration
 
-The authoritative knob reference (every shipped knob with default, type, and
-precedence) lives in
-[`docs/configuration.md`](docs/configuration.md). Precedence (deterministic,
-highest wins): **env (incl. `.env`) → `kb.local.yml` → `kb.yml` → built-in
-defaults**. All sources are disabled by default.
+Knobs live in `kb.local.yml` (or env). The full list with defaults and
+types: [`digital_twins/config/knobs.py`](digital_twins/config/knobs.py).
 
-## Roles & tokens
+| Knob | Default | Meaning |
+|------|---------|---------|
+| `qdrant.url` | (unset) | Qdrant base URL — required. |
+| `neo4j.url` / `neo4j.user` / `neo4j.password` | (unset) / `neo4j` / (unset) | Neo4j — required. |
+| `llm.endpoint` / `llm.model` | (unset) / (unset) | OpenAI-compatible LLM — required. |
+| `embedding.endpoint` | (unset) | Optional; skips local model load when set. |
+| `state_dir` | `~/.digital-twins` | Where `state.db` lives. |
+| `config_dir` | `~/.config/digital-twins` | Where `kb.local.yml` lives. |
+| `sources.<name>.enabled` | `false` | Enable a source. |
+| `sources.<name>.extra.*` | source-specific | `dir`, `mailbox`, … |
+| `sources.<name>.prerequisites` | built-in | Extra prereqs; unset → fail-fast. |
+| `scheduler.presets` | 5 built-ins | Recurring schedule presets. |
 
-Multi-user (003): three roles gate every mutating action.
+Full detail + examples: [`docs/configuration.md`](docs/configuration.md).
 
-| Role | What it can do |
+## Multi-user & tokens
+
+Accounts and credentials live in the state DB (`~/.digital-twins`):
+
+- **Admins** sign in with a password (PBKDF2, `sessions`); the first
+  `init` creates one; `digital-twins user add` adds more.
+- **Readers** sign in and get an 8 h session token (`sessions`), or a
+  personal token (`personal_tokens`, `pt_` prefix, revocable).
+- **Machine-to-machine** (MCP / cron) uses the shared service token
+  `DT_SERVICE_TOKEN` (env), or an account email + password via
+  `digital-tokens` (see below).
+
+Role model (default): `reader` → read/search/list; `scheduler` →
+reader + schedule CRUD/trigger; `admin` → scheduler + user management.
+
+| `digital-twins` sub-command | Does |
 |---|---|
-| `admin` | Every capability, including cross-user (view all history, manage accounts, manage all users' config). |
-| `scheduler` | Manage schedules, trigger runs, own run history, own config + own tokens. |
-| `reader` | Pure query: own run history, status. Mutating routes are denied with 403 / exit 2. |
+| `login` | sign in → session token (8 h) |
+| `user add/list` | create a named user; list accounts (admin) |
+| `token` | mint a personal token for the signed-in account |
+| `tokens revoke` | revoke a personal token (admin) |
+| `status` | who-am-I + role + live service report |
+| `web` | the web app (UI + /api/*); admin-only ops check the role |
 
-The first row in `accounts` becomes `admin`; every later sign-up (via
-`digital-twins signup --email … --password …`) is a `reader`. Each account
-holds **personal tokens** (self-service via
-`digital-twins token create` / `list` / `revoke`): the `DT_PERSONAL_TOKEN`
-env var resolves to an account + role, and the role is checked against the R3
-capability matrix before any mutating action. A `reader` is denied every
-mutating tool with `code=permission_denied`. Full detail:
-[`docs/multi-user.md`](docs/multi-user.md).
-
-## MCP
-
-A full MCP server (004) exposes the scheduler surface over stdio and
-HTTP/SSE so any MCP-capable agent can manage schedules and trigger runs.
-The `mcp` SDK is an optional extra
-(`pip install "digital-twins-kb[mcp]"`); the server itself speaks raw JSON
-and runs without it.
-
-Six scheduler tools (`kb_schedule_list` / `create` / `update` / `delete` /
-`run`, `kb_run_history`) plus four BR-10 stubs (`kb_search` / `chat` /
-`ingest` / `health` → `not_implemented_yet`). Tools are role-gated and
-owner-scoped by default. Agent onboarding:
-[`docs/references/agent-guides.md`](docs/references/agent-guides.md).
+Full detail: [`docs/multi-user.md`](docs/multi-user.md).
 
 ## Scheduling
 
-Preset cadences (`hourly`, `every-N-hours`, `daily`, `weekly`, `monthly`),
-the long-running `digital-twins serve` process (ticks the scheduler loop and
-fires due schedules), and the one-shot host-cron alternative. The `serve`
-command is the reference deployment for scheduled ingestion; `run --once` is
-the one-shot equivalent. Full detail:
-[`docs/scheduling.md`](docs/scheduling.md).
+Five presets: `hourly`, `every-N-hours` (`extra: {hours: N}`), `daily`
+(default 03:00), `weekly` (default Monday 04:00), `monthly` (default 1st
+05:00). Three surfaces: the long-running scheduler (`serve`), the host
+cron one-shot (`run --once`), and the web UI `/api/schedules`.
+
+> **Note:** `run --once` fires every due schedule and exits — for a host
+> cron entry (`0 3 * * * digital-twins run --once`), not a long-running
+> process. Use `serve` when you need the scheduler resident (exact-fire
+> times, missed-run catch-up, status endpoint).
+
+Full detail: [`docs/scheduling.md`](docs/scheduling.md).
 
 ## Community
 
