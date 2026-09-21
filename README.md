@@ -4,13 +4,20 @@ Environment-portable KB ingestion: layered config, fail-fast named sources, and
 deterministic dedup-safe ingest into user-supplied Qdrant + Neo4j. Built per
 `specs/001-package-foundation/` (see `AGENTS.md` for sources of truth).
 
-## Fast path (3 commands, new machine to first ingest)
+## Fast path (new machine to first ingest)
 
 ```bash
-pip install digital-twins-kb   # into a venv
+python3 -m venv .venv && source .venv/bin/activate
+pip install "digital-twins-kb[mcp]"   # base + MCP; drop [mcp] if not needed
 digital-twins setup            # wizard: backend detection + init + admin + health
 digital-twins run --source fs  # your first ingest
 ```
+
+> **PEP 668 ("externally managed" error on macOS/Homebrew or Debian):**
+> the venv line above is what fixes it. On such systems, `pip install`
+> into system Python is refused; the venv path is the clean fix.
+> `pipx` is an alternative (`brew install pipx && pipx install digital-twins-kb[mcp]`),
+> which manages its own venv and symlinks the CLI to `~/.local/bin`.
 
 > **CPU-only host?** PyPI's default torch wheel is ~5 GB with CUDA bundled.
 > If you plan to use in-process embedding (`[local-embedding]` extra) on a
@@ -23,6 +30,12 @@ digital-twins run --source fs  # your first ingest
 >
 > On a GPU host skip the CPU-wheel line and just
 > `pip install "digital-twins-kb[local-embedding]"`.
+
+> **Three names, three layers** (only `digital-twins-kb` goes into `pip install`):
+> - `digital-twins-kb` — the **PyPI distribution** name (the `-kb` suffix
+>   is a PyPI name-similarity constraint; the bare name is blocked)
+> - `digital-twins` — the **CLI** on your PATH after install
+> - `digital_twins` — the **Python import** name (`python -m digital_twins` works too)
 
 The `setup` wizard detects the backend: when Docker is available it offers
 to start the bundled local stack (qdrant + neo4j + embedding-model, plus
@@ -52,6 +65,47 @@ names exactly which of `KB_QDRANT__URL` / `KB_NEO4J__URL` /
 honored as "set but empty" — it fails the gate, it does not fall through
 to the prompt).
 
+## Exposing to agents (MCP)
+
+Once installed with the `[mcp]` extra, exposing your KB to an MCP-capable
+agent is two commands + one JSON block:
+
+```bash
+digital-tokens create                   # mint a personal token (shown once)
+digital-twins serve-mcp --http          # long-running HTTP server on 127.0.0.1:8770
+```
+
+Agent MCP config (Claude Desktop / Cursor / DSH / Hermes — same shape):
+
+```json
+{
+  "mcpServers": {
+    "digital-twins": {
+      "url": "http://127.0.0.1:8770/mcp",
+      "headers": { "Authorization": "Bearer <your-token>" }
+    }
+  }
+}
+```
+
+Stdio variant (agent spawns the server as a child process):
+
+```json
+{
+  "mcpServers": {
+    "digital-twins": {
+      "command": "digital-twins",
+      "args": ["serve-mcp", "--transport", "stdio"],
+      "env": { "DT_MCP_TOKEN": "<your-token>" }
+    }
+  }
+}
+```
+
+All 10 tools (6 scheduler + 4 KB) are available; role-gating and
+owner-scoping apply per call. Full quickstart:
+[`specs/004-mcp-scheduler-tools/quickstart.md`](specs/004-mcp-scheduler-tools/quickstart.md).
+
 ## Manual onboarding (reference)
 
 The steps below are what `digital-twins setup` does for you. Use them
@@ -67,18 +121,23 @@ if you want to do it manually, or to re-do one specific step.
 
 ### Install the package
 
+The fast path above shows the minimal case. Details:
+
 ```bash
 # Create a venv (recommended: system Python on many distros is
 # "externally managed" and refuses direct pip installs — PEP 668)
 python3 -m venv .venv
 . .venv/bin/activate
 
-# Base install is lightweight (no torch): endpoint-based embedding
+# Base install (lightweight, no torch): endpoint-based embedding
 # (embedding.endpoint in kb.local.yml) and all non-embed commands work.
 pip install digital-twins-kb
 
-# Optional: in-process embedding (the pinned BGE model, no endpoint needed).
-# See the CPU-only note in the fast path above.
+# Optional extras (combine as needed):
+#   [mcp]             — MCP SDK for external agents
+#   [local-embedding] — in-process BGE model, no endpoint needed
+#   [dev]             — dev dependencies
+pip install "digital-twins-kb[mcp]"
 pip install "digital-twins-kb[local-embedding]"
 ```
 
@@ -94,11 +153,6 @@ pip install .
 digital-twins --version
 # digital-twins, version 0.9.0
 ```
-
-> **PyPI name:** the distribution is published as `digital-twins-kb`
-> (`digital-twins` is blocked by PyPI's name-similarity policy); the CLI
-> command stays `digital-twins` and the import package stays `digital_twins`.
-> `python -m digital_twins` works too.
 
 ### Start the backend services (pick one)
 
@@ -227,10 +281,11 @@ digital-twins run --once
 # 6c — web app: UI + /api/* REST
 digital-twins web
 
-# 6d — MCP server for external agents (stdio, default; or HTTP)
-digital-twins serve-mcp            # stdio NDJSON
-digital-twins serve-mcp --http     # POST /mcp on 127.0.0.1:8770
+# 6d — MCP server for external agents (see "Exposing to agents" above)
+digital-tokens create                   # mint a personal token
+digital-twins serve-mcp --http         # HTTP on 127.0.0.1:8770
 digital-twins serve-mcp --http --port 9000
+digital-twins serve-mcp                # stdio NDJSON (agent spawns it)
 ```
 
 > **6b vs `run --once`:** `serve` keeps a long-running process that fires
@@ -301,7 +356,7 @@ Accounts and credentials live in the state DB (`~/.digital-twins`):
   personal token (`personal_tokens`, `pt_` prefix, revocable).
 - **Machine-to-machine** (MCP / cron) uses the shared service token
   `DT_SERVICE_TOKEN` (env), or an account email + password via
-  `digital-tokens` (see below).
+  `digital-tokens create` (see "Exposing to agents" above).
 
 Role model (default): `reader` → read/search/list; `scheduler` →
 reader + schedule CRUD/trigger; `admin` → scheduler + user management.
