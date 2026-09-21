@@ -23,6 +23,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
   commands keep working for one release cycle. It will be deprecated and
   retired in a future release; the runbook documents the upload procedure.
 
+### Added
+
+- **One-shot installers**: `scripts/install-local.sh` (run from a checkout:
+  finds Python ≥3.11, creates an isolated venv, pip-installs, runs the
+  `setup` wizard) and `scripts/install.sh` — the
+  `curl -fsSL …/scripts/install.sh | bash` remote entry point with a PEP 668
+  venv-module check. Both are host-neutral (NFR-13), idempotent, and
+  `run_cmd()`-interceptable; a `--dist PATH|NAME` flag installs a local
+  wheel/dir instead of the PyPI dist.
+
 ## [0.10.0] - 2026-09-21
 
 ### Added
