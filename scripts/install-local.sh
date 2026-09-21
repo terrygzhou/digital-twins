@@ -183,14 +183,13 @@ main() {
   # --- 4) run the setup wizard ---------------------------------------------
   local setup_rc=0
   if [ "$NO_SETUP" -eq 0 ]; then
-    local setup_args=()
-    [ "$CLOUD" -eq 1 ]         && setup_args+=("--cloud")
-    [ "$SKIP_SERVICES" -eq 1 ] && setup_args+=("--skip-services")
-    note "running the first-run wizard: $venv_bin setup${setup_args[*]:+ ${setup_args[*]}}"
-    # ${arr[@]+"$@"} is the set -u-safe empty-array expansion: it expands to
-    # the flags when setup_args is non-empty and to nothing when it is empty
-    # (bash 3.2 / macOS treats bare ${arr[@]} on an empty array as unbound).
-    run_cmd "$venv_bin" setup "${setup_args[@]+"${setup_args[@]}"}" || setup_rc=$?
+    # Build the flag string (empty-safe on bash 3.2 + set -u — no array
+    # expansion at all, so macOS's shipped bash 3.2 cannot trip on it).
+    local setup_flags=""
+    [ "$CLOUD" -eq 1 ]         && setup_flags="${setup_flags} --cloud"
+    [ "$SKIP_SERVICES" -eq 1 ] && setup_flags="${setup_flags} --skip-services"
+    note "running the first-run wizard: $venv_bin setup${setup_flags}"
+    run_cmd "$venv_bin" setup $setup_flags || setup_rc=$?
     case "$setup_rc" in
       0) note "setup: all health checks passed." ;;
       1|3|5)
