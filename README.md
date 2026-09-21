@@ -13,11 +13,24 @@ digital-twins setup            # wizard: backend detection + init + admin + heal
 digital-twins run --source fs  # your first ingest
 ```
 
-> **PEP 668 ("externally managed" error on macOS/Homebrew or Debian):**
-> the venv line above is what fixes it. On such systems, `pip install`
-> into system Python is refused; the venv path is the clean fix.
-> `pipx` is an alternative (`brew install pipx && pipx install digital-twins-kb[mcp]`),
-> which manages its own venv and symlinks the CLI to `~/.local/bin`.
+> **PEP 668 ("externally managed" error on macOS/Homebrew, Debian, or
+> other distros that protect system Python):** the venv line above is the
+> clean fix on any OS. Alternative: `pipx`, which manages its own venv and
+> symlinks the CLI to `~/.local/bin`:
+>
+> ```bash
+> # macOS:
+> brew install pipx && pipx ensurepath
+> # Debian/Ubuntu:
+> sudo apt install pipx
+> # Arch:
+> sudo pacman -S pipx
+> # then (on any OS):
+> pipx install "digital-twins-kb[mcp]"
+> ```
+>
+> On Debian/Ubuntu where `python3 -m venv` is unavailable (missing the
+> `venv` module), install it first: `sudo apt install python3-venv`.
 
 > **CPU-only host?** PyPI's default torch wheel is ~5 GB with CUDA bundled.
 > If you plan to use in-process embedding (`[local-embedding]` extra) on a
