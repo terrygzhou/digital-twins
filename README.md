@@ -6,6 +6,41 @@ deterministic dedup-safe ingest into user-supplied Qdrant + Neo4j. Built per
 
 ## Fast path (new machine to first ingest)
 
+**No clone / no manual steps — the remote one-liner** (the
+`curl | bash` entry point; it self-bootstraps Python ≥ 3.11, creates an
+isolated venv, installs from PyPI, and runs the first-run wizard):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/terrygzhou/digital-twins/main/scripts/install.sh | bash
+```
+
+> **Piping into `bash`** runs code from the network. To audit first,
+> download it and read it (`bash -x scripts/install.sh` traces every command):
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/terrygzhou/digital-twins/main/scripts/install.sh -o install.sh && bash install.sh
+> ```
+>
+> The script performs no network access except the `pip install` from PyPI.
+
+**Already have a checkout?** Run the same installer locally instead of
+piping (finds Python ≥ 3.11, creates an isolated venv, installs the package,
+and runs the first-run wizard):
+
+```bash
+bash scripts/install-local.sh
+```
+
+It ends with the `digital-twins setup` wizard (backend detection + init +
+admin account + health checks) and tells you the next step. Re-running is a
+safe no-op on a host that is already installed. Useful options:
+`--extras "mcp,local-embedding"` (pick the extras), `--cloud` (no Docker;
+cloud backends), `--run-ingest` (ingest a demo source right away),
+`--no-setup` (stop after the pip install). See
+`bash scripts/install-local.sh --help`.
+
+**Prefer to do it by hand?** The minimal steps the installer runs:
+
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install "digital-twins[mcp]"   # base + MCP; drop [mcp] if not needed
