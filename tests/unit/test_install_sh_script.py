@@ -97,7 +97,7 @@ def test_happy_path_no_setup(fake_exec):
     assert proc.returncode == 0
     joined = " ".join(" ".join(c) for c in calls)
     assert "venv" in joined
-    assert "install" in joined and "digital-twins[mcp]" in joined
+    assert "install" in joined and "digital-twins-kb[mcp]" in joined
     assert not any("setup" in c for c in calls)
 
 
@@ -105,14 +105,14 @@ def test_extras_forwarded(fake_exec):
     proc, calls = _run(["--no-setup", "--extras", "mcp,local-embedding"], fake_exec)
     assert proc.returncode == 0
     joined = " ".join(" ".join(c) for c in calls)
-    assert "digital-twins[mcp,local-embedding]" in joined
+    assert "digital-twins-kb[mcp,local-embedding]" in joined
 
 
 def test_base_install_no_extras(fake_exec):
     proc, calls = _run(["--no-setup", "--extras", ""], fake_exec)
     assert proc.returncode == 0
     joined = " ".join(" ".join(c) for c in calls)
-    assert "digital-twins[" not in joined
+    assert "digital-twins-kb[" not in joined
 
 
 def test_setup_cloud_flag(fake_exec):

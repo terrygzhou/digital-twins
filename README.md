@@ -43,7 +43,7 @@ cloud backends), `--run-ingest` (ingest a demo source right away),
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install "digital-twins[mcp]"   # base + MCP; drop [mcp] if not needed
+pip install "digital-twins-kb[mcp]"   # base + MCP; drop [mcp] if not needed
 digital-twins setup            # wizard: backend detection + init + admin + health
 digital-twins run --source fs  # your first ingest
 ```
@@ -61,7 +61,7 @@ digital-twins run --source fs  # your first ingest
 > # Arch:
 > sudo pacman -S pipx
 > # then (on any OS):
-> pipx install "digital-twins[mcp]"
+> pipx install "digital-twins-kb[mcp]"
 > ```
 >
 > On Debian/Ubuntu where `python3 -m venv` is unavailable (missing the
@@ -73,16 +73,18 @@ digital-twins run --source fs  # your first ingest
 >
 > ```bash
 > pip install torch --index-url https://download.pytorch.org/whl/cpu
-> pip install "digital-twins[local-embedding]"
+> pip install "digital-twins-kb[local-embedding]"
 > ```
 >
 > On a GPU host skip the CPU-wheel line and just
-> `pip install "digital-twins[local-embedding]"`.
+> `pip install "digital-twins-kb[local-embedding]"`.
 
-> **One name, three layers** (only `digital-twins` goes into `pip install`):
-> - `digital-twins` — the **PyPI distribution** name and the **CLI** on your
->   PATH after install (PEP 503 normalizes hyphens/underscores, so the
->   dist and CLI share one name)
+> **Three layers, one `-kb` suffix** (only `digital-twins-kb` goes into
+> `pip install` — the bare `digital-twins` name is PyPI-blocked as too
+> similar to the existing `digital-twins-kb`):
+> - `digital-twins-kb` — the **PyPI distribution** name (what you pass to
+>   `pip install`; PEP 503 normalizes `-`/`_`/`.` in dist names)
+> - `digital-twins` — the **CLI** on your PATH after install
 > - `digital_twins` — the **Python import** name (`python -m digital_twins`
 >   works too)
 
@@ -180,14 +182,14 @@ python3 -m venv .venv
 
 # Base install (lightweight, no torch): endpoint-based embedding
 # (embedding.endpoint in kb.local.yml) and all non-embed commands work.
-pip install digital-twins
+pip install digital-twins-kb
 
 # Optional extras (combine as needed):
 #   [mcp]             — MCP SDK for external agents
 #   [local-embedding] — in-process BGE model, no endpoint needed
 #   [dev]             — dev dependencies
-pip install "digital-twins[mcp]"
-pip install "digital-twins[local-embedding]"
+pip install "digital-twins-kb[mcp]"
+pip install "digital-twins-kb[local-embedding]"
 ```
 
 From a git checkout instead of PyPI:
@@ -464,7 +466,7 @@ KB_LIVE_QDRANT=... KB_LIVE_NEO4J=... pytest -m live
 
 ## Uninstall
 
-Reverses the fast path above (venv + `pip install "digital-twins[mcp]"` +
+Reverses the fast path above (venv + `pip install "digital-twins-kb[mcp]"` +
 `digital-twins setup` + `bash scripts/bootstrap-local.sh`). One script,
 one invocation; every step is a no-op when its target is absent, so it is
 safe to re-run and safe on a host that never had anything installed:
@@ -504,7 +506,7 @@ What each flag does (all off by default):
 
 | Flag | Effect |
 |------|--------|
-| _(none)_ | `docker compose down` (volumes kept, so a re-bootstrap resumes) + `pip uninstall -y digital-twins digital-twins-kb`. Config and state dirs are kept. |
+| _(none)_ | `docker compose down` (volumes kept, so a re-bootstrap resumes) + `pip uninstall -y digital-twins-kb`. Config and state dirs are kept. |
 | `--tear-down-volumes` | `docker compose down -v`: also removes the named volumes (`qdrant-data`, `neo4j-data`, `digital-twins-state`) — **all ingested content is lost**. |
 | `--remove-data` | Also `rm -rf` the machine-local config dir (`KB_CONFIG_DIR`, default `~/.config/digital-twins`) and state dir (`KB_STATE_DIR`, default `~/.digital-twins`) — including `kb.local.yml`, `state.db`, and `admin-credentials.txt`. |
 | `--force` | Skip every interactive `y/N` confirmation. |

@@ -9,19 +9,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
 ### Changed
 
-- **Distribution name consolidation:** the PyPI distribution is now
-  `digital-twins` — the `-kb` suffix was a PyPI name-similarity workaround
-  that no longer applies (the bare name is free). All three layers now share
-  one name:
-  - PyPI distribution: `digital-twins`
+- **PyPI distribution name:** the PyPI distribution publishes as
+  `digital-twins-kb` (the bare `digital-twins` name is blocked by PyPI's
+  name-similarity check, which treats `-`/`_`/`.` as equivalent to the
+  already-registered `digital-twins-kb`). The user-facing layers are
+  unchanged:
+  - PyPI distribution: `digital-twins-kb` (the only layer that carries the
+    `-kb` suffix — it is what you pass to `pip install`)
   - CLI on PATH: `digital-twins` (unchanged)
-  - Python import: `digital_twins` (unchanged; PEP 503 normalizes
-    hyphen/underscore so the dist and CLI collapse to one name)
-- A `digital-twins-kb` **transition metapackage** (top-level
-  `digital-twins-kb/` dir, zero code, `Requires-Dist: digital-twins==0.11.0`)
-  ships alongside this release so existing `pip install digital-twins-kb`
-  commands keep working for one release cycle. It will be deprecated and
-  retired in a future release; the runbook documents the upload procedure.
+  - Python import: `digital_twins` (unchanged)
+- The top-level `digital-twins-kb/` **transition metapackage** dir from the
+  0.11.0-dev plan is retired: with the main distribution now publishing as
+  `digital-twins-kb`, a separate zero-code shim depending on the bare name
+  is redundant. No metapackage is built or uploaded with this release; the
+  release runbook's metapackage step is removed. The `digital-twins-kb`
+  artifact that exists on PyPI from 0.9.0 is superseded by this release.
 
 ### Added
 

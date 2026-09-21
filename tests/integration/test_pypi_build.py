@@ -23,7 +23,26 @@ import pytest
 import digital_twins
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WHEEL_NAME_RE = re.compile(r"^digital_twins-\d+\.\d+\.\d+-py3-none-any\.whl$")
+
+
+def _pep503(name: str) -> str:
+    """PEP 503 normalization as used in PEP 427 wheel filenames."""
+    return re.sub(r"[-_.]+", "_", name).lower()
+
+
+def _dist_name() -> str:
+    """The published distribution name, single-sourced in pyproject.toml."""
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(r'(?m)^\s*name\s*=\s*"([^"]+)"', text)
+    assert m, "could not find [project] name in pyproject.toml"
+    return m.group(1)
+
+
+DIST_NAME = _dist_name()
+WHEEL_DIST = _pep503(DIST_NAME)
+WHEEL_NAME_RE = re.compile(
+    rf"^{WHEEL_DIST}-\d+\.\d+\.\d+-py3-none-any\.whl$"
+)
 
 
 @pytest.fixture(scope="module")
@@ -48,7 +67,7 @@ def wheel_path(tmp_path_factory):
         f"wheel build failed (exit {proc.returncode})\n"
         f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     )
-    wheels = sorted(out_dir.glob("digital_twins-*-py3-none-any.whl"))
+    wheels = sorted(out_dir.glob(f"{WHEEL_DIST}-*-py3-none-any.whl"))
     assert len(wheels) == 1, f"expected exactly one wheel, got {wheels}"
     return wheels[0]
 
@@ -61,7 +80,7 @@ def test_wheel_builds_and_name_matches(wheel_path):
         f"{'digital_twins-<v>-py3-none-any.whl'}"
     )
     # The embedded version must be the single-sourced package version.
-    expected = f"digital_twins-{digital_twins.__version__}-py3-none-any.whl"
+    expected = f"{WHEEL_DIST}-{digital_twins.__version__}-py3-none-any.whl"
     assert wheel_path.name == expected, (
         f"wheel name {wheel_path.name!r} != expected {expected!r} "
         f"(digital_twins.__version__ = {digital_twins.__version__!r})"

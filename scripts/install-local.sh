@@ -57,7 +57,11 @@ run_cmd() {
 }
 
 # --- constants ---------------------------------------------------------------
-DIST_NAME="digital-twins"
+DIST_NAME="digital-twins-kb"
+# The pip distribution name vs. the console-script name.  The dist
+# publishes as digital-twins-kb on PyPI (bare digital-twins is name-blocked);
+# the CLI it installs is still `digital-twins`.
+CLI_NAME="digital-twins"
 MIN_PY_MINOR="11"
 
 # --- flags -------------------------------------------------------------------
@@ -160,7 +164,7 @@ main() {
     run_cmd "$py" -m venv "$venv_dir"
   fi
   local venv_pip="$venv_dir/bin/pip"
-  local venv_bin="$venv_dir/bin/$DIST_NAME"
+  local venv_bin="$venv_dir/bin/$CLI_NAME"
 
   # --- 3) pip install -------------------------------------------------------
   local extra_spec

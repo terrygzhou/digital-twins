@@ -47,8 +47,9 @@ COMPOSE_FILE="docker-compose.yml"
 # all ingested content from the local stack; a plain `docker compose down`
 # keeps them so a re-bootstrap resumes where it left off.
 VOLUMES="qdrant-data neo4j-data digital-twins-state"
-# Dist names (PEP 503). digital-twins-kb is the thin metapackage that
-# depends on digital-twins; both must be named so pip removes every link.
+# Dist names (PEP 503). digital-twins-kb is the published distribution;
+# the bare digital-twins name is kept as a legacy uninstall no-op so an
+# install predating the rename still gets cleaned up.
 DIST_NAMES="digital-twins digital-twins-kb"
 # Machine-local dirs (the package's built-in defaults, overridable via the
 # KB_CONFIG_DIR / KB_STATE_DIR env vars, mirroring

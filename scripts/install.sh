@@ -9,7 +9,7 @@
 #   1. find/ensure a usable Python >=3.11 (self-bootstrap via python3-venv
 #      on PEP 668 distros; no sudo, no system-package mutation by default)
 #   2. create an isolated venv under $HOME/.digital-twins/.venv
-#   3. pip install "digital-twins[<extras>]" from PyPI
+#   3. pip install "digital-twins-kb[<extras>]" from PyPI
 #   4. run `digital-twins setup` (the first-run wizard)
 #   5. optionally run the first ingest
 #
@@ -50,7 +50,8 @@
 # Environment overrides:
 #   INSTALL_SH_EXEC      Fake binary that intercepts run_cmd() calls (tests).
 #   INSTALL_SH_EXEC_LOG  Where the fake writes its JSONL argv log.
-#   INSTALL_SH_DIST      Override the PyPI dist name (default: digital-twins).
+#   INSTALL_SH_DIST      Override the PyPI dist name (default: digital-twins-kb).
+#   INSTALL_SH_CLI       Override the console-script name (default: digital-twins).
 #   INSTALL_SH_TIMEOUT_S Max seconds to wait on the pip install (default 600).
 set -euo pipefail
 
@@ -65,7 +66,11 @@ run_cmd() {
 }
 
 # --- constants ---------------------------------------------------------------
-DIST_NAME="${INSTALL_SH_DIST:-digital-twins}"
+DIST_NAME="${INSTALL_SH_DIST:-digital-twins-kb}"
+# The pip distribution name vs. the console-script name.  The
+# dist publishes as digital-twins-kb on PyPI (bare digital-twins is
+# name-blocked); the CLI it installs is still `digital-twins`.
+CLI_NAME="${INSTALL_SH_CLI:-digital-twins}"
 MIN_PY_MINOR="11"
 
 # --- flags -------------------------------------------------------------------
@@ -182,7 +187,7 @@ main() {
     run_cmd "$py" -m venv "$venv_dir"
   fi
   local venv_pip="$venv_dir/bin/pip"
-  local venv_bin="$venv_dir/bin/$DIST_NAME"
+  local venv_bin="$venv_dir/bin/$CLI_NAME"
 
   # --- 3) pip install from PyPI --------------------------------------------
   local extra_spec

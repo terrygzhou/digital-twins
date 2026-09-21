@@ -46,35 +46,11 @@ python -m pip install --upgrade pip build
 python -m build
 ```
 
-`python -m build` produces `dist/digital_twins-<version>-py3-none-any.whl`
-and `dist/digital_twins-<version>.tar.gz` through the PEP 517 backend
-declared in `pyproject.toml` (hatchling). Confirm both artifacts exist in
-`dist/`.
-
-### Building the transition metapackage (0.11.0+)
-
-Since the distribution was renamed to `digital-twins` in 0.11.0, a
-**transition metapackage** at `digital-twins-kb/` (top-level dir, its own
-`pyproject.toml`, zero-code) is built and uploaded as a *separate* PyPI
-dist so the legacy `pip install digital-twins-kb` command keeps resolving
-for one release cycle. It is built from its own directory:
-
-```bash
-python -m venv .venv-metapkg && . .venv-metapkg/bin/activate
-python -m pip install --upgrade pip build
-cd digital-twins-kb
-python -m build
-# produces dist/digital_twins_kb-<version>-py3-none-any.whl
-cd ..
-```
-
-The metapackage wheel contains only an empty marker module
-(`digital_twins_kb/__init__.py`) and carries a single
-`Requires-Dist: digital-twins==<version>` line in its METADATA — it
-contributes no behavior; pip resolves the real distribution. Both
-artifacts (the main `digital-twins` wheel + the `digital-twins-kb`
-metapackage wheel) are uploaded to TestPyPI / PyPI in section 4 / 5
-above.
+`python -m build` produces `dist/digital_twins_kb-<version>-py3-none-any.whl`
+and `dist/digital_twins_kb-<version>.tar.gz` through the PEP 517 backend
+declared in `pyproject.toml` (hatchling). The artifact stem is the PEP 503
+normalization of the distribution name `digital-twins-kb`. Confirm both
+artifacts exist in `dist/`.
 
 ## 3. Automated in-suite check
 
@@ -88,8 +64,9 @@ pytest tests/integration/test_pypi_build.py -v
 It builds the wheel once (PEP 517, via `python -m build --wheel`), then
 asserts:
 
-- the wheel exists and is named `digital_twins-<version>-py3-none-any.whl`
-  where `<version>` is the single-sourced `digital_twins.__version__`;
+- the wheel exists and is named `digital_twins_kb-<version>-py3-none-any.whl`
+  where `<version>` is the single-sourced `digital_twins.__version__`
+  (the artifact stem is the PEP 503 normalization of the dist name);
 - the wheel is a valid ZIP containing the required `.dist-info/METADATA`
   and `.dist-info/WHEEL` members;
 - `LICENSE` exists at the repo root and is an MIT license;
@@ -113,13 +90,10 @@ python -m twine upload --repository-url https://test.pypi.org/legacy/ dist/*
 Then verify the round-trip in a fresh venv:
 
 ```bash
-python -m pip install --index-url https://test.pypi.org/simple/ digital-twins
-python -m digital_twins --version
+python -m pip install --index-url https://test.pypi.org/simple/ digital-twins-kb
+python -m digital_twins --version   # import/CLI names are unchanged
 # Confirm the license ships inside the installed distribution:
-python -m pip show digital-twins | grep -i license
-# Optional: confirm the transition metapackage still resolves (0.11.0+):
-#   pip install --index-url https://test.pypi.org/simple/ digital-twins-kb
-#   pip show digital-twins-kb   # shows Requires: digital-twins
+python -m pip show digital-twins-kb | grep -i license
 ```
 ```
 
@@ -180,9 +154,8 @@ must name the concrete image tag that was pushed.
 - [ ] CHANGELOG entry added
 - [ ] `test_portability.py` + `test_knob_docs.py` green
 - [ ] `python -m build` in a clean venv → sdist + wheel in `dist/`
-- [ ] Transition metapackage built (`cd digital-twins-kb && python -m build`) (0.11.0+)
 - [ ] `pytest tests/integration/test_pypi_build.py -v` green (in-suite check)
-- [ ] TestPyPI upload + `pip install` round-trip verified (main + metapackage) (manual)
-- [ ] PyPI upload with API token (main + metapackage) (manual)
+- [ ] TestPyPI upload + `pip install` round-trip verified (manual)
+- [ ] PyPI upload with API token (manual)
 - [ ] `git tag v<version>` pushed
 - [ ] Actual image tags recorded (no placeholders left)
