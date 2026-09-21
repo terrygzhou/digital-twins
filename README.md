@@ -426,3 +426,45 @@ pytest -q
 # Opt-in live tests against real services
 KB_LIVE_QDRANT=... KB_LIVE_NEO4J=... pytest -m live
 ```
+
+## Uninstall
+
+Reverses the fast path above (venv + `pip install "digital-twins[mcp]"` +
+`digital-twins setup` + `bash scripts/bootstrap-local.sh`). One script,
+one invocation; every step is a no-op when its target is absent, so it is
+safe to re-run and safe on a host that never had anything installed:
+
+```bash
+bash scripts/uninstall-local.sh                # stop docker stack, pip uninstall
+bash scripts/uninstall-local.sh --tear-down-volumes   # also remove the named
+                                                      # volumes (all ingested content)
+bash scripts/uninstall-local.sh --remove-data         # also delete the config
+                                                      # + state dirs
+bash scripts/uninstall-local.sh --force               # skip every confirmation
+bash scripts/uninstall-local.sh --skip-docker         # cloud/external hosts
+```
+
+> **Note:** run this with `bash`, not `sh` — the script uses
+> `set -o pipefail`, which dash does not support (same caveat as the
+> bootstrap script).
+
+What each flag does (all off by default):
+
+| Flag | Effect |
+|------|--------|
+| _(none)_ | `docker compose down` (volumes kept, so a re-bootstrap resumes) + `pip uninstall -y digital-twins digital-twins-kb`. Config and state dirs are kept. |
+| `--tear-down-volumes` | `docker compose down -v`: also removes the named volumes (`qdrant-data`, `neo4j-data`, `digital-twins-state`) — **all ingested content is lost**. |
+| `--remove-data` | Also `rm -rf` the machine-local config dir (`KB_CONFIG_DIR`, default `~/.config/digital-twins`) and state dir (`KB_STATE_DIR`, default `~/.digital-twins`) — including `kb.local.yml`, `state.db`, and `admin-credentials.txt`. |
+| `--force` | Skip every interactive `y/N` confirmation. |
+| `--skip-docker` | Skip the `docker compose down` step (for hosts that use cloud/external backends, i.e. `bootstrap-local.sh --cloud`). |
+
+Each removal is confirmed interactively unless `--force` is given; a
+non-interactive invocation (EOF on stdin) is treated as "no", so nothing is
+deleted without an explicit yes. A pipx-managed install is detected and
+reported (run `pipx uninstall digital-twins` instead) rather than
+removed by this script.
+
+Exit codes: `0` success (or everything was already absent) · `1` a step
+failed and `--force` was not given (remediation names the step and the
+manual command) · `2` `--tear-down-volumes` was requested but a volume could
+not be identified (nothing was removed).
