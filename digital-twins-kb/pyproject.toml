@@ -1,0 +1,34 @@
+# Transition metapackage: a zero-code dist that exists only so the legacy
+# `pip install digital-twins-kb` command keeps working for one release cycle
+# after the PyPI distribution was renamed to `digital-twins` (0.11.0).
+#
+# It declares a single hard dependency on the real distribution; pip
+# resolves it, installs `digital-twins`, and the metapackage itself
+# contributes no importable code. The real package is built at the repo
+# root via its own pyproject.toml; this metapackage is built from this
+# directory and uploaded as a separate PyPI dist alongside it.
+#
+# See ../docs/release-runbook.md for the upload procedure.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "digital-twins-kb"
+version = "0.11.0"
+description = "Transition metapackage for the digital-twins distribution (deprecated; depends on digital-twins)."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "Terry Zhou" }]
+# The entire body of this metapackage is one pinned dependency: it is
+# the only thing that carries the legacy name on PyPI after the rename.
+dependencies = [
+  "digital-twins==0.11.0",
+]
+
+# One (empty) marker module so the wheel is a valid PEP 427 container;
+# the metapackage contributes no behavior — only the Requires-Dist above.
+[tool.hatch.build.targets.wheel]
+packages = ["digital_twins_kb"]

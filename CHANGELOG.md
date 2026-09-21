@@ -5,6 +5,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-14
+
+### Changed
+
+- **Distribution name consolidation:** the PyPI distribution is now
+  `digital-twins` — the `-kb` suffix was a PyPI name-similarity workaround
+  that no longer applies (the bare name is free). All three layers now share
+  one name:
+  - PyPI distribution: `digital-twins`
+  - CLI on PATH: `digital-twins` (unchanged)
+  - Python import: `digital_twins` (unchanged; PEP 503 normalizes
+    hyphen/underscore so the dist and CLI collapse to one name)
+- A `digital-twins-kb` **transition metapackage** (top-level
+  `digital-twins-kb/` dir, zero code, `Requires-Dist: digital-twins==0.11.0`)
+  ships alongside this release so existing `pip install digital-twins-kb`
+  commands keep working for one release cycle. It will be deprecated and
+  retired in a future release; the runbook documents the upload procedure.
+
 ## [0.10.0] - 2026-09-21
 
 ### Added
@@ -122,7 +140,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
 ### Notes
 
-- **Distribution name:** the PyPI package is `digital-twins-kb` — the name `digital-twins` is blocked by PyPI's name-similarity policy (existing projects `digital-twin` / `digitaltwins` / `digital.twin`). The import package (`digital_twins`) and CLI command (`digital-twins`) are unchanged.
+- **Distribution name (superseded in 0.11.0):** at this release the PyPI package was `digital-twins-kb` — the bare name `digital-twins` was believed to be blocked by PyPI's name-similarity policy (existing projects `digital-twin` / `digitaltwins` / `digital.twin`). The import package (`digital_twins`) and CLI command (`digital-twins`) were unchanged. **0.11.0 renamed the dist to `digital-twins`** after the bare name was confirmed free (live PyPI 404 check); a `digital-twins-kb` transition metapackage was shipped so the old pip command kept working.
 - Quickstart §5 live-Docker proofs (clean GPU host, no-GPU host) remain
   manual follow-ups per A8 (005 c4 pattern); the mocked/static surface is
   fully green.

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "digital-twins-kb"
+name = "digital-twins"
 dynamic = ["version"]
 description = "Environment-portable KB ingestion: layered config, fail-fast named sources, deterministic dedup-safe ingest into user-supplied Qdrant/Neo4j."
 readme = "README.md"
@@ -24,7 +24,7 @@ dev = ["pytest>=8.0"]
 # A ~5 GB install with the CUDA-bundled torch wheel on GPU hosts; on
 # CPU-only hosts install the CPU wheel first (see README):
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
-#   pip install "digital-twins-kb[local-embedding]"
+#   pip install "digital-twins[local-embedding]"
 # Endpoint mode (embedding.endpoint) needs neither of these.
 local-embedding = ["sentence-transformers>=3.0", "torch>=2.0"]
 # MCP SDK is an OPTIONAL extra (research D2): the 004 server speaks raw

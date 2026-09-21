@@ -8,7 +8,7 @@ deterministic dedup-safe ingest into user-supplied Qdrant + Neo4j. Built per
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install "digital-twins-kb[mcp]"   # base + MCP; drop [mcp] if not needed
+pip install "digital-twins[mcp]"   # base + MCP; drop [mcp] if not needed
 digital-twins setup            # wizard: backend detection + init + admin + health
 digital-twins run --source fs  # your first ingest
 ```
@@ -26,7 +26,7 @@ digital-twins run --source fs  # your first ingest
 > # Arch:
 > sudo pacman -S pipx
 > # then (on any OS):
-> pipx install "digital-twins-kb[mcp]"
+> pipx install "digital-twins[mcp]"
 > ```
 >
 > On Debian/Ubuntu where `python3 -m venv` is unavailable (missing the
@@ -38,17 +38,18 @@ digital-twins run --source fs  # your first ingest
 >
 > ```bash
 > pip install torch --index-url https://download.pytorch.org/whl/cpu
-> pip install "digital-twins-kb[local-embedding]"
+> pip install "digital-twins[local-embedding]"
 > ```
 >
 > On a GPU host skip the CPU-wheel line and just
-> `pip install "digital-twins-kb[local-embedding]"`.
+> `pip install "digital-twins[local-embedding]"`.
 
-> **Three names, three layers** (only `digital-twins-kb` goes into `pip install`):
-> - `digital-twins-kb` — the **PyPI distribution** name (the `-kb` suffix
->   is a PyPI name-similarity constraint; the bare name is blocked)
-> - `digital-twins` — the **CLI** on your PATH after install
-> - `digital_twins` — the **Python import** name (`python -m digital_twins` works too)
+> **One name, three layers** (only `digital-twins` goes into `pip install`):
+> - `digital-twins` — the **PyPI distribution** name and the **CLI** on your
+>   PATH after install (PEP 503 normalizes hyphens/underscores, so the
+>   dist and CLI share one name)
+> - `digital_twins` — the **Python import** name (`python -m digital_twins`
+>   works too)
 
 The `setup` wizard detects the backend: when Docker is available it offers
 to start the bundled local stack (qdrant + neo4j + embedding-model, plus
@@ -144,14 +145,14 @@ python3 -m venv .venv
 
 # Base install (lightweight, no torch): endpoint-based embedding
 # (embedding.endpoint in kb.local.yml) and all non-embed commands work.
-pip install digital-twins-kb
+pip install digital-twins
 
 # Optional extras (combine as needed):
 #   [mcp]             — MCP SDK for external agents
 #   [local-embedding] — in-process BGE model, no endpoint needed
 #   [dev]             — dev dependencies
-pip install "digital-twins-kb[mcp]"
-pip install "digital-twins-kb[local-embedding]"
+pip install "digital-twins[mcp]"
+pip install "digital-twins[local-embedding]"
 ```
 
 From a git checkout instead of PyPI:
@@ -164,7 +165,7 @@ pip install .
 
 ```bash
 digital-twins --version
-# digital-twins, version 0.9.0
+# digital-twins, version 0.11.0
 ```
 
 ### Start the backend services (pick one)

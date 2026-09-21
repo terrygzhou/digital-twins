@@ -58,7 +58,7 @@ def load_embedder(model: str = DEFAULT_MODEL, device: str = "auto"):
     except ImportError as exc:
         raise LocalEmbedderError(
             "in-process embedding needs the 'local-embedding' extra: "
-            "pip install 'digital-twins-kb[local-embedding]' — or set "
+            "pip install 'digital-twins[local-embedding]' — or set "
             "embedding.endpoint (env KB_EMBEDDING__ENDPOINT) to an "
             "OpenAI-compatible embedding endpoint"
         ) from exc
