@@ -634,3 +634,234 @@ def test_has_valid_local_config(_isolate_config, monkeypatch):
     path.write_text(yaml.safe_dump({"qdrant": {"url": "http://x:6333"}}),
                     encoding="utf-8")
     assert setup_mod.has_valid_local_config()
+
+
+# ---------------------------------------------------------------------------
+# Fast-path guarantee (015): setup must leave the machine in a state where
+# the README's "3 commands" fast path is literally true — after setup,
+# `digital-twins run --source fs` can succeed: sources.fs is enabled in
+# kb.local.yml and the demo dir exists with sample files.
+# ---------------------------------------------------------------------------
+
+def test_setup_creates_fs_demo_dir_and_sample_files(_isolate_config,
+                                                     monkeypatch, tmp_path):
+    """After setup, the demo dir exists and carries the two sample files
+    the README demo relies on."""
+    import digital_twins.setup as setup_mod
+    config_dir, state_dir = _isolate_config
+
+    # Simulate a fresh local-stack run that skipped service startup.
+    monkeypatch.setattr(setup_mod, "run_cloud_stack", lambda *a, **kw: True)
+    monkeypatch.setattr(setup_mod, "run_local_stack", lambda *a, **kw: True)
+    monkeypatch.setattr(setup_mod, "docker_available", lambda: True)
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(
+        setup_mod, "run_health_checks",
+        lambda cfg: [_ok_check("qdrant"), _ok_check("neo4j"),
+                     _ok_check("llm"), _ok_check("embedding")])
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                             confirm=lambda q: True,
+                             echo=lambda msg: None)
+    assert rc == 0
+
+    data = yaml.safe_load(
+        (config_dir / "kb.local.yml").read_text(encoding="utf-8"))
+    fs = data["sources"]["fs"]
+    assert fs["enabled"] is True, "sources.fs must be enabled by setup"
+    demo_dir = Path(fs["extra"]["dir"])
+    assert demo_dir.is_dir(), f"demo dir {demo_dir} must exist"
+    names = {p.name for p in demo_dir.iterdir()}
+    assert "welcome.md" in names and "getting-started.md" in names
+
+
+def test_setup_fs_demo_does_not_override_user_source_config(
+        _isolate_config, monkeypatch):
+    """A pre-existing sources.fs block in kb.local.yml is preserved (the
+    user's dir wins; only enabled is forced true)."""
+    import digital_twins.setup as setup_mod
+    config_dir, state_dir = _isolate_config
+
+    user_dir = config_dir / "my-docs"
+    user_dir.mkdir(parents=True)
+    (config_dir / "kb.local.yml").write_text(
+        yaml.safe_dump({
+            "qdrant": {"url": "http://q:6333"},
+            "sources": {"fs": {"enabled": True,
+                                "extra": {"dir": str(user_dir)}}},
+        }), encoding="utf-8")
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(
+        setup_mod, "run_health_checks",
+        lambda cfg: [_ok_check("qdrant")])
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                             confirm=lambda q: True,
+                             echo=lambda msg: None)
+    assert rc == 0
+
+    data = yaml.safe_load(
+        (config_dir / "kb.local.yml").read_text(encoding="utf-8"))
+    fs = data["sources"]["fs"]
+    # The user's dir is preserved (not clobbered by the demo dir).
+    assert fs["extra"]["dir"] == str(user_dir)
+    assert fs["enabled"] is True
+    # The demo dir was NOT created as a side effect.
+    demo = config_dir / "kb-demo"
+    assert not demo.exists()
+
+
+def test_setup_fs_demo_enabled_only_when_absent(_isolate_config,
+                                                monkeypatch):
+    """setup never forces a source that the user explicitly disabled."""
+    import digital_twins.setup as setup_mod
+    config_dir, state_dir = _isolate_config
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "kb.local.yml").write_text(
+        yaml.safe_dump({
+            "qdrant": {"url": "http://q:6333"},
+            "sources": {"fs": {"enabled": False}},
+        }), encoding="utf-8")
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(
+        setup_mod, "run_health_checks",
+        lambda cfg: [_ok_check("qdrant")])
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                             confirm=lambda q: True,
+                             echo=lambda msg: None)
+    assert rc == 0
+    data = yaml.safe_load(
+        (config_dir / "kb.local.yml").read_text(encoding="utf-8"))
+    # explicitly disabled by the user -> setup leaves it disabled
+    assert data["sources"]["fs"]["enabled"] is False
+
+
+def test_fs_demo_skipped_when_user_disabled_fs(_isolate_config, monkeypatch):
+    """configure_fs_demo is a no-op when the user explicitly disabled the
+    fs source (enabled: false with no dir)."""
+    import digital_twins.setup as setup_mod
+    config_dir, state_dir = _isolate_config
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "kb.local.yml").write_text(
+        yaml.safe_dump({
+            "qdrant": {"url": "http://q:6333"},
+            "sources": {"fs": {"enabled": False}},
+        }), encoding="utf-8")
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "run_health_checks",
+                        lambda cfg: [_ok_check("qdrant")])
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                             confirm=lambda q: True,
+                             echo=lambda msg: None)
+    assert rc == 0
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["sources"]["fs"]["enabled"] is False
+    assert not (config_dir / "kb-demo").exists()
+
+
+def test_setup_fs_demo_merges_into_existing_kb_local(_isolate_config,
+                                                      monkeypatch):
+    """A kb.local.yml that already exists (user-managed, no sources.fs
+    block) gets the fs demo source merged in — the file is preserved and
+    the demo dir created."""
+    import digital_twins.setup as setup_mod
+    config_dir, state_dir = _isolate_config
+    # A pre-existing kb.local.yml (e.g. hand-edited by the user) with no
+    # sources.fs block.
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "kb.local.yml").write_text(
+        yaml.safe_dump({"qdrant": {"url": "http://q:6333"}}),
+        encoding="utf-8")
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "run_health_checks",
+                        lambda cfg: [_ok_check("qdrant")])
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                             confirm=lambda q: True,
+                             echo=lambda msg: None)
+    assert rc == 0
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    fs = data["sources"]["fs"]
+    assert fs["enabled"] is True
+    demo_dir = Path(fs["extra"]["dir"])
+    assert demo_dir.is_dir()
+    # the original qdrant value was preserved through the merge
+    assert data["qdrant"]["url"] == "http://q:6333"
+
+
+def test_skip_services_never_writes_kb_local(_isolate_config, monkeypatch):
+    """B1 (harden): --skip-services means the wizard writes no config at
+    all — including the fs-demo merge step. The test doubles the user's
+    'I handle my own backend, and my own sources, too' stance."""
+    import digital_twins.setup as setup_mod
+    config_dir, state_dir = _isolate_config
+
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "run_health_checks",
+                        lambda cfg: [_ok_check(n) for n in
+                                     ("qdrant", "neo4j", "llm", "embedding")])
+    monkeypatch.setenv("KB_QDRANT__URL", "http://cloud-q:6333")
+    monkeypatch.setenv("KB_NEO4J__URL", "bolt://cloud-n:7687")
+    monkeypatch.setenv("KB_LLM__ENDPOINT", "http://cloud-llm/v1")
+
+    def _no_probe(*a, **kw):
+        raise AssertionError("skip_services must not probe docker or cloud")
+    monkeypatch.setattr(setup_mod, "docker_available", _no_probe)
+    monkeypatch.setattr(setup_mod, "run_local_stack", _no_probe)
+    monkeypatch.setattr(setup_mod, "run_cloud_stack", _no_probe)
+    # Pin the demo-dir creator too: skip_services must not create the demo
+    # dir as a side effect either.
+    def _no_demo(*a, **kw):
+        raise AssertionError("skip_services must not create the fs demo dir")
+    monkeypatch.setattr(setup_mod, "_ensure_demo_files", _no_demo)
+
+    rc = setup_mod.run_setup(
+        prompt=lambda q: "unused",
+        confirm=lambda q: True,
+        echo=lambda msg: None,
+        force_cloud=True,
+        skip_services=True)
+    assert rc == 0
+    assert not (config_dir / "kb.local.yml").is_file()
+    assert not (config_dir / "kb-demo").is_dir()
+
+
+def test_rerun_with_valid_kb_local_still_enables_fs_demo(_isolate_config,
+                                                          monkeypatch):
+    """Re-run of setup where kb.local.yml already exists (valid-config
+    fast path, no --skip-services): the wizard skips service startup but
+    still runs the fs-demo merge, so the README fast path's last command
+    works out of the box on a machine that has already been through
+    setup once and is being re-run (e.g. after a backend was manually
+    pointed at by the user)."""
+    import digital_twins.setup as setup_mod
+    config_dir, state_dir = _isolate_config
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "kb.local.yml").write_text(
+        yaml.safe_dump({"qdrant": {"url": "http://q:6333"}}),
+        encoding="utf-8")
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "run_health_checks",
+                        lambda cfg: [_ok_check(n) for n in
+                                     ("qdrant", "neo4j", "llm", "embedding")])
+
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                             confirm=lambda q: True,
+                             echo=lambda msg: None)
+    assert rc == 0
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["sources"]["fs"]["enabled"] is True
+    assert Path(data["sources"]["fs"]["extra"]["dir"]).is_dir()

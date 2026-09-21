@@ -22,16 +22,20 @@ bootstrap script) and writes `kb.local.yml` for you; when it is not, it
 prompts for the three cloud endpoints instead. In either case it creates
 the state DB, the first admin account (a generated password is shown
 once and written to `admin-credentials.txt` in your state dir, created
-with mode 600 — delete it after your first login), runs the health
+with mode 600 — delete it after your first login), enables the `fs` demo
+source (a `kb-demo` dir with two sample .md files next to your config,
+merged into `kb.local.yml` — skipped when you already have a
+`sources.fs` block of your own), runs the health
 checks, and prints the next step. Re-running `setup` on a machine with a
 valid `kb.local.yml` skips service startup; `--skip-services` forces that
 skip regardless of config state.
 
 Flags (precedence: `--skip-services` wins over everything):
-- `--skip-services` — "I handle backends myself": never probe Docker,
-  never prompt for endpoints, never write `kb.local.yml`; only
-  init + admin + health checks run. Use on a re-run where the backend
-  is already up.
+- `--skip-services` — "I handle backends and sources myself": never
+  probe Docker, never prompt for endpoints, never write `kb.local.yml`
+  (including the `fs` demo-source merge) and never create the demo
+  dir; only init + admin + health checks run. Use on a re-run where the
+  backend is already up.
 - `--cloud` — skip Docker detection, go straight to cloud mode (prompts
   for the three required endpoints). Set via env (`KB_QDRANT__URL`,
   `KB_NEO4J__URL`, `KB_LLM__ENDPOINT`) or answer the prompts;
@@ -188,16 +192,20 @@ collection vector size matching the embedding model. A dimension mismatch is
 a hard error naming the mismatch and the remediation ("re-embed, or point at
 a new collection"), exit 1.
 
-### Step 5 — Enable a source and run your first ingest
+### Step 5 — Run your first ingest
 
-Point a source at real content. The `fs` source is the simplest demo:
+`setup` already enabled the `fs` demo source for you (a `kb-demo` dir
+with two sample .md files next to your config dir, merged into
+`kb.local.yml`), so the fast path's last command works out of the box:
 
 ```bash
-# In <config dir>/kb.local.yml (or via env: KB_SOURCES__FS__ENABLED=true etc.):
-#   sources.fs: { enabled: true, extra: { dir: /tmp/kb-demo } }
-# (put two .md files in /tmp/kb-demo first)
 digital-twins run --source fs
 ```
+
+To point `fs` at your own content instead, edit the `sources.fs` block
+in `<config dir>/kb.local.yml` (or via env, e.g.
+`KB_SOURCES__FS__ENABLED=true` + `KB_SOURCES__FS__EXTRA__DIR=...`) and
+re-run.
 
 **Check:** run 1 reports `fs: 2 item(s)` and writes an audit row with a
 `run_id`. Run it again:
