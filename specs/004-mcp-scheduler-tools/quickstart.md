@@ -31,7 +31,7 @@ digital-twins serve-mcp --transport http --port 8770   # HTTP/SSE (default 127.0
 ### Get a token
 | Credential | How | Grants |
 |---|---|---|
-| **Personal token** (recommended) | `digital-twins account token` (admin/scheduler self-service; shows once) | that user's role |
+| **Personal token** (recommended) | `digital-twins token create` (admin/scheduler self-service; shows once) | that user's role |
 | **Session token** | web UI `POST /signin` → `session_token` | that user's role, 8 h TTL, revocable |
 | **Service token** (BR-10) | `DT_SERVICE_TOKEN` env on the server | the configured service account |
 

@@ -85,7 +85,7 @@ Once installed with the `[mcp]` extra, exposing your KB to an MCP-capable
 agent is two commands + one JSON block:
 
 ```bash
-digital-tokens create                   # mint a personal token (shown once)
+digital-twins token create              # mint a personal token (shown once)
 digital-twins serve-mcp --http          # long-running HTTP server on 127.0.0.1:8770
 ```
 
@@ -296,7 +296,7 @@ digital-twins run --once
 digital-twins web
 
 # 6d — MCP server for external agents (see "Exposing to agents" above)
-digital-tokens create                   # mint a personal token
+digital-twins token create              # mint a personal token
 digital-twins serve-mcp --http         # HTTP on 127.0.0.1:8770
 digital-twins serve-mcp --http --port 9000
 digital-twins serve-mcp                # stdio NDJSON (agent spawns it)
@@ -370,7 +370,7 @@ Accounts and credentials live in the state DB (`~/.digital-twins`):
   personal token (`personal_tokens`, `pt_` prefix, revocable).
 - **Machine-to-machine** (MCP / cron) uses the shared service token
   `DT_SERVICE_TOKEN` (env), or an account email + password via
-  `digital-tokens create` (see "Exposing to agents" above).
+  `digital-twins token create` (see "Exposing to agents" above).
 
 Role model (default): `reader` → read/search/list; `scheduler` →
 reader + schedule CRUD/trigger; `admin` → scheduler + user management.
