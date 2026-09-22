@@ -634,3 +634,86 @@ def test_has_valid_local_config(_isolate_config, monkeypatch):
     path.write_text(yaml.safe_dump({"qdrant": {"url": "http://x:6333"}}),
                     encoding="utf-8")
     assert setup_mod.has_valid_local_config()
+
+# ---------------------------------------------------------------------------
+# 0.11.2 wizard fixes: neo4j credential re-prompt + endpoint whitespace strip
+# ---------------------------------------------------------------------------
+
+
+def test_cloud_whitespace_in_endpoints_is_stripped(_isolate_config,
+                                                    monkeypatch):
+    """A pasted URL with a trailing/leading space must be stripped before
+    being written to kb.local.yml (the opaque 'InvalidURL: control
+    characters' health-check failure)."""
+    config_dir, _state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    for var in ("KB_NEO4J__USER", "KB_NEO4J__PASSWORD"):
+        monkeypatch.delenv(var, raising=False)
+
+    prompts = iter([
+        "http://cloud-q:6333 ",
+        " bolt://cloud-n:7687 ",
+        "http://cloud-llm:8000/v1 ",
+        "neo4j-user",
+        "neo4j-pw",
+    ])
+    ok = setup_mod.run_cloud_stack(prompt_text=lambda label: next(prompts),
+                                   echo=lambda m: None)
+    assert ok is True
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["qdrant"]["url"] == "http://cloud-q:6333"
+    assert data["neo4j"]["url"] == "bolt://cloud-n:7687"
+    assert data["llm"]["endpoint"] == "http://cloud-llm:8000/v1"
+
+
+def test_cloud_neo4j_credentials_reprompt_when_empty(_isolate_config,
+                                                      monkeypatch):
+    """When the Neo4j URL is answered but user+password are left empty,
+    the wizard re-prompts; credentials entered on the re-prompt are
+    written to kb.local.yml."""
+    config_dir, _state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    monkeypatch.delenv("KB_NEO4J__USER", raising=False)
+    monkeypatch.delenv("KB_NEO4J__PASSWORD", raising=False)
+
+    prompts = iter([
+        "http://cloud-q:6333",
+        "bolt://cloud-n:7687",
+        "http://cloud-llm:8000/v1",
+        "",            # neo4j user: first answer empty -> re-prompt
+        "",            # neo4j password: first answer empty -> re-prompt
+        "neo4j-user",  # re-prompt user
+        "neo4j-pw",    # re-prompt password
+    ])
+    ok = setup_mod.run_cloud_stack(prompt_text=lambda label: next(prompts),
+                                   echo=lambda m: None)
+    assert ok is True
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["neo4j"]["user"] == "neo4j-user"
+    assert data["neo4j"]["password"] == "neo4j-pw"
+
+
+def test_cloud_neo4j_auth_disabled_stays_clean(_isolate_config,
+                                                monkeypatch):
+    """Auth-disabled Neo4j: every re-prompt answered empty -> kb.local.yml
+    carries no user/password keys (the health check tolerates that)."""
+    config_dir, _state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    monkeypatch.delenv("KB_NEO4J__USER", raising=False)
+    monkeypatch.delenv("KB_NEO4J__PASSWORD", raising=False)
+
+    prompts = iter([
+        "http://cloud-q:6333",
+        "bolt://cloud-n:7687",
+        "http://cloud-llm:8000/v1",
+    ])
+    ok = setup_mod.run_cloud_stack(
+        prompt_text=lambda label: next(prompts, ""),
+        echo=lambda m: None)
+    assert ok is True
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert "user" not in data["neo4j"]
+    assert "password" not in data["neo4j"]

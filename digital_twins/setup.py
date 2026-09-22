@@ -313,11 +313,42 @@ def run_cloud_stack(prompt_text: Callable = click.prompt,
     embedding = _env_or_prompt("KB_EMBEDDING__ENDPOINT",
                                "Cloud embedding endpoint (optional)",
                                required=False)
+    # neo4j.user / neo4j.password: needed only when the Neo4j instance
+    # requires auth.  The prompts below stay optional; the re-prompt
+    # after the endpoint prompts catches the cloud-needs-auth case.
     neo4j_user = _env_or_prompt("KB_NEO4J__USER",
-                                "Cloud Neo4j user (optional)", required=False)
+                                "Cloud Neo4j user (e.g. neo4j)",
+                                required=False)
     neo4j_password = _env_or_prompt("KB_NEO4J__PASSWORD",
-                                    "Cloud Neo4j password (optional)",
+                                    "Cloud Neo4j password",
                                     required=False)
+    # Strip leading/trailing whitespace from every endpoint the user
+    # typed: a pasted URL with a trailing space fails the health check
+    # with an opaque "InvalidURL: control characters" error.
+    qdrant = qdrant.strip()
+    neo4j = neo4j.strip()
+    llm = llm.strip()
+    embedding = embedding.strip()
+    # The cloud path: when the user answered the Neo4j URL prompt but
+    # left user/password empty, re-prompt (up to 3 times per field) —
+    # a cloud Neo4j that needs auth will fail the health check
+    # without credentials, and the wizard's contract is to leave a
+    # *working* kb.local.yml.  Pressing Enter through all 3 prompts
+    # still accepts an auth-disabled instance.
+    if neo4j and not neo4j_user:
+        for _attempt in range(3):
+            neo4j_user = prompt_text(
+                "Cloud Neo4j user (e.g. neo4j) "
+                "[empty for auth-disabled Neo4j]:")
+            if neo4j_user:
+                break
+    if neo4j and not neo4j_password:
+        for _attempt in range(3):
+            neo4j_password = prompt_text(
+                "Cloud Neo4j password "
+                "[empty for auth-disabled Neo4j]:")
+            if neo4j_password:
+                break
     if not (qdrant and neo4j and llm):
         empty = [name for name, value in (
             ("KB_QDRANT__URL", qdrant), ("KB_NEO4J__URL", neo4j),

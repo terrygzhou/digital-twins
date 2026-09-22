@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased]
+All notable changes to `digital-twins` are documented here.
+Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
+
+## [0.11.2] - 2026-09-22
 
 ### Added
 - install.sh / install-local.sh: use `uv` (venv + pip) when the `uv`
@@ -16,8 +19,22 @@
   tool (`<venv>/bin/pip uninstall` or `uv pip uninstall --python …`);
   system pip remains the default for non-venv installs.
 
-All notable changes to `digital-twins` are documented here.
-Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
+### Fixed
+- **setup wizard now re-prompts for Neo4j credentials** when a cloud
+  Neo4j URL is given but `neo4j.user` / `neo4j.password` are left
+  empty — the previous behaviour wrote an incomplete `kb.local.yml`
+  and the health check reported `neo4j FAIL unconfigured`.  Each
+  field is re-prompted up to 3 times with an "[empty for
+  auth-disabled Neo4j]" hint; pressing Enter through all prompts
+  still works for auth-disabled instances.  New regression tests:
+  `test_cloud_neo4j_credentials_reprompt_when_empty`,
+  `test_cloud_neo4j_auth_disabled_stays_clean`,
+  `test_cloud_whitespace_in_endpoints_is_stripped`.
+- **setup wizard strips whitespace from every endpoint** the user
+  types (qdrant / neo4j / llm / embedding).  A pasted URL with a
+  trailing space previously failed the LLM health check with an
+  opaque `InvalidURL: control characters` error; the value is now
+  `.strip()`-ed before being written to `kb.local.yml`.
 
 ## [0.11.1] - 2026-09-22
 
