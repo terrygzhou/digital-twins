@@ -99,6 +99,14 @@ once and written to `admin-credentials.txt` in your state dir, created
 with mode 600 — delete it after your first login), runs the health
 checks, and prints the next step.
 
+> **Where your files live** — config and state are in *separate* dirs by
+> default: `kb.local.yml` is in the config dir
+> (`~/.config/digital-twins/`), while `state.db` and
+> `admin-credentials.txt` live in the state dir (`~/.digital-twins/`).
+> `ls ~/.digital-twins/` showing only `state.db` is normal — the config
+> file is not there. Both are overridable via `KB_CONFIG_DIR` /
+> `KB_STATE_DIR`.
+
 Flags:
 
 | Flag | Effect |

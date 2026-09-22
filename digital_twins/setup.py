@@ -404,7 +404,9 @@ def run_setup(prompt: Callable = click.prompt,
             return 5
     elif has_valid_local_config():
         echo("kb.local.yml already has valid endpoints — skipping service "
-             "startup (re-run 'digital-twins setup --cloud' to force cloud).")
+             "startup (config: "
+             f"{local_config_path()} "
+             "(re-run 'digital-twins setup --cloud' to force cloud).")
     elif docker_available() and confirm(
             "Docker is available. Start the bundled local stack? "
             "(qdrant + neo4j + embedding-model, ~1-2 min on first run)"):
@@ -433,7 +435,9 @@ def run_setup(prompt: Callable = click.prompt,
              f"{state_dir / 'admin-credentials.txt'}): {admin_pw}")
         echo("  delete the credentials file after your first login.")
     else:
-        echo(f"admin already exists: {admin_email}")
+        echo(f"admin already exists: {admin_email} "
+             f"(credentials: {state_dir / 'admin-credentials.txt'}, "
+             f"written once on first creation; re-runs never re-print it).")
 
     # --- 4) validate --------------------------------------------------------
     results = run_health_checks(load())
