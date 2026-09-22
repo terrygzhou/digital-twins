@@ -130,9 +130,16 @@ Once installed with the `[mcp]` extra, exposing your KB to an MCP-capable
 agent is two commands + one JSON block:
 
 ```bash
-digital-twins token create              # mint a personal token (shown once)
-digital-twins serve-mcp --http          # long-running HTTP server on 127.0.0.1:8770
+export DT_USER_PASSWORD=<admin password>          # minting auth
+digital-twins token create --as <admin-email>     # mint a personal token (shown once)
+digital-twins serve-mcp --http                    # long-running HTTP server on 127.0.0.1:8770
 ```
+
+> The token commands authenticate first: either `DT_PERSONAL_TOKEN`
+> (a token you already have) or the admin password via
+> `DT_USER_PASSWORD` + `--as <admin-email>`. The admin password is the
+> one generated at `setup`/`init` — it lives in
+> `~/.digital-twins/admin-credentials.txt` (written once, mode 600).
 
 Agent MCP config (Claude Desktop / Cursor / DSH / Hermes — same shape):
 
@@ -422,11 +429,24 @@ Accounts and credentials live in the state DB (`~/.digital-twins`):
 
 - **Admins** sign in with a password (PBKDF2, `sessions`); the first
   `init` creates one; `digital-twins user add` adds more.
+- The generated password is shown once and written to
+  `admin-credentials.txt` in the state dir; **there is no
+  password-reset path** — if the file is missing, removing
+  `~/.digital-twins` and re-running `setup` re-creates the admin
+  from scratch.
+- To mint a personal token (needed for `digital-twins token …`,
+  MCP, cron): export the admin password into
+  `DT_USER_PASSWORD` and run
+  `digital-twins token create --as <admin-email>` — the plaintext
+  token is printed once. (For machine-to-machine auth you can also
+  set `DT_SERVICE_TOKEN`.)
 - **Readers** sign in and get an 8 h session token (`sessions`), or a
   personal token (`personal_tokens`, `pt_` prefix, revocable).
 - **Machine-to-machine** (MCP / cron) uses the shared service token
-  `DT_SERVICE_TOKEN` (env), or an account email + password via
+  `DT_SERVICE_TOKEN` (env), or a personal token minted via
   `digital-twins token create` (see "Exposing to agents" above).
+  Minting authenticates with the admin password through
+  `DT_USER_PASSWORD` + `--as <admin-email>`.
 
 Role model (default): `reader` → read/search/list; `scheduler` →
 reader + schedule CRUD/trigger; `admin` → scheduler + user management.

@@ -435,9 +435,18 @@ def run_setup(prompt: Callable = click.prompt,
              f"{state_dir / 'admin-credentials.txt'}): {admin_pw}")
         echo("  delete the credentials file after your first login.")
     else:
-        echo(f"admin already exists: {admin_email} "
-             f"(credentials: {state_dir / 'admin-credentials.txt'}, "
-             f"written once on first creation; re-runs never re-print it).")
+        cred_file = state_dir / "admin-credentials.txt"
+        if cred_file.is_file():
+            echo(f"admin already exists: {admin_email} "
+                 f"(password: {cred_file}, written once on first "
+                 f"creation; re-runs never re-print it).")
+        else:
+            echo(f"admin already exists: {admin_email}. "
+                 f"The one-time credential file "
+                 f"({cred_file}) is missing — if you forgot the "
+                 f"password there is no reset path today; to start "
+                 f"fresh, remove {state_dir} and re-run setup "
+                 f"(see README 'Uninstall').")
 
     # --- 4) validate --------------------------------------------------------
     results = run_health_checks(load())
