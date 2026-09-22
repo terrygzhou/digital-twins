@@ -20,6 +20,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
   (`~/.digital-twins/`) and naming the `KB_CONFIG_DIR` / `KB_STATE_DIR`
   overrides.
 
+### Docs
+
+- **The README Uninstall section now states where `uninstall-local.sh`
+  lives** (the repo's `scripts/` dir, *not* the `curl … | bash install.sh`
+  one-liner) and gives the no-checkout fetch path plus the bare `rm -rf`
+  equivalent of `--remove-data` (with a `state.db` backup first).
+
 ### Fixed
 
 - **`scripts/install.sh` detects a stale CLI and force-reinstalls.** A re-run
