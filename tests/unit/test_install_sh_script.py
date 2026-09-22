@@ -139,3 +139,59 @@ def test_dist_name_override(fake_exec):
     assert proc.returncode == 0
     joined = " ".join(" ".join(c) for c in calls)
     assert "my-custom-dist[mcp]" in joined
+
+
+# --- doc-contract tests: header / --help must not document behavior the
+# script does not implement (doc-drift is a regression). ------------------
+
+def _script_text():
+    return SCRIPT.read_text()
+
+
+def test_header_does_not_document_phantom_force_flag():
+    text = _script_text()
+    # install.sh has no --force flag; the exit-1 line must not claim one.
+    assert "a step failed and --force was not given" not in text
+
+
+def test_header_does_not_document_nonfunctional_timeout_env():
+    text = _script_text()
+    assert "INSTALL_SH_TIMEOUT_S" not in text
+    # No timeout/watch logic exists, so the env override is not documented
+    # anywhere (header comment or --help).
+    proc = _run_help()
+    assert "INSTALL_SH_TIMEOUT_S" not in proc.stdout
+
+
+def _run_help():
+    import subprocess as _sp
+    import shutil as _shutil
+    bash = _shutil.which("bash") or "/bin/bash"
+    return _sp.run([bash, str(SCRIPT), "--help"],
+                   capture_output=True, text=True)
+
+
+def test_help_output_does_not_spill_into_code():
+    proc = _run_help()
+    assert proc.returncode == 0
+    # `set -euo pipefail` and the run_cmd() docstring live *after* the
+    # header comment block, in the code section; they must not appear in
+    # --help output.  (Mentions of run_cmd() *inside* the header are
+    # legitimate doc text and stay.)
+    out = proc.stdout
+    assert "set -euo pipefail" not in out
+    assert "# All external commands route through run_cmd" not in out
+
+
+def test_help_lists_all_documented_flags():
+    proc = _run_help()
+    for flag in ("--extras", "--cloud", "--skip-services", "--run-ingest",
+                 "--no-setup", "--python", "--dist", "--help"):
+        assert flag in proc.stdout, f"{flag} missing from --help"
+
+
+def test_header_step1_matches_actual_venv_behavior():
+    text = _script_text()
+    # install.sh does NOT auto-install python3-venv; it prints the
+    # remediation and exits 2. The header must not overstate that.
+    assert "self-bootstrap via python3-venv" not in text

@@ -6,7 +6,7 @@
 
 ## Workflow
 - Work flows through the installed Spec-Kit workflow: `specify → clarify → plan → tasks → implement` (prompts in `.pi/prompts/speckit.*`, scripts in `.specify/`). No ad-hoc coding before the artifacts exist.
-- `.specify/memory/constitution.md` is filled and ratified (v1.0.0, six principles incl. Test-First) — the constitution gate applies. All features 001–013 are complete; v0.9.0 is the current release line (uploaded to PyPI; the post-tag fixes 0b6fff0 / 4356769 / 00cf529 ship in the next release). `specs/*/tasks.md` checkboxes must be kept in sync with commits (SDD ledgers in `.superpowers/sdd/` — `tasks-md/` for 001, per-feature dirs for 002–013 with `progress.md` — `012-kb-count-hotfix` and `013-neo4j-query-tests` are ledger-first hotfix slices with spec-lite artifacts, `deferred-minors/` for the 001 sub-plan — are the detailed records).
+- `.specify/memory/constitution.md` is filled and ratified (v1.0.0, six principles incl. Test-First) — the constitution gate applies. All features 001–015 are complete; v0.11.0 is the current release line (published on PyPI as the `digital-twins-kb` distribution; the bare `digital-twins` name is PyPI-blocked as too similar to the already-registered `digital-twins-kb`). `specs/*/tasks.md` checkboxes must be kept in sync with commits (SDD ledgers in `.superpowers/sdd/` — `tasks-md/` for 001, per-feature dirs for 002–013 with `progress.md` — `012-kb-count-hotfix` and `013-neo4j-query-tests` are ledger-first hotfix slices with spec-lite artifacts, `deferred-minors/` for the 001 sub-plan — are the detailed records).
 
 ## Baseline pipeline (context, not a dependency)
 - The job being promoted lives outside this repo: `~/.hermes/skills/hermes/personal-kb/scripts/` + Hermes cron `e4735cf2a2f2` (`0 3 * * *`). Read it for context when implementing.
@@ -15,10 +15,10 @@
 ## Host pins that must NOT leak into the package
 - `python3.12` pin, `CUDA_VISIBLE_DEVICES=""`, absolute `~/.` source paths: all host-specific. BR-11.2 / NFR-13 — no host path, username, or install location in shipped code, config defaults, or docs. Everything resolves through the config layer at runtime.
 
-## Package & build/test (0.9.0)
+## Package & build/test (0.11.0)
 - Python package `digital_twins/`: `config/` (schema, loader, knobs, deprecation, local_io), `sources/` (base + fs/hermes/pi/dsh/paperclip/imap_mail/custom/session), `ingest/` (ids, chunking, embedding, pipeline), `state/` (db, models, migrations), `scheduler/` (presets, schedules, loop, status), `mcp/` (auth, registry, acl, dispatch, stdio, http), `web/` (server), `accounts.py`, `auth.py`, `user_config.py`, `health.py`, `cli.py`, `__main__.py`.
 - Install/build: `pip install .` (hatchling); console script `digital-twins`; also `python -m digital_twins` (and `python -m digital_twins.mcp` for the MCP server).
-- Test: `pytest` (unit in `tests/unit/`, integration in `tests/integration/`; 983 collected at 0.9.0 / commit 00cf529). Standing guards: `tests/integration/test_portability.py` (T006) and `tests/unit/test_knob_docs.py` (T027) must stay green.
+- Test: `pytest` (unit in `tests/unit/`, integration in `tests/integration/`; 991 collected at 0.9.0, grown since — the two installer doc-contract test files add ~9 more as of this writing). Standing guards: `tests/integration/test_portability.py` (T006) and `tests/unit/test_knob_docs.py` (T027) must stay green.
 - Config precedence (deterministic): `env (incl. .env) → kb.local.yml → kb.yml → built-in defaults` (env wins; `KB_` prefix, `__` = nesting).
 - Version: `__version__` single-sourced in `digital_twins/__init__.py`; `digital-twins --version` / `--version-json`.
 

@@ -20,7 +20,7 @@
 #
 # Exit codes:
 #   0  success (install + setup completed)
-#   1  a step failed and --force was not given (remediation printed)
+#   1  a step failed (remediation printed)
 #   2  no usable Python >=3.11 was found
 #   3  `digital-twins setup` reported a failing health check
 #   5  `digital-twins setup` could not resolve cloud endpoints
@@ -43,7 +43,6 @@
 # Environment overrides:
 #   INSTALL_EXEC       Path to a fake binary that intercepts run_cmd() calls.
 #   INSTALL_EXEC_LOG   Where the fake writes its JSONL argv log.
-#   INSTALL_TIMEOUT_S  Max seconds to wait on the pip install (default 600).
 set -euo pipefail
 
 # All external commands route through run_cmd() so a test harness can set
@@ -74,7 +73,12 @@ NO_SETUP=0
 PYTHON_OVERRIDE=""
 
 usage() {
-  sed -n '1,50p' "$0" | grep -E '^#( |$)' | sed 's/^# \{0,2\}//'
+  # Print the header comment block: every full-comment or blank line from
+  # line 2 up to the first blank line before '# --- constants ---' (which
+  # separates the header from the code; `set -euo pipefail` follows it, so
+  # stopping at the blank line keeps --help free of code/docstring lines).
+  # No line-count range, so growth of the header cannot leak into the body.
+  sed -n '2,/^$/{ p; /^$/q; }' "$0" | grep -E '^#( |$)' | sed 's/^# \{0,2\}//'
 }
 
 note() { echo "install: $*" >&2; }

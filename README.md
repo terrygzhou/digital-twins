@@ -253,6 +253,13 @@ the tool where they live in the init step below.
 
 ### Initialise
 
+> **If you ran the `setup` wizard above, `init` and `validate` have already
+> been done for you** — this section is only needed when you skipped `setup`
+> (e.g. you installed the package by hand and want to configure endpoints
+> manually). `setup` runs `init` + the first-admin step + the health checks
+> (equivalent to `validate`) in one go, and adds backend detection and the
+> `kb.local.yml` write.
+
 ```bash
 digital-twins init
 ```
@@ -274,6 +281,10 @@ Re-running is safe (idempotent): existing values are kept, only missing
 pieces are added.
 
 ### Validate
+
+> **Subsumed by `setup`** — the wizard runs the same health checks and prints
+> the same report. Use `validate` on its own only if you ran `init` manually
+> and want to re-check after changing an endpoint.
 
 ```bash
 digital-twins validate
