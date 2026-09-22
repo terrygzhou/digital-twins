@@ -3,7 +3,33 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
-## [Unreleased]
+## [0.11.1] - 2026-09-22
+
+### Changed
+
+- **`setup` wizard now names the real paths** it touches, so a host that
+  re-runs the installer (idempotent branches) can find its files:
+  - the "kb.local.yml already has valid endpoints" branch now prints the
+    config-dir path (e.g. `~/.config/digital-twins/kb.local.yml`), not just
+    the bare filename — the config dir and the state dir are *separate* by
+    default.
+  - the "admin already exists" re-run branch now points at
+    `admin-credentials.txt` and notes it is written once and never re-printed.
+- **`README.md` gains a "Where your files live" callout** distinguishing the
+  config dir (`~/.config/digital-twins/`) from the state dir
+  (`~/.digital-twins/`) and naming the `KB_CONFIG_DIR` / `KB_STATE_DIR`
+  overrides.
+
+### Fixed
+
+- **`scripts/install.sh` detects a stale CLI and force-reinstalls.** A re-run
+  on a host whose venv already held an older `digital-twins-kb` could leave
+  `pip install --upgrade` a silent no-op, so the very next
+  `$venv_bin setup` failed with "No such command 'setup'". The installer now
+  reads the installed version, probes `--help` for the `setup` subcommand,
+  and issues `pip install --upgrade --force-reinstall` when it is missing.
+  Pure-bash string ops (no `head`/`grep`) so the mocked-exec tests with an
+  empty `PATH` exercise every branch.
 
 ## [0.11.0] - 2026-11-14
 
