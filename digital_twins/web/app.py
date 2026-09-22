@@ -121,6 +121,23 @@ def _content_type_for(path: str) -> str:
 PROBE_PER_SERVICE_DEADLINE_S = 4.5
 
 
+class WebBindError(OSError):
+    """The web app could not bind to its configured (host, port).
+
+    Raised by :class:`WebApp.__init__` when ``socket.bind`` fails —
+    typically ``EADDRINUSE`` (another process already listens on
+    ``web.port``).  The CLI maps this to fail-fast exit code 2 with a
+    human-readable remediation line, instead of a raw
+    ``OSError``/``Traceback``.
+    """
+
+    def __init__(self, host: str, port: int, reason: str):
+        self.host = host
+        self.port = port
+        self.reason = reason
+        super().__init__(f"address in use: http://{host}:{port} ({reason})")
+
+
 class QdrantUnavailable(Exception):
     """Qdrant is unconfigured or unreachable for the /api/kb/* read surface.
 
@@ -1307,7 +1324,15 @@ class WebApp(ThreadingHTTPServer):
         # config layer (qdrant.url / qdrant.api_key — no host defaults).
         self.qdrant_client = None
         self.db = _open_same_db(db, check_same_thread=False)
-        super().__init__(addr, _WebAppHandler)
+        try:
+            super().__init__(addr, _WebAppHandler)
+        except OSError as exc:
+            # A busy web.port must surface as a fail-fast with a
+            # remediation hint, not a raw OSError traceback from
+            # socketserver.server_bind.
+            raise WebBindError(
+                addr[0], addr[1],
+                f"{exc.__class__.__name__}: {exc}") from exc
 
 
 def _copy_dict(cfg: dict) -> dict:

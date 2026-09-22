@@ -307,3 +307,74 @@ def test_web_subcommand_red_failure_reason(tmp_path):
         assert "No such command" in (proc.stdout + proc.stderr), (
             f"expected click's 'No such command' for the missing web "
             f"subcommand, got:\n{proc.stdout}\n{proc.stderr}")
+
+
+# 5 — a busy web port fails fast with a clear message, not a traceback ------
+
+
+def _reserve_addr(bind: str, port: int):
+    """Hold ``bind:port`` with a throwaway socket for the test's duration.
+
+    Returned socket stays open until the test's ``finally`` closes it, so
+    ``digital-twins web`` hitting the same address gets ``EADDRINUSE``
+    (POSIX) / ``WSAEADDRINUSE`` (Windows).
+    """
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    holder.bind((bind, port))
+    holder.listen(1)
+    return holder
+
+
+def test_web_subcommand_fails_fast_on_busy_port(tmp_path):
+    """If web.port is already taken, ``digital-twins web`` must fail fast
+    with exit code 2 + a human-readable stderr line (port + the web.port
+    knob name) — never a raw ``OSError`` / ``Traceback``.
+
+    The pre-fix behavior was a bare
+    ``OSError: [Errno 48] Address already in use`` traceback from
+    ``socketserver.server_bind``.
+    """
+    holder = _reserve_addr(BIND, PORT)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "digital_twins", "web"],
+            cwd=str(tmp_path),
+            env=_subprocess_env(tmp_path),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert proc.returncode == 2, (
+            f"expected fail-fast exit code 2, got {proc.returncode}:\n"
+            f"{proc.stdout}\n{proc.stderr}")
+        assert "Traceback" not in proc.stderr, (
+            f"raw traceback leaked to stderr:\n{proc.stderr}")
+        # Human-readable remediation, naming the address + the knob.
+        expected = (f"web: port {PORT} is already in use on {BIND}")
+        assert expected in proc.stderr, (
+            f"expected remediation line {expected!r} in stderr:\n"
+            f"{proc.stderr}")
+        assert "web.port" in proc.stderr, (
+            f"stderr must name the web.port knob:\n{proc.stderr}")
+    finally:
+        holder.close()
+
+
+def test_web_subcommand_free_port_still_starts(tmp_path):
+    """Counter-check: when web.port is free, ``digital-twins web`` still
+    binds and serves (the fail-fast path must not shadow the happy path).
+    """
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    server = _Server(tmp_path)
+    try:
+        server.wait_for_ready()
+        out = server.output()
+        assert f"web: listening on http://{BIND}:{PORT}" in out, (
+            f"happy-path URL missing from stdout:\n{out}")
+        assert server.proc.poll() is None
+    finally:
+        server.stop()

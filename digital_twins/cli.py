@@ -607,8 +607,19 @@ def web() -> None:
     db = connect(state_dir)
     try:
         migrate(db)
-        from digital_twins.web.app import build_web_app
-        app = build_web_app(db, cfg, host=bind, port=port)
+        from digital_twins.web.app import WebBindError, build_web_app
+        try:
+            app = build_web_app(db, cfg, host=bind, port=port)
+        except WebBindError as exc:
+            # A busy web.port fails fast (exit 2) with a remediation
+            # hint instead of a raw OSError traceback.
+            click.echo(
+                f"web: port {exc.port} is already in use on "
+                f"{exc.host} — free the port (find the process with "
+                f"`lsof -i :{exc.port}`) or change web.port "
+                f"(env KB_WEB__PORT, or kb.local.yml)",
+                err=True)
+            raise SystemExit(2)
         click.echo(
             f"web: listening on http://{bind}:{port} "
             f"(UI: http://{bind}:{port}/)")
