@@ -209,6 +209,28 @@ main() {
     fail "pip install failed. Check your network / PyPI access and re-run."
   fi
 
+  # --- 3b) verify the CLI is current ----------------------------------------
+  # A re-run on a host with a *stale* venv can leave pip a silent no-op
+  # (requirement already satisfied), so the very next '$venv_bin setup'
+  # fails with "No such command 'setup'". Detect that here: report the
+  # installed version, and force a reinstall when the CLI predates the
+  # 'setup' subcommand. Pure-bash string ops only (no head/grep, so the
+  # mocked-exec tests with an empty PATH still exercise every branch).
+  local cli_version cli_help
+  cli_version="$(run_cmd "$venv_bin" --version 2>/dev/null || true)"
+  note "installed version: ${cli_version:-unknown}"
+  cli_help="$(run_cmd "$venv_bin" --help 2>/dev/null || true)"
+  case "$cli_help" in
+    *setup*) ;;  # current CLI: 'setup' present in help
+    *)
+      note "stale CLI detected (no 'setup' subcommand); forcing a reinstall."
+      if ! run_cmd "$venv_pip" install --upgrade --force-reinstall --quiet "$extra_spec"; then
+        fail "forced reinstall failed. Check your network / PyPI access and re-run."
+      fi
+      note "reinstalled $extra_spec."
+      ;;
+  esac
+
   # --- 4) run the setup wizard ---------------------------------------------
   local setup_rc=0
   if [ "$NO_SETUP" -eq 0 ]; then

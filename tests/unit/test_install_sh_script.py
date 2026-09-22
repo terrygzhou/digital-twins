@@ -53,6 +53,31 @@ for a in "$@"; do
       ;;
   esac
 done
+
+# The console-script CLI probes: '$venv_bin --version' and '$venv_bin --help'.
+# Default: report a version whose help includes 'setup' (current CLI).
+# FAKE_CLI_STALE flag file: --help omits 'setup' (stale CLI, no setup cmd).
+for a in "$@"; do
+  case "$a" in
+    --version)
+      echo "digital-twins 0.9.9"
+      exit 0
+      ;;
+    --help)
+      stale="${FAKE_CLI_STALE:-}"
+      out="Usage: digital-twins [OPTIONS] [COMMAND] [ARGS]...
+Commands:
+  validate
+  run"
+      if [ -z "$stale" ] || [ ! -e "$stale" ]; then
+        out="${out}
+  setup"
+      fi
+      printf '%s\n' "$out"
+      exit 0
+      ;;
+  esac
+done
 exit 0"""
 
 
@@ -120,6 +145,32 @@ def test_setup_cloud_flag(fake_exec):
     assert proc.returncode == 0
     setup_calls = [c for c in calls if "setup" in c]
     assert setup_calls and "--cloud" in setup_calls[0]
+
+
+def test_current_cli_no_force_reinstall(fake_exec):
+    # A current CLI (help lists 'setup') must NOT trigger the force
+    # reinstall path: exactly one plain 'install --upgrade' call, no
+    # '--force-reinstall'.
+    proc, calls = _run(["--no-setup"], fake_exec)
+    assert proc.returncode == 0
+    force = [c for c in calls if "--force-reinstall" in c]
+    assert not force, f"unexpected force-reinstall: {force}"
+
+
+def test_stale_cli_triggers_force_reinstall(fake_exec):
+    # A stale CLI (help omits 'setup') must trigger a force reinstall:
+    # a second pip install call carrying --force-reinstall.
+    exe, log, home = fake_exec
+    flag = home / "cli-stale"
+    flag.write_text("1")
+    proc, calls = _run(["--no-setup"], fake_exec,
+                       extra_env={"FAKE_CLI_STALE": str(flag)})
+    assert proc.returncode == 0
+    force = [c for c in calls if "--force-reinstall" in c]
+    assert force, "expected a --force-reinstall call for the stale CLI"
+    # The version probe must have run before the stale detection.
+    ver_calls = [c for c in calls if "--version" in c]
+    assert ver_calls, "expected a --version probe"
 
 
 def test_venv_module_missing_exits_2(fake_exec):
