@@ -24,8 +24,9 @@ curl -fsSL https://raw.githubusercontent.com/terrygzhou/digital-twins/main/scrip
 > The script performs no network access except the `pip install` from PyPI.
 
 **Already have a checkout?** Run the same installer locally instead of
-piping (finds Python ≥ 3.11, creates an isolated venv, installs the package,
-and runs the first-run wizard):
+piping (finds Python ≥ 3.11, creates an isolated venv — via `uv` when
+the `uv` binary is already on PATH, else the stdlib `venv` module —
+installs the package, and runs the first-run wizard):
 
 ```bash
 bash scripts/install-local.sh
@@ -42,11 +43,21 @@ cloud backends), `--run-ingest` (ingest a demo source right away),
 **Prefer to do it by hand?** The minimal steps the installer runs:
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install "digital-twins-kb[mcp]"   # base + MCP; drop [mcp] if not needed
+uv venv .venv && source .venv/bin/activate       # uv (if installed); see note below
+uv pip install "digital-twins-kb[mcp]"            # base + MCP; drop [mcp] if not needed
+# — or, without uv:
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install "digital-twins-kb[mcp]"
 digital-twins setup            # wizard: backend detection + init + admin + health
 digital-twins run --source fs  # your first ingest
 ```
+
+> **`uv` (optional, recommended):** the installer and the steps above
+> use `uv` when it is already on PATH (faster, no system-python
+> dependency); otherwise they fall back to the stdlib `venv` module.
+> Neither installer ever installs `uv` for you.  To get it:
+> `curl -LsSf https://astral.sh/uv/install.sh | sh`
+> (macOS: `brew install uv`).
 
 > **PEP 668 ("externally managed" error on macOS/Homebrew, Debian, or
 > other distros that protect system Python):** the venv line above is the

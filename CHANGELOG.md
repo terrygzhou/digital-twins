@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- install.sh / install-local.sh: use `uv` (venv + pip) when the `uv`
+  binary is already on PATH — faster installs, no dependency on the
+  stdlib `venv` module; otherwise fall back to stdlib venv + the
+  venv's own pip.  Neither installer ever installs `uv` for you.
+  `FAKE_UV_PRESENT` flag file lets the mocked-exec tests steer the
+  branch.  New tests: uv-present uses `uv venv` + `uv pip install`;
+  uv-absent falls back to stdlib venv; venv-module-missing + uv
+  present still succeeds.
+- uninstall-local.sh: detect venv-based installs (stdlib or uv) via
+  the venv's own pip / `uv pip show` and uninstall with the matching
+  tool (`<venv>/bin/pip uninstall` or `uv pip uninstall --python …`);
+  system pip remains the default for non-venv installs.
+
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 

@@ -9,8 +9,12 @@
 #   1. find a usable Python >=3.11 (when the `venv` module is missing,
 #      print the OS-specific remediation and exit 2 — no auto-sudo,
 #      no system-package mutation)
-#   2. create an isolated venv under $HOME/.digital-twins/.venv
+#   2. create an isolated venv under $HOME/.digital-twins/.venv —
+#      via `uv venv` when the `uv` binary is on PATH (preferred: faster,
+#      no system-python dependency), else the stdlib `venv` module
 #   3. pip install "digital-twins-kb[<extras>]" from PyPI
+#      (`uv pip install` when the venv was created by uv, else the
+#      venv's own pip)
 #   4. run `digital-twins setup` (the first-run wizard)
 #   5. optionally run the first ingest
 #
@@ -181,18 +185,70 @@ main() {
   note "using python: $py ($(py_version "$py"))"
 
   # --- 2) create an isolated venv ------------------------------------------
-  if ! ensure_venv_module "$py"; then
+  # Prefer uv when it is on PATH (host-neutral: we never install uv
+  # itself — we only use it when the user already has it); fall back to
+  # the stdlib venv module (which may still be missing on PEP 668
+  # distros — printed remediation + exit 2, no auto-sudo).
+  local use_uv=0
+  # Detect uv through run_cmd so the mocked-exec test harness (empty
+  # PATH) can steer the branch:
+  #   FAKE_UV_PRESENT=<existing file> -> force uv on (probe skipped).
+  #   FAKE_UV_PRESENT=<missing file>   -> force uv off (probe skipped).
+  #   unset                            -> real `command -v uv` probe,
+  #                                       still routed through run_cmd
+  #                                       so it is logged/interceptable.
+  if [ -n "${FAKE_UV_PRESENT:-}" ] && [ -e "${FAKE_UV_PRESENT}" ]; then
+    use_uv=1
+  elif [ -z "${FAKE_UV_PRESENT:-}" ] && run_cmd command -v uv >/dev/null 2>&1; then
+    use_uv=1
+  fi
+  # Only probe the venv module when uv will NOT create the venv — the
+  # uv path works regardless of the stdlib venv module (uv manages its
+  # own environment), so probing it there is wasted work (and would
+  # confuse the mocked-exec test log).
+  local venv_module_ok=1
+  if [ "$use_uv" -eq 0 ]; then
+    if [ -n "${FAKE_VENV_MISSING:-}" ] && [ -e "${FAKE_VENV_MISSING}" ]; then
+      venv_module_ok=0
+    elif ! run_cmd "$py" -c 'import venv' 2>/dev/null; then
+      venv_module_ok=0
+    fi
+  fi
+  if [ "$use_uv" -eq 0 ] && [ "$venv_module_ok" -eq 0 ]; then
+    note "'venv' module is missing for $py (and uv is not available)."
+    note "On Debian/Ubuntu install it with:  sudo apt install python3-venv"
+    note "On Fedora/RHEL:  sudo dnf install python3-libs   (then re-run)"
+    note "On macOS (Homebrew python): the venv module ships with it - check your PATH."
+    note "Or install uv (https://docs.astral.sh/uv/) and re-run."
     exit 2
+  fi
+  if [ "$use_uv" -eq 1 ]; then
+    note "using uv for the venv."
   fi
   local venv_dir="$HOME/.digital-twins/.venv"
   if [ -d "$venv_dir/bin" ] && [ -x "$venv_dir/bin/pip" ]; then
     note "venv already present at $venv_dir — reusing it."
   else
-    note "creating venv at $venv_dir ..."
-    run_cmd "$py" -m venv "$venv_dir"
+    if [ "$use_uv" -eq 1 ]; then
+      note "creating venv at $venv_dir with uv ..."
+      run_cmd uv venv --python "$py" "$venv_dir"
+    else
+      note "creating venv at $venv_dir ..."
+      run_cmd "$py" -m venv "$venv_dir"
+    fi
   fi
   local venv_pip="$venv_dir/bin/pip"
   local venv_bin="$venv_dir/bin/$CLI_NAME"
+  # pip_cmd: the installer for the venv — the venv's own pip, or uv
+  # (targeted at the venv's python) when uv created it.
+  # pip_cmd: the installer for the venv.  The stdlib-venv path uses the
+  # venv's own pip (`<venv>/bin/pip install …`); the uv path uses
+  # `uv pip install --python <venv python>` (uv-managed venvs ship no
+  # pip, and the --python flag targets the venv, not the system one).
+  local pip_cmd=("$venv_pip" install)
+  if [ "$use_uv" -eq 1 ]; then
+    pip_cmd=(uv pip install --python "$venv_dir/bin/python")
+  fi
 
   # --- 3) pip install from PyPI --------------------------------------------
   local extra_spec
@@ -205,17 +261,18 @@ main() {
   fi
   note "installing $extra_spec from PyPI (this can take a while) ..."
   # --upgrade keeps a re-run current; --quiet keeps the output tidy.
-  if ! run_cmd "$venv_pip" install --upgrade --quiet "$extra_spec"; then
-    fail "pip install failed. Check your network / PyPI access and re-run."
+  if ! run_cmd "${pip_cmd[@]}" --upgrade --quiet "$extra_spec"; then
+    fail "install failed. Check your network / PyPI access and re-run."
   fi
 
   # --- 3b) verify the CLI is current ----------------------------------------
-  # A re-run on a host with a *stale* venv can leave pip a silent no-op
-  # (requirement already satisfied), so the very next '$venv_bin setup'
-  # fails with "No such command 'setup'". Detect that here: report the
-  # installed version, and force a reinstall when the CLI predates the
-  # 'setup' subcommand. Pure-bash string ops only (no head/grep, so the
-  # mocked-exec tests with an empty PATH still exercise every branch).
+  # A re-run on a host with a *stale* venv can leave the installer a
+  # silent no-op (requirement already satisfied), so the very next
+  # '$venv_bin setup' fails with "No such command 'setup'". Detect that
+  # here: report the installed version, and force a reinstall when the
+  # CLI predates the 'setup' subcommand. Pure-bash string ops only (no
+  # head/grep, so the mocked-exec tests with an empty PATH still exercise
+  # every branch).
   local cli_version cli_help
   cli_version="$(run_cmd "$venv_bin" --version 2>/dev/null || true)"
   note "installed version: ${cli_version:-unknown}"
@@ -224,7 +281,7 @@ main() {
     *setup*) ;;  # current CLI: 'setup' present in help
     *)
       note "stale CLI detected (no 'setup' subcommand); forcing a reinstall."
-      if ! run_cmd "$venv_pip" install --upgrade --force-reinstall --quiet "$extra_spec"; then
+      if ! run_cmd "${pip_cmd[@]}" --upgrade --force-reinstall --quiet "$extra_spec"; then
         fail "forced reinstall failed. Check your network / PyPI access and re-run."
       fi
       note "reinstalled $extra_spec."

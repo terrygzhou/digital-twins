@@ -22,6 +22,8 @@
 #      named volumes (qdrant-data, neo4j-data, digital-twins-state)
 #   2. uninstall the pip distribution (pip uninstall digital-twins
 #      digital-twins-kb) — no-op when neither dist is installed;
+#      venv-based installs (stdlib or uv) are detected via the venv's
+#      own pip / `uv pip show` and uninstalled with the matching tool;
 #      pipx-managed installs are detected and reported, not removed
 #   3. remove the machine-local config dir (~/.config/digital-twins) and
 #      state dir (~/.digital-twins) — only with --remove-data (both
@@ -123,9 +125,11 @@ confirm() {
 }
 
 # Detect whether a pip distribution is installed (for every name in
-# DIST_NAMES).  Returns 0 when at least one is installed, 1 otherwise.
-# pipx-managed installs are detected separately and reported (not removed
-# here: pipx has its own `pipx uninstall`).
+# DIST_NAMES).  Checks, in order: the system pip, then the venv's own
+# pip (stdlib-venv installs), then uv targeting the venv python
+# (uv-managed venvs ship no pip).  Returns 0 when at least one is
+# installed, 1 otherwise.  pipx-managed installs are detected separately
+# and reported (not removed here: pipx has its own `pipx uninstall`).
 pip_installed() {
   local name
   for name in $DIST_NAMES; do
@@ -133,7 +137,35 @@ pip_installed() {
       return 0
     fi
   done
+  local venv_dir="${KB_STATE_DIR:-$HOME/.digital-twins}/.venv"
+  if [ -x "$venv_dir/bin/pip" ]; then
+    for name in $DIST_NAMES; do
+      if run_cmd "$venv_dir/bin/pip" show "$name" >/dev/null 2>&1; then
+        return 0
+      fi
+    done
+  fi
+  if [ -x "$venv_dir/bin/python" ] && command -v uv >/dev/null 2>&1; then
+    for name in $DIST_NAMES; do
+      if run_cmd uv pip show --python "$venv_dir/bin/python" "$name" >/dev/null 2>&1; then
+        return 0
+      fi
+    done
+  fi
   return 1
+}
+
+# Which uninstaller to use for the venv: "venv-pip", "uv", or "" (system
+# pip / not a venv install).  Mirrors install.sh's choice.
+venv_uninstall_tool() {
+  local venv_dir="${KB_STATE_DIR:-$HOME/.digital-twins}/.venv"
+  if [ -x "$venv_dir/bin/pip" ]; then
+    echo "venv-pip"
+  elif [ -x "$venv_dir/bin/python" ] && command -v uv >/dev/null 2>&1; then
+    echo "uv"
+  else
+    echo ""
+  fi
 }
 
 # Detect a pipx-managed install of the CLI (the `digital-twins` symlink in
@@ -238,7 +270,21 @@ main() {
       note "pip: skipped (not confirmed)."
       kept="$kept pip distribution ($DIST_NAMES)"
     else
-      if run_cmd pip uninstall -y $DIST_NAMES; then
+      local tool uninst_cmd
+      tool="$(venv_uninstall_tool)"
+      local venv_dir="${KB_STATE_DIR:-$DEFAULT_STATE_DIR}/.venv"
+      case "$tool" in
+        venv-pip)
+          uninst_cmd=( "$venv_dir/bin/pip" uninstall -y )
+          ;;
+        uv)
+          uninst_cmd=( uv pip uninstall --python "$venv_dir/bin/python" -y )
+          ;;
+        *)
+          uninst_cmd=( pip uninstall -y )
+          ;;
+      esac
+      if run_cmd "${uninst_cmd[@]}" $DIST_NAMES; then
         note "pip: $DIST_NAMES uninstalled."
         removed="$removed pip distribution ($DIST_NAMES)"
       else

@@ -3,8 +3,10 @@
 #
 # One invocation on a clean host to a working digital-twins install:
 #   1. find a usable Python (>=3.11)
-#   2. create an isolated venv under the user's home
-#   3. pip install the chosen extras
+#   2. create an isolated venv under $HOME/.digital-twins/.venv —
+#      via `uv venv` when the `uv` binary is on PATH, else stdlib venv
+#   3. pip install the chosen extras (`uv pip install` when the venv
+#      was created by uv, else the venv's own pip)
 #   4. run `digital-twins setup` (the first-run wizard)
 #   5. optionally run the first ingest
 #
@@ -160,15 +162,39 @@ main() {
   note "using python: $py ($(py_version "$py"))"
 
   # --- 2) create an isolated venv ------------------------------------------
+  # Prefer uv when it is on PATH (host-neutral: we never install uv
+  # itself — we only use it when the user already has it); fall back to
+  # the stdlib venv module.
+  local use_uv=0
+  if [ -n "${FAKE_UV_PRESENT:-}" ] && [ -e "${FAKE_UV_PRESENT}" ]; then
+    use_uv=1
+  elif [ -z "${FAKE_UV_PRESENT:-}" ] && run_cmd command -v uv >/dev/null 2>&1; then
+    use_uv=1
+  fi
+  if [ "$use_uv" -eq 1 ]; then
+    note "using uv for the venv."
+  fi
   local venv_dir="$HOME/.digital-twins/.venv"
   if [ -d "$venv_dir/bin" ] && [ -x "$venv_dir/bin/pip" ]; then
     note "venv already present at $venv_dir — reusing it."
   else
-    note "creating venv at $venv_dir ..."
-    run_cmd "$py" -m venv "$venv_dir"
+    if [ "$use_uv" -eq 1 ]; then
+      note "creating venv at $venv_dir with uv ..."
+      run_cmd uv venv --python "$py" "$venv_dir"
+    else
+      note "creating venv at $venv_dir ..."
+      run_cmd "$py" -m venv "$venv_dir"
+    fi
   fi
   local venv_pip="$venv_dir/bin/pip"
   local venv_bin="$venv_dir/bin/$CLI_NAME"
+  # pip_cmd: `<venv>/bin/pip install …` for the stdlib path, or
+  # `uv pip install --python <venv python>` for the uv path (uv-managed
+  # venvs ship no pip).
+  local pip_cmd=("$venv_pip" install)
+  if [ "$use_uv" -eq 1 ]; then
+    pip_cmd=(uv pip install --python "$venv_dir/bin/python")
+  fi
 
   # --- 3) pip install -------------------------------------------------------
   local extra_spec
@@ -180,8 +206,8 @@ main() {
     extra_spec="${DIST_NAME}"
   fi
   note "installing $extra_spec (this can take a while) ..."
-  if ! run_cmd "$venv_pip" install --quiet "$extra_spec"; then
-    fail "pip install failed. Check your network / PyPI access and re-run."
+  if ! run_cmd "${pip_cmd[@]}" --quiet "$extra_spec"; then
+    fail "install failed. Check your network / PyPI access and re-run."
   fi
 
   # --- 4) run the setup wizard ---------------------------------------------

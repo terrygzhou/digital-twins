@@ -54,6 +54,27 @@ for a in "$@"; do
   esac
 done
 
+# uv probes: 'uv venv' / 'uv pip install' succeed (canned no-op).
+# The `sh -c 'command -v uv'` probe and direct 'uv' argv are answered
+# by the FAKE_UV_PRESENT flag file: present -> exit 0, absent -> exit 1.
+for a in "$@"; do
+  case "$a" in
+    uv|command)
+      # 'uv' (uv venv / uv pip install) and 'command' (the
+      # `command -v uv` probe).  The script only runs the probe when
+      # FAKE_UV_PRESENT is unset; when it is set, the script answers
+      # the branch directly from the flag file and the probe still
+      # runs (elif) — so: flag set + file present -> uv present (0),
+      # flag set + file absent OR flag unset (defensive) -> 1.
+      pv="${FAKE_UV_PRESENT:-}"
+      if [ -n "$pv" ] && [ -e "$pv" ]; then
+        exit 0
+      fi
+      exit 1
+      ;;
+  esac
+done
+
 # The console-script CLI probes: '$venv_bin --version' and '$venv_bin --help'.
 # Default: report a version whose help includes 'setup' (current CLI).
 # FAKE_CLI_STALE flag file: --help omits 'setup' (stale CLI, no setup cmd).
@@ -123,7 +144,7 @@ def test_happy_path_no_setup(fake_exec):
     joined = " ".join(" ".join(c) for c in calls)
     assert "venv" in joined
     assert "install" in joined and "digital-twins-kb[mcp]" in joined
-    assert not any("setup" in c for c in calls)
+    assert not any(c and c[0] == "setup" for c in calls)
 
 
 def test_extras_forwarded(fake_exec):
@@ -174,14 +195,35 @@ def test_stale_cli_triggers_force_reinstall(fake_exec):
 
 
 def test_venv_module_missing_exits_2(fake_exec):
-    # Force the 'import venv' probe to fail via the flag file.
+    # Force the 'import venv' probe to fail via the flag file AND steer
+    # the uv probe OFF (FAKE_UV_PRESENT set but the file absent) so the
+    # stdlib-venv fallback is the only remaining path -> exit 2 with
+    # the OS-specific remediation.
     exe, log, home = fake_exec
     flag = home / "venv-missing"
     flag.write_text("1")
+    uv = home / "uv-not-present"   # file does NOT exist -> uv off
     proc, _ = _run(["--no-setup"], fake_exec,
-                   extra_env={"FAKE_VENV_MISSING": str(flag)})
+                   extra_env={"FAKE_VENV_MISSING": str(flag),
+                              "FAKE_UV_PRESENT": str(uv)})
     assert proc.returncode == 2
     assert "venv" in proc.stderr and "python3-venv" in proc.stderr
+
+
+def test_venv_module_missing_but_uv_present_succeeds(fake_exec):
+    # venv module missing, but uv is available: uv creates the venv
+    # on its own, so the install proceeds (exit 0, no remediation).
+    exe, log, home = fake_exec
+    flag = home / "venv-missing"
+    flag.write_text("1")
+    uv = home / "uv-present"
+    uv.write_text("1")
+    proc, calls = _run(["--no-setup"], fake_exec,
+                       extra_env={"FAKE_VENV_MISSING": str(flag),
+                                  "FAKE_UV_PRESENT": str(uv)})
+    assert proc.returncode == 0
+    joined = " ".join(" ".join(c) for c in calls)
+    assert "uv venv" in joined, "uv should create the venv when the stdlib module is missing"
 
 
 def test_dist_name_override(fake_exec):
@@ -190,6 +232,53 @@ def test_dist_name_override(fake_exec):
     assert proc.returncode == 0
     joined = " ".join(" ".join(c) for c in calls)
     assert "my-custom-dist[mcp]" in joined
+
+
+def test_uv_present_uses_uv_for_venv_and_pip(fake_exec):
+    # FAKE_UV_PRESENT flag file -> the script prefers uv: `uv venv` and
+    # `uv pip install --python <venv python>` appear, and the venv-module
+    # probe (`import venv`) is never run.
+    exe, log, home = fake_exec
+    flag = home / "uv-present"
+    flag.write_text("1")
+    proc, calls = _run(["--no-setup"], fake_exec,
+                       extra_env={"FAKE_UV_PRESENT": str(flag)})
+    assert proc.returncode == 0
+    joined = " ".join(" ".join(c) for c in calls)
+    assert "uv venv" in joined, "expected uv venv when uv is available"
+    assert "uv pip install" in joined
+    assert "import venv" not in joined, "uv path must not probe the venv module"
+    # The uv pip call must target the venv's python, not a system one.
+    uv_installs = [c for c in calls if "uv pip install" in " ".join(c)]
+    assert uv_installs, f"no uv pip install call in {calls}"
+    assert any("/.venv/bin/python" in a for c in uv_installs for a in c),         "uv pip install must target the venv python"
+
+
+def test_uv_absent_falls_back_to_venv_module(fake_exec):
+    # No FAKE_UV_PRESENT -> the `command -v uv` probe fails (the fake
+    # exec exits 1 for 'uv' when the flag file is absent), so the script
+    # uses the stdlib venv module + the venv's own pip.
+    proc, calls = _run(["--no-setup"], fake_exec)
+    assert proc.returncode == 0
+    joined = " ".join(" ".join(c) for c in calls)
+    assert "-m venv" in joined, "expected the stdlib venv creation"
+    assert "uv venv" not in joined
+    assert "uv pip install" not in joined
+
+
+def test_uv_stale_cli_force_reinstall(fake_exec):
+    # uv path + stale CLI: the force-reinstall goes through uv too.
+    exe, log, home = fake_exec
+    uv_flag = home / "uv-present"
+    uv_flag.write_text("1")
+    stale = home / "cli-stale"
+    stale.write_text("1")
+    proc, calls = _run(["--no-setup"], fake_exec,
+                       extra_env={"FAKE_UV_PRESENT": str(uv_flag),
+                                  "FAKE_CLI_STALE": str(stale)})
+    assert proc.returncode == 0
+    force = [c for c in calls if "--force-reinstall" in c]
+    assert force and "uv pip install" in " ".join(force[0]),         "expected a uv force-reinstall call for the stale CLI"
 
 
 # --- doc-contract tests: header / --help must not document behavior the
