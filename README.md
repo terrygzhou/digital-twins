@@ -498,6 +498,24 @@ bash scripts/uninstall-local.sh --remove-data         # also delete the config
                                                       # + state dirs
 bash scripts/uninstall-local.sh --force               # skip every confirmation
 bash scripts/uninstall-local.sh --skip-docker         # cloud/external hosts
+
+> **Where does this script live?** `uninstall-local.sh` ships in the repo's
+> `scripts/` dir — it is **not** installed by the `curl … | bash install.sh`
+> one-liner, so it isn't on a host that only used that. If you don't have a
+> checkout, fetch it without one:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/terrygzhou/digital-twins/main/scripts/uninstall-local.sh \
+>   -o /tmp/uninstall-local.sh
+> bash /tmp/uninstall-local.sh --remove-data --force --skip-docker
+> ```
+>
+> Or skip the script entirely — `--remove-data` is just `rm -rf` of the two
+> data dirs (back up `~/.digital-twins/state.db` first):
+> ```bash
+> cp ~/.digital-twins/state.db ~/state-backup.db
+> rm -rf ~/.digital-twins ~/.config/digital-twins
+> ```
 ```
 
 > **Note:** run this with `bash`, not `sh` — the script uses
