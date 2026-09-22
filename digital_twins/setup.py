@@ -54,6 +54,13 @@ _NEO4J_HTTP = "http://localhost:7474"
 _LLM_EP = "http://localhost:8000/v1"
 _EMBED_EP = "http://localhost:8080/v1"
 
+# Local-stack Neo4j credentials: the bundled compose file bakes these in
+# as defaults (NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD}).  The
+# wizard prompts for both — the user can keep the defaults by pressing
+# Enter, or type a stronger password to match the stack they start.
+_NEO4J_USER_DEFAULT = "neo4j"
+_NEO4J_PASSWORD_DEFAULT = "password"
+
 _HEALTH_URLS = {
     "qdrant": "http://localhost:6333/healthz",
     "neo4j": "http://localhost:7687/",
@@ -95,14 +102,22 @@ def has_valid_local_config() -> bool:
     return bool((data.get("qdrant") or {}).get("url"))
 
 
-def _kb_local_content(local: bool) -> dict:
+def _kb_local_content(local: bool,
+                      neo4j_user: str = _NEO4J_USER_DEFAULT,
+                      neo4j_password: str = _NEO4J_PASSWORD_DEFAULT) -> dict:
     """The kb.local.yml payload for the local stack (all 4 endpoints)."""
-    return {
+    data = {
         "qdrant": {"url": _QDRANT_EP},
         "neo4j": {"url": _NEO4J_EP},
         "llm": {"endpoint": _LLM_EP},
         "embedding": {"endpoint": _EMBED_EP},
     }
+    neo = data["neo4j"]
+    if neo4j_user:
+        neo["user"] = neo4j_user
+    if neo4j_password:
+        neo["password"] = neo4j_password
+    return data
 
 
 def _cloud_content(qdrant: str, neo4j: str, llm: str,
@@ -177,16 +192,23 @@ def _resolve_compose_file() -> str:
     return str(tmp)
 
 
-def _docker_compose(args: list, compose_file: str | None = None) -> int:
+def _docker_compose(args: list, compose_file: str | None = None,
+                    extra_env: dict | None = None) -> int:
     """Run `docker compose -f <file> <args>`; return the exit code.
 
     compose_file: explicit path; when None, resolved via _resolve_compose_file().
+    extra_env: host env vars merged in for the compose subprocess (used
+    to pass the user's Neo4j credential choices through to the stack).
     """
     if compose_file is None:
         compose_file = _resolve_compose_file()
+    env = dict(os.environ)
+    if extra_env:
+        env.update(extra_env)
     result = subprocess.run(
         ["docker", "compose", "-f", compose_file, *args],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        env=env,
     )
     return result.returncode
 
@@ -206,13 +228,31 @@ def _poll_url(url: str, timeout_s: int = _HEALTH_TIMEOUT_S) -> bool:
         time.sleep(_POLLEVERY_S)
 
 
-def run_local_stack(prompt: Callable = click.confirm,
+def run_local_stack(prompt_text: Callable = click.prompt,
                     echo: Callable = click.echo) -> bool:
     """Bring up the bundled local stack and write kb.local.yml.
+
+    The Neo4j credentials are prompted (with the compose defaults as
+    pre-filled answers): the user can keep the defaults by pressing
+    Enter, or type a stronger password (and/or a different username) to
+    match the stack they are about to start.  The answers are passed to
+    `docker compose` via NEO4J_USER / NEO4J_PASSWORD env vars AND
+    written to kb.local.yml.
 
     Returns True when the stack is up (or when it was already up and the
     config file matched), False on any hard failure.
     """
+    # Prompt for the Neo4j credentials (defaults match the compose file).
+    echo(f"Neo4j credentials (defaults: user={_NEO4J_USER_DEFAULT}, "
+         f"password={_NEO4J_PASSWORD_DEFAULT}) — press Enter to keep "
+         "them, or type a stronger password now.")
+    neo4j_user = prompt_text(
+        f"Local Neo4j user [{_NEO4J_USER_DEFAULT}]: "
+        "(press Enter to keep the default)").strip() or _NEO4J_USER_DEFAULT
+    neo4j_password = prompt_text(
+        f"Local Neo4j password [{_NEO4J_PASSWORD_DEFAULT}]: "
+        "(press Enter to keep the default, or type a stronger one)")         .strip() or _NEO4J_PASSWORD_DEFAULT
+
     # Pull the backend images (qdrant + neo4j are pre-built; llm and
     # embedding-model use standard images — no build step needed).
     _docker_compose(["pull", "qdrant", "neo4j"])
@@ -227,7 +267,12 @@ def run_local_stack(prompt: Callable = click.confirm,
     if gpu:
         up_services.append("llm")
     echo(f"starting local stack: {', '.join(up_services)}")
-    rc = _docker_compose(["up", "-d", *up_services])
+    # Pass the chosen credentials to compose (matches the compose-file
+    # defaults unless the user overrode them).
+    rc = _docker_compose(
+        ["up", "-d", *up_services],
+        extra_env={"NEO4J_USER": neo4j_user,
+                   "NEO4J_PASSWORD": neo4j_password})
     if rc != 0:
         echo("docker compose up failed — some services may already be up "
              "from a previous run; checking health anyway.")
@@ -267,7 +312,9 @@ def run_local_stack(prompt: Callable = click.confirm,
              "healthy — continuing with the config that points at what "
              "is up.")
 
-    content = _kb_local_content(local=True)
+    content = _kb_local_content(local=True,
+                                neo4j_user=neo4j_user,
+                                neo4j_password=neo4j_password)
     # On no-GPU hosts the bundled llm/embedding are not part of the stack:
     # drop them so kb.local.yml doesn't point at ports that were never up.
     if not gpu:

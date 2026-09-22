@@ -496,7 +496,7 @@ def test_local_stack_no_gpu_omits_llm_and_embedding(_isolate_config,
         return 0
     monkeypatch.setattr(setup_mod, "_docker_compose", fake_compose)
 
-    ok = setup_mod.run_local_stack(prompt=lambda q: "unused",
+    ok = setup_mod.run_local_stack(prompt_text=lambda q: "unused",
                                    echo=lambda m: None)
     assert ok is True
     # The up call's args should not include 'llm'.
@@ -527,7 +527,7 @@ def test_local_stack_half_up_polls_survivors(_isolate_config, monkeypatch):
     monkeypatch.setattr(setup_mod, "_docker_compose", fake_compose)
     monkeypatch.setattr(setup_mod, "_poll_url", lambda url, **kw: True)
 
-    ok = setup_mod.run_local_stack(prompt=lambda q: "unused",
+    ok = setup_mod.run_local_stack(prompt_text=lambda q: "unused",
                                    echo=lambda m: None)
     assert ok is True
     # kb.local.yml was written despite up failing.
@@ -717,3 +717,68 @@ def test_cloud_neo4j_auth_disabled_stays_clean(_isolate_config,
     data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
     assert "user" not in data["neo4j"]
     assert "password" not in data["neo4j"]
+
+
+# ---------------------------------------------------------------------------
+# 0.11.x: local-stack Neo4j credential prompt
+# ---------------------------------------------------------------------------
+
+def test_local_stack_prompts_neo4j_creds_writes_to_kb_local(_isolate_config,
+                                                            monkeypatch):
+    """The local-stack path prompts for Neo4j user + password (with the
+    compose defaults as fallback), passes them to docker compose via
+    NEO4J_USER/NEO4J_PASSWORD, and writes them to kb.local.yml."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    prompts = []
+    def fake_prompt(label):
+        prompts.append(label)
+        return "myuser" if "user" in label else "mypw"
+    monkeypatch.setattr(setup_mod, "_gpu_present", lambda: False)
+
+    compose_calls = []
+    def fake_compose(args, **kw):
+        compose_calls.append((list(args), kw.get("extra_env")))
+        return 0
+    monkeypatch.setattr(setup_mod, "_docker_compose", fake_compose)
+    monkeypatch.setattr(setup_mod, "_poll_url", lambda url, **kw: True)
+
+    ok = setup_mod.run_local_stack(prompt_text=fake_prompt,
+                                   echo=lambda m: None)
+    assert ok is True
+    # Two credential prompts fired, in order.
+    assert any("Neo4j user" in p for p in prompts)
+    assert any("Neo4j password" in p for p in prompts)
+    # The up call carried the chosen credentials.
+    up_call = [c for c in compose_calls if c[0][0] == "up"][0]
+    assert up_call[1] == {"NEO4J_USER": "myuser", "NEO4J_PASSWORD": "mypw"}
+    # kb.local.yml carries them under neo4j.
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["neo4j"]["user"] == "myuser"
+    assert data["neo4j"]["password"] == "mypw"
+
+
+def test_local_stack_empty_prompt_answer_falls_back_to_defaults(
+        _isolate_config, monkeypatch):
+    """Pressing Enter (empty answer) keeps the compose defaults: user=neo4j,
+    password=password — matching the compose-file baked-in credentials."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    monkeypatch.setattr(setup_mod, "_gpu_present", lambda: False)
+    compose_calls = []
+    def fake_compose(args, **kw):
+        compose_calls.append((list(args), kw.get("extra_env")))
+        return 0
+    monkeypatch.setattr(setup_mod, "_docker_compose", fake_compose)
+    monkeypatch.setattr(setup_mod, "_poll_url", lambda url, **kw: True)
+
+    ok = setup_mod.run_local_stack(prompt_text=lambda label: "",
+                                   echo=lambda m: None)
+    assert ok is True
+    up_call = [c for c in compose_calls if c[0][0] == "up"][0]
+    assert up_call[1] == {"NEO4J_USER": "neo4j", "NEO4J_PASSWORD": "password"}
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["neo4j"]["user"] == "neo4j"
+    assert data["neo4j"]["password"] == "password"

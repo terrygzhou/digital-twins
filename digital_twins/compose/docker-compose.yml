@@ -13,7 +13,7 @@ services:
   neo4j:
     image: neo4j/neo4j:5.18-community
     environment:
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD}
     volumes:
       - neo4j-data:/data
     healthcheck:
