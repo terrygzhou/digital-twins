@@ -206,8 +206,9 @@ def test_materialize_idempotent_reuse_same_extraction():
         extraction=extraction, run_id="r2",
         captured_at="t2", driver=fake, cfg={},
     )
-    # Stub returns 0 for both; assert no exception and same shape
-    assert out1.keys() == out2.keys()
+    # Stub returns 0 counters for both; assert no new entity nodes
+    assert out1["entities"] == 0 and out2["entities"] == 0
+    assert out1["relations"] == 0 and out2["relations"] == 0
 
 
 def test_drop_issues_detach_delete():

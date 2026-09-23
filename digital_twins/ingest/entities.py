@@ -251,7 +251,7 @@ def supersede(item_id: str, *, driver, cfg: dict | None = None) -> int:
     ``item_id`` so re-extraction re-issues them (BR-6.4)."""
     now = _now()
     # MENTIONED supersede
-    _run(
+    n1 = _run(
         driver,
         "MATCH (si:SourceItem {item_id: $item_id})-[m:MENTIONED]->() "
         "WHERE m.valid_to IS NULL "
@@ -259,14 +259,14 @@ def supersede(item_id: str, *, driver, cfg: dict | None = None) -> int:
         item_id=item_id, now=now,
     )
     # REL supersede (scoping by source_item)
-    _run(
+    n2 = _run(
         driver,
         "MATCH ()-[r:REL]->() "
         "WHERE r.source_item = $item_id AND r.valid_to IS NULL "
         "SET r.valid_to = $now",
         item_id=item_id, now=now,
     )
-    return 0
+    return n1 + n2
 
 
 def materialize(
