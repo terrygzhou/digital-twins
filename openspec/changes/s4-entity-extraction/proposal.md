@@ -23,8 +23,12 @@ re-extraction, `drop` on reconcile).
 ## Impact
 - Affected code: new `digital_twins/ingest/entities.py`, pipeline hook
   after `_upsert_graph`, config knobs + docs, spec-013 deltas.
-- New config: `extraction.enabled`, `extraction.endpoint`,
-  `extraction.model`, `extraction.prompt_version`.
+- New config: `extraction.enabled` (bool, default false),
+  `extraction.max_text_chars` (int, default 12000),
+  `extraction.prompt_version` (str, default built-in).
+  Extraction reuses the `llm.endpoint` / `llm.model` / `llm.api_key`
+  knobs (no new endpoint knobs — a single LLM endpoint serves all uses
+  in one deployment).
 
 ## Non-goals
 - No change to personal-kb; no REL edge generation in this change.
