@@ -28,6 +28,15 @@ llm:
   model: ""        # env: KB_LLM__MODEL
   api_key: ""      # env: KB_LLM__API_KEY
 
+# --- Extraction (LLM entity extraction, config-gated) ---
+# When enabled, every ingest surface that has a Neo4j driver runs an LLM
+# entity extraction step after the :SourceItem graph write. Requires
+# llm.endpoint to be set. Default: disabled (no LLM calls, no entity writes).
+extraction:
+  enabled: false          # env: KB_EXTRACTION__ENABLED
+  max_text_chars: 12000  # env: KB_EXTRACTION__MAX_TEXT_CHARS
+  prompt_version: ""     # env: KB_EXTRACTION__PROMPT_VERSION (empty = use built-in)
+
 # --- Embedding ---
 embedding:
   model: "BAAI/bge-small-en-v1.5"  # 384-dim; model version pinned by the package (env: KB_EMBEDDING__MODEL)

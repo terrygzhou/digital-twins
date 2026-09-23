@@ -106,6 +106,19 @@ server URL to run the full stack against that external endpoint.
 | web.port | int | 8767 | KB_WEB__PORT | TCP port for the web UI server. |
 | web.base_url | str | http://localhost:8767 | KB_WEB__BASE_URL | Public URL of the web UI, e.g. for embedding links in tool output or dashboards. |
 
+## Extraction
+
+LLM entity extraction (s4-entity-extraction), config-gated: when enabled,
+every ingest surface that has a Neo4j driver runs an LLM entity extraction
+step after the `:SourceItem` graph write. Requires `llm.endpoint` to be set.
+Default: disabled (no LLM calls, no entity writes).
+
+| knob | type | default | env var | notes |
+|---|---|---|---|---|
+| extraction.enabled | bool | false | KB_EXTRACTION__ENABLED | Run LLM entity extraction after the `:SourceItem` graph write. |
+| extraction.max_text_chars | int | 12000 | KB_EXTRACTION__MAX_TEXT_CHARS | Truncation cap (characters) for the text handed to the LLM. |
+| extraction.prompt_version | str |  | KB_EXTRACTION__PROMPT_VERSION | Prompt version override; empty uses the built-in prompt. |
+
 ## Sources
 
 All built-in sources ship **disabled** on a fresh install

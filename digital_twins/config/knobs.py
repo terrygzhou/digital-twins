@@ -20,6 +20,7 @@ GROUP_SCHEDULER = "Scheduler"
 GROUP_SOURCES = "Sources"
 GROUP_MCP = "MCP"
 GROUP_WEB = "Web"
+GROUP_EXTRACTION = "Extraction"
 
 # --- registry ------------------------------------------------------------------
 #
@@ -175,6 +176,26 @@ KNOBS: dict[str, dict] = {
         "default": "http://localhost:8767",
         "env": "KB_WEB__BASE_URL",
         "group": GROUP_WEB,
+    },
+
+    # --- Extraction (LLM entity extraction, config-gated) ---
+    "extraction.enabled": {
+        "type": "bool",
+        "default": False,
+        "env": "KB_EXTRACTION__ENABLED",
+        "group": GROUP_EXTRACTION,
+    },
+    "extraction.max_text_chars": {
+        "type": "int",
+        "default": 12000,
+        "env": "KB_EXTRACTION__MAX_TEXT_CHARS",
+        "group": GROUP_EXTRACTION,
+    },
+    "extraction.prompt_version": {
+        "type": "str",
+        "default": "",
+        "env": "KB_EXTRACTION__PROMPT_VERSION",
+        "group": GROUP_EXTRACTION,
     },
 
     # --- Sources (per built-in source: enabled / max_items / timeout_s) ---

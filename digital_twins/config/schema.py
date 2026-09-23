@@ -27,6 +27,10 @@ DEFAULTS: dict = {
     "llm.endpoint": None,
     "llm.model": None,
     "llm.api_key": None,
+    # extraction (s4-entity-extraction; LLM entity extraction, config-gated)
+    "extraction.enabled": False,
+    "extraction.max_text_chars": 12000,
+    "extraction.prompt_version": "",
     # embedding — model version pinned by the package
     "embedding.model": "BAAI/bge-small-en-v1.5",
     "embedding.device": "auto",
@@ -44,6 +48,7 @@ _ALLOW_EMPTY: frozenset = frozenset({
     "qdrant.url", "qdrant.api_key",
     "neo4j.url", "neo4j.user", "neo4j.password",
     "llm.endpoint", "llm.model", "llm.api_key",
+    "extraction.prompt_version",
     "embedding.endpoint", "embedding.api_key",
 })
 
@@ -258,6 +263,7 @@ def validate(cfg: dict) -> dict:
         raise SchemaError("config root must be a mapping")
     known_sections = {
         "state_dir", "config_dir", "qdrant", "neo4j", "llm",
+        "extraction",
         "embedding", "chunking", "scheduler", "sources",
         "mcp", "web",
     }
@@ -278,8 +284,8 @@ def validate(cfg: dict) -> dict:
                 )
         elif key in ("state_dir", "config_dir"):
             out[key] = coerce(key, value)
-        elif key in ("qdrant", "neo4j", "llm", "embedding", "chunking",
-                     "scheduler", "mcp", "web"):
+        elif key in ("qdrant", "neo4j", "llm", "extraction", "embedding",
+                     "chunking", "scheduler", "mcp", "web"):
             if not isinstance(value, dict):
                 raise SchemaError(f"{key}: must be a mapping")
             # For sections not in the legacy DEFAULTS registry (mcp, web),
@@ -313,8 +319,8 @@ def validate(cfg: dict) -> dict:
                             section[sub_key] = entry["default"]
             out[key] = section
     # every section with a default is always present, even when omitted
-    for section_key in ("qdrant", "neo4j", "llm", "embedding", "chunking",
-                        "scheduler", "mcp", "web"):
+    for section_key in ("qdrant", "neo4j", "llm", "extraction", "embedding",
+                        "chunking", "scheduler", "mcp", "web"):
         out.setdefault(section_key, {})
         for sub, default in DEFAULTS.items():
             if sub.startswith(section_key + "."):
