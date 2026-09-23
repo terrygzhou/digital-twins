@@ -3,7 +3,7 @@
 # with scripts/bootstrap-local.sh + pip install digital-twins.
 # R1: all external command invocations route through run_cmd() so
 # UNINSTALL_EXEC can intercept them in tests
-# (tests/unit/test_uninstall_script.py, pending).
+# (tests/unit/test_uninstall_script.py).
 #
 # Contract: specs/015-service-teardown/contracts/uninstall-cli.md (pending)
 #   exit 0  success (nothing left to remove, or every step succeeded)
