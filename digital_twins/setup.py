@@ -73,6 +73,119 @@ _HEALTH_TIMEOUT_S = 300  # per-service poll cap (5 min; the compose
 
 _POLLEVERY_S = 2
 
+_HEALTH_TIMEOUT_S = 300  # per-service poll cap (5 min; the compose
+# healthchecks do the real gating, this is just a host-side sanity poll)
+
+_POLLEVERY_S = 2
+
+# The four backend services that the user may point at a *local* bundled
+# Docker service or at an *external* endpoint, independently of each other
+# (install-setup-separation D2).  Each maps to a bundled URL constant and to
+# the env var that, in --cloud-env mode, supplies its external URL.
+# `gpu_only` marks services whose bundled service only starts on a GPU host;
+# `required` marks services whose external URL is mandatory (vs optional).
+_SERVICE_ENV = {
+    "qdrant": ("KB_QDRANT__URL", _QDRANT_EP, False, True),
+    "neo4j": ("KB_NEO4J__URL", _NEO4J_EP, False, True),
+    "llm": ("KB_LLM__ENDPOINT", _LLM_EP, True, True),
+    "embedding": ("KB_EMBEDDING__ENDPOINT", _EMBED_EP, True, False),
+}
+
+
+def resolve_backends(backends: dict | None = None,
+                     *,
+                     local: bool = False,
+                     cloud: bool = False,
+                     cloud_env: bool = False,
+                     gpu: bool = False,
+                     docker: bool = False,
+                     env: dict | None = None,
+                     neo4j_user: str = "",
+                     neo4j_password: str = "") -> dict:
+    """Resolve the per-service backend choice into a deterministic map.
+
+    Returns ``{service: {"mode": "local"|"external", "url": str, ...}}`` for
+    all four of ``qdrant/neo4j/llm/embedding``.  Pure function of its inputs —
+    no I/O, no prompts, no docker — so it is trivially unit-testable.
+
+    Inputs:
+      backends: explicit ``--backends`` map of ``{service: "local"|URL}``.
+                Services not listed default to *local* (the interactive
+                default); an explicit external with an empty URL is a
+                required-missing endpoint, not a local one.
+      local / cloud / cloud_env: shorthand flags (``--local``, ``--cloud``,
+                ``--cloud-env``); when none of the three is set the caller
+                drives the choice interactively, which is expressed here by
+                omitting all of them (every unlisted service -> local).
+      gpu: whether a usable GPU is present (the bundled llm/embedding only
+                start on a GPU host).
+      env: mapping used to look up external URLs in --cloud-env mode;
+                defaults to ``os.environ`` when None.
+      neo4j_user / neo4j_password: carried through on the neo4j entry so the
+                caller can pass them to ``docker compose`` / the health check.
+
+    Per entry:
+      mode=="local": url is the bundled URL constant; the caller only starts
+        this service in Docker when its mode is local.
+      mode=="external": url is the user/env value (may be ""); a required
+        service with an empty url is flagged ``required=True`` (the caller
+        prompts, or in --cloud-env fails the gate naming the env var).
+      llm/embedding local on a no-GPU host: mode flips to external, url empty
+        (or the env value in --cloud-env), and ``unavailable=True`` marks
+        "local was requested but the bundled service cannot start here".
+    """
+    if env is None:
+        env = os.environ
+    explicit = {k: str(v).strip() for k, v in (backends or {}).items()}
+
+    # Which services resolve to external from the shorthand flags.
+    all_external = bool(cloud or cloud_env)
+    if local:
+        all_external = False  # --local forces local for any unlisted service
+
+    out: dict = {}
+    for svc, (env_name, local_url, gpu_only, required) in _SERVICE_ENV.items():
+        entry: dict = {"mode": "external" if all_external else "local",
+                       "url": "",
+                       "required": False,
+                       "env": env_name}
+        choice = explicit.get(svc)
+        if choice is not None:
+            if choice == "local":
+                entry["mode"] = "local"
+                entry["url"] = local_url
+            else:
+                # explicit external: URL (possibly empty -> required-missing)
+                entry["mode"] = "external"
+                entry["url"] = choice
+                if choice == "":
+                    entry["required"] = required or svc in ("qdrant", "neo4j", "llm")
+        # In --cloud-env mode, unlisted (default-external) services pull their
+        # URL from the env var; a missing/empty var on a required service is
+        # the gate that names the var.
+        if cloud_env and choice is None:
+            entry["mode"] = "external"
+            entry["url"] = (env.get(env_name) or "").strip()
+            entry["required"] = required
+        elif entry["mode"] == "local":
+            entry["url"] = local_url
+        # llm/embedding local on a no-GPU host is unavailable: flip to
+        # external and mark it so the caller surfaces an external URL.
+        if svc in ("llm", "embedding") and not gpu and entry["mode"] == "local":
+            entry["mode"] = "external"
+            entry["url"] = (env.get(env_name) or "").strip()
+            entry["unavailable"] = True
+            if svc == "llm":
+                entry["required"] = True
+        if svc == "neo4j":
+            if neo4j_user:
+                entry["user"] = neo4j_user
+            if neo4j_password:
+                entry["password"] = neo4j_password
+        out[svc] = entry
+    return out
+
+
 
 # ---------------------------------------------------------------------------
 # Backend detection
