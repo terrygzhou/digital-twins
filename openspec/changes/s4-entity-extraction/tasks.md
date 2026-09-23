@@ -2,7 +2,7 @@
 
 ## 1. LLM extraction module (digital_twins/ingest/entities.py)
 
-- [ ] 1.1 New module `digital_twins/ingest/entities.py`:
+- [x] 1.1 New module `digital_twins/ingest/entities.py`:
       `PROMPT_VERSION` constant (initial value = personal-kb's current
       `PROMPT_VERSION`), `ENTITY_TYPES` tuple
       (`person/organization/place/event/concept`), the
@@ -13,7 +13,7 @@
       deduped, capped at 25 entities / 100 relations. Test-First: unit
       tests in `tests/unit/test_entities.py` (type constraint, dedup,
       caps, malformed-JSON handling, empty-result shape).
-- [ ] 1.2 LLM transport: `_llm_request(messages, cfg)` — stdlib
+- [x] 1.2 LLM transport: `_llm_request(messages, cfg)` — stdlib
       `urllib` POST to `{llm.endpoint}/v1/chat/completions`, JSON mode,
       `temperature=0.0`, `max_tokens=3000`, bearer token from
       `llm.api_key` (config layer, not env var). Unconfigured endpoint
@@ -23,7 +23,7 @@
 
 ## 2. Neo4j materialisation (digital_twins/ingest/entities.py)
 
-- [ ] 2.1 `materialize(channel, item_id, content_hash, extraction,
+- [x] 2.1 `materialize(channel, item_id, content_hash, extraction,
       run_id, captured_at, driver, cfg)`: the four-step MERGE sequence
       (Entity nodes → SourceItem update → MENTIONED edges → REL edges,
       the latter parsed from the extraction but not written in this
@@ -34,10 +34,10 @@
       type})`, `MERGE (si:SourceItem {item_id}) SET ...`,
       `MERGE (si)-[m:MENTIONED]->(e)` with `ON CREATE`/`ON MATCH`
       stamping, REL statements parsed-but-not-written).
-- [ ] 2.2 `supersede(item_id, driver)`: the two-statement `valid_to`
+- [x] 2.2 `supersede(item_id, driver)`: the two-statement `valid_to`
       stamp (live MENTIONED + live REL scoped to `source_item`),
       returning the edge count. Test-First: recording-driver unit test.
-- [ ] 2.3 `drop(item_id, driver)`: DETACH-DELETE the item's
+- [x] 2.3 `drop(item_id, driver)`: DETACH-DELETE the item's
       `:SourceItem` + prune orphaned `:Entity` nodes (no incoming
       MENTIONED and no REL in either direction). Test-First:
       recording-driver unit test. No-op semantics when the item has no
@@ -45,7 +45,7 @@
 
 ## 3. Pipeline hook (digital_twins/ingest/pipeline.py)
 
-- [ ] 3.1 Post-graph extraction step in `run_pipeline`, config-gated:
+- [x] 3.1 Post-graph extraction step in `run_pipeline`, config-gated:
       when `extraction.enabled` is true AND a Neo4j driver was passed in,
       run `extract` + `supersede` + `materialize` per ingested item
       after `_upsert_graph`. Per-item failure isolation: log a warning
@@ -54,20 +54,20 @@
       Test-First: unit test with a stub LLM + recording Neo4j fake,
       asserting the step runs in order and a failing item does not abort
       the run.
-- [ ] 3.2 When `extraction.enabled` is false (default) or Neo4j is
+- [x] 3.2 When `extraction.enabled` is false (default) or Neo4j is
       unconfigured, the step is skipped entirely — no LLM call, no graph
       writes beyond the `:SourceItem` nodes. Test-First: unit test
       asserting the LLM transport is never invoked when the gate is off.
 
 ## 4. Config knobs (digital_twins/config/schema.py + config.example.yml)
 
-- [ ] 4.1 Add knobs: `extraction.enabled` (bool, default `false`),
+- [x] 4.1 Add knobs: `extraction.enabled` (bool, default `false`),
       `extraction.max_text_chars` (int, default `12000`),
       `extraction.prompt_version` (str, default `""` → built-in
       `PROMPT_VERSION`). Update `config.example.yml` with comments.
       Test-First: knob-sync guard (`test_knob_docs.py` / T027) stays
       green; unit test for the new knob defaults + coercion.
-- [ ] 4.2 Reuse `llm.endpoint` / `llm.model` / `llm.api_key` (no new
+- [x] 4.2 Reuse `llm.endpoint` / `llm.model` / `llm.api_key` (no new
       endpoint knobs). Document in `config.example.yml` that extraction
       reuses the LLM endpoint configured for other uses (single
       deployment, one LLM endpoint).
@@ -87,19 +87,19 @@
 
 ## 6. Docs
 
-- [ ] 6.1 `config.example.yml` + docs: document the `extraction.*` knobs,
+- [x] 6.1 `config.example.yml` + docs: document the `extraction.*` knobs,
       the LLM endpoint requirement, and the prompt-version pinning model
       (bump = re-extract).
-- [ ] 6.2 Document the REL out-of-scope decision and the revisit trigger
+- [x] 6.2 Document the REL out-of-scope decision and the revisit trigger
       (design decision 1).
-- [ ] 6.3 Portability guard: `pytest tests/integration/test_portability.py
+- [x] 6.3 Portability guard: `pytest tests/integration/test_portability.py
       tests/unit/test_knob_docs.py` must stay green (no host paths or
       env-var references introduced; `llm.api_key` is a config-layer
       knob, not an env var).
 
 ## 7. Verification
 
-- [ ] 7.1 Full pytest run; NFR-1 re-asserted (extraction is idempotent
+- [x] 7.1 Full pytest run; NFR-1 re-asserted (extraction is idempotent
       per (item, prompt_version) — re-ingesting the same item does not
       duplicate nodes/edges).
 - [ ] 7.2 Manual interop check: point personal-kb's hybrid query at a
