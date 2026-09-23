@@ -44,6 +44,27 @@ points in place.
 - **WHEN** an item whose text changed is re-ingested
 - **THEN** the same point IDs are upserted and no new points are minted.
 
+### Requirement: Every ingest surface that has Neo4j configured writes the graph
+When a deployment configures `neo4j.url`, every ingest surface
+(schedule, CLI one-shot, MCP `kb_ingest`, web) shall pass a live Neo4j
+driver into the pipeline so the `:SourceItem` node is written alongside
+the Qdrant point. A surface that cannot construct the driver (unconfigured
+or transport failure) shall proceed Qdrant-only with a logged warning,
+not fail the run.
+
+#### Scenario: MCP ingest writes both stores
+- **WHEN** `kb_ingest` is called on a deployment with `neo4j.url`
+  configured and the Neo4j endpoint is reachable
+- **THEN** the run writes both the Qdrant points and the `:SourceItem`
+  node for each ingested item in the same pass.
+
+#### Scenario: Neo4j unavailable degrades gracefully
+- **WHEN** `kb_ingest` is called with `neo4j.url` set but the endpoint
+  is unreachable
+- **THEN** the run completes the Qdrant upserts, logs a warning, and
+  returns success for the vector side; no partial-graph state is left
+  behind mid-run.
+
 ## MODIFIED Requirements
 
 ### Requirement: Legacy graph labels are removable

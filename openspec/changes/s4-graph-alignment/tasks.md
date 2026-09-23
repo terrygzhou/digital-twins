@@ -35,6 +35,13 @@
       drop `KbItem`/`KbChunk`/`HAS_CHUNK` writes.
 - [ ] 3.2 Update `digital_twins/health.py` / any graph health check to probe
       `:SourceItem` instead of `:KbItem`.
+- [ ] 3.3 `mcp/dispatch.py::_kb_ingest_body`: add `_resolve_neo4j_driver(config)`
+      helper (lazy, monkeypatchable, mirrors `_resolve_qdrant_factory`); pass
+      the resolved driver as `neo4j=` to the `run_pipeline` call. Unconfigured
+      / construction failure -> proceed Qdrant-only (logged warning, not
+      fatal), matching `run_pipeline`'s existing optional-neo4j semantics.
+      Update the body's docstring step 6 ("neo4j left at its default") and the
+      corresponding unit tests (the dispatch monkeypatch seam).
 
 ## 4. Migration + CLI
 - [ ] 4.1 Add `digital-twins migrate s4` step: `MATCH (n:KbItem) DETACH

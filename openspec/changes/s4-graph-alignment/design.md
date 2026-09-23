@@ -108,6 +108,26 @@ cross-system dedup.
    payload `content_hash` hash *item* text. The deprecation entry (task 1.2)
    must make this distinction explicit.
 
+## MCP ingest path (new)
+The `kb_ingest` MCP body (`mcp/dispatch.py`) today calls `run_pipeline(...)`
+with `neo4j=None` (its docstring: "neo4j is left at its default (Qdrant-only)").
+That means even after this change, **MCP-triggered ingest writes zero Neo4j
+nodes** — a fresh Qdrant point with an `item_id` but no `:SourceItem` to
+join it, so personal-kb's graph arm stays empty for MCP-ingested content.
+
+**Decision:** the `kb_ingest` body must resolve a real Neo4j driver from
+`ctx.config` (new helper `_resolve_neo4j_driver(config)`, mirroring the
+existing `_resolve_qdrant_factory` lazy/monkeypatchable pattern) and pass
+it as `neo4j=` to `run_pipeline`. If `neo4j.url` is unconfigured or the
+driver fails to construct, the run proceeds Qdrant-only (logged, not
+fatal) — matching `run_pipeline`'s existing "neo4j is optional"
+semantics, but making the *default* for a configured deployment
+graph-writing, not skipping.
+
+This keeps the Neo4j graph and Qdrant vectors in lockstep for **every**
+ingest surface (schedule, CLI, MCP, web) — the graph relationship is
+built at ingest time, not in a separate backfill.
+
 ## Open questions
 1. **Cross-system dedup:** NFR-1 is scoped to within-system only (see
    cross-system collision decision). Should a channel-mapping table be
