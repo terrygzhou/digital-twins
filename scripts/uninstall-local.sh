@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # 015 T001 (US1): local uninstall — one invocation on a host that was set up
 # with scripts/bootstrap-local.sh + pip install digital-twins.
-# Contract pinned by tests/unit/test_uninstall_script.py (R1): all external
-# command invocations MUST route through run_cmd() so UNINSTALL_EXEC can
-# intercept them in tests.
+# Contract (R1): all external command invocations MUST route through
+# run_cmd() so UNINSTALL_EXEC can intercept them in tests
+# (tests/unit/test_uninstall_script.py, pending).
 #
-# Contract: specs/015-service-teardown/contracts/uninstall-cli.md
+# Contract: specs/015-service-teardown/contracts/uninstall-cli.md (pending)
 #   exit 0  success (nothing left to remove, or every step succeeded)
 #   exit 1  a step failed and --force was not given (remediation printed)
 #   exit 2  --tear-down-volumes was requested but a volume could not be
