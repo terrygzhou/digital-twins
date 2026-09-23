@@ -8,13 +8,19 @@
       cross-system collision with personal-kb's namespace string form).
 - [ ] 1.2 Deprecate the old content-dependent `point_id(prefix, item_key,
       chunk_index, text)` (keep for one release, mark deprecation in
-      `digital_twins/config/deprecation.py`).
+      `digital_twins/config/deprecation.py`). The deprecation entry must
+      note that the legacy `content_hash()` hashes *chunk* text while the
+      new `SourceItem.content_hash` / Qdrant payload `content_hash` hashes
+      *item* text — different scopes, not a rename.
 
 ## 2. Qdrant payload alignment (digital_twins/ingest/pipeline.py)
-- [ ] 2.1 Extend payload dict to S4/personal-kb fields: `item_id`,
+- [ ] 2.1 Extend payload dict to S4/personal-kb fields: `item_id`
+      (= `item.key`, same join key as `SourceItem.item_id`),
       `content_hash` (item-level, shared by chunks), `full_content`,
       `content_snippet` (text[:200]), `captured_at` (rename of `ts`),
-      `total_chunks`, `embed_model` (from config), `source_type`, `tags: []`;
+      `total_chunks`, `embed_model` (from config), `source_type`,
+      `tags: []`, `run_id` (reuse pipeline's existing `run_id`),
+      `trigger` (entry-surface name: `cli`/`schedule`/`mcp`/`web`);
       move `owner`/`owner_tag` under `meta`.
 - [ ] 2.2 Unit tests: payload contract assertions (field presence, item-level
       hash shared across chunks of one item, owner under meta).
@@ -46,6 +52,11 @@
       (old points orphaned by ID-scheme change).
 - [ ] 6.2 Portability guard check: `pytest tests/integration/test_portability.py
       tests/unit/test_knob_docs.py` must stay green (no host paths introduced).
+- [ ] 6.3 Document the two recorded decisions: (a) NFR-1 dedup is
+      within-system; cross-system content dedup requires a
+      channel-mapping table (blocked on personal-kb channel-registry ACL);
+      (b) chunk text lives in Qdrant `full_content`, not in the Neo4j graph
+      (Neo4j = entity/relation graph; Qdrant = vector + payload store).
 
 ## 7. Verification
 - [ ] 7.1 Full pytest run; NFR-1 acceptance check (same content via schedule /

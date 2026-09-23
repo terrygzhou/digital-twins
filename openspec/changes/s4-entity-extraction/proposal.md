@@ -16,6 +16,9 @@ re-extraction, `drop` on reconcile).
   orphaned entities on reconcile (BR-6.3/6.4 parity).
 - LLM access is config-gated (new knob, default off); no dependency
   bundled — uses the configured endpoint (SGLang/OpenAI-compatible).
+- **REL edges are out of scope for this change** (they require cross-entity
+  inference that personal-kb's `materialize()` already handles; a third
+  change would add digital-twins' REL production if needed).
 
 ## Impact
 - Affected code: new `digital_twins/ingest/entities.py`, pipeline hook
@@ -24,6 +27,11 @@ re-extraction, `drop` on reconcile).
   `extraction.model`, `extraction.prompt_version`.
 
 ## Non-goals
-- No change to personal-kb; no `REL` edge inference between entities from
-  different channels (cross-channel REL stays personal-kb-only).
+- No change to personal-kb; no REL edge generation in this change.
+  personal-kb's `REL` edges are already scoped to a single item via
+  `source_item` (they never cross items/channels), so "cross-channel REL
+  stays personal-kb-only" is not a restriction digital-twins is choosing
+  to impose — it is already true in personal-kb. This change deliberately
+  adds no REL production; if RELs are needed from digital-twins content,
+  a follow-up change would extend the extractor to emit relations.
 - No synchronous extraction in the MCP fast path (async/batched only).

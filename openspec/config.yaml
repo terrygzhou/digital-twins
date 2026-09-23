@@ -1,8 +1,9 @@
 schema: spec-driven
 
 context: |
-  Tech stack: Python 3.12, Neo4j (Cypher), Qdrant, hatchling build, console script
+  Tech stack: Neo4j (Cypher), Qdrant, hatchling build, console script
   `digital-twins`; PyPI dist `digital-twins-kb`, v0.11.0 line.
+  Runtime: Dockerfile pins python:3.11-slim; host dev pin is 3.12.
   Conventions:
   - Config precedence: env (KB_ prefix) -> kb.local.yml -> kb.yml -> defaults; no host
     paths in shipped code (NFR-13 / BR-11).

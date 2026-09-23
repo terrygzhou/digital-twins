@@ -5,17 +5,21 @@
 ### Requirement: Qdrant points carry S4-compatible payload fields
 Every chunk point written by digital-twins shall include the fields
 `item_id`, `content_hash`, `full_content`, `content_snippet`,
-`captured_at`, `total_chunks`, `embed_model`, `source_type`, `tags`, and a
-`meta` object (multi-user `owner`/`owner_tag` fields shall live under
-`meta`, not at top level). `content_hash` shall be computed from the
-item's full text and be identical across all chunks of that item.
+`captured_at`, `total_chunks`, `embed_model`, `source_type`, `tags`,
+`run_id`, `trigger`, and a `meta` object (multi-user `owner`/`owner_tag`
+fields shall live under `meta`, not at top level). `content_hash` shall be
+computed from the item's full text and be identical across all chunks of
+that item. `item_id` is the single join key between Qdrant and Neo4j —
+it equals the `SourceItem.item_id` node property and the source's
+`item.key`.
 
 #### Scenario: Payload contract on ingest
 - **WHEN** an item with N chunks is ingested via any trigger
   (schedule, run, mcp, web)
 - **THEN** each of the N points carries `item_id` equal to the item's
-  stable key, `total_chunks` equal to N, and one shared item-level
-  `content_hash`; `meta` carries any owner fields.
+  stable key, `total_chunks` equal to N, one shared item-level
+  `content_hash`, and a `trigger` matching the entry surface;
+  `meta` carries any owner fields.
 
 ### Requirement: Neo4j writes the S4 SourceItem node
 Ingest with Neo4j enabled shall write one `(:SourceItem {item_id, channel,

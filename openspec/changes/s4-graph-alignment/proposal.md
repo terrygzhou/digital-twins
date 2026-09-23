@@ -25,6 +25,8 @@ payload fields.
 
 ## Impact
 - Affected specs: 013-neo4j-query-tests (test contract delta).
+- NFR-1 dedup is scoped to within-system; cross-system content dedup requires
+  a channel-mapping table (see design.md "Cross-system collision").
 - Affected code: `digital_twins/ingest/ids.py`, `digital_twins/ingest/pipeline.py`,
   Neo4j migration/health checks, spec-013 tests, docs.
 - Existing digital-twins Qdrant points: point-ID scheme change means old points

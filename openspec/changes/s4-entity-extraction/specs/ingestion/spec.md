@@ -14,4 +14,9 @@ captured_at}]->(:Entity)` edges, idempotently per (item, prompt_version).
   and new edges are written with `valid_to = NULL`.
 
 ## Non-goals
-- No `REL` edge generation; no cross-channel entity merging.
+- No `REL` edge generation in this change (REL edges are scoped to a single
+  item via `source_item` in personal-kb's `materialize()`; they never cross
+  items/channels, so "cross-channel REL stays personal-kb-only" is already
+  true in personal-kb, not a digital-twins restriction. If REL production
+  from digital-twins content is needed, a follow-up change would extend the
+  extractor to emit relations).
