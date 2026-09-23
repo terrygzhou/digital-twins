@@ -188,7 +188,8 @@ def setup(force_cloud: bool, skip_services: bool) -> None:
 
     Exits 0 when all health checks pass; 1 on a failing check; 3 when the
     local stack failed to start; 5 when cloud endpoints could not be
-    resolved.
+    resolved; 6 when the wizard was interrupted (Ctrl-C / EOF at a
+    prompt) before the backend was configured.
     """
     from digital_twins.setup import run_setup
     raise SystemExit(run_setup(force_cloud=force_cloud,

@@ -759,6 +759,81 @@ def test_local_stack_prompts_neo4j_creds_writes_to_kb_local(_isolate_config,
     assert data["neo4j"]["password"] == "mypw"
 
 
+def test_cloud_prompt_eof_returns_exit_code_6(_isolate_config, monkeypatch):
+    """An EOF at the cloud prompt (non-interactive stdin) aborts the
+    wizard cleanly with exit 6 instead of leaking an interpreter
+    'Aborted!' / exit 1."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "docker_available", lambda: False)
+
+    def fake_prompt(label):
+        raise EOFError("EOF when reading a line")
+    monkeypatch.setattr(setup_mod, "run_cloud_stack",
+                        lambda p, e: p("unused"))
+
+    rc = setup_mod.run_setup(
+        prompt=fake_prompt,
+        confirm=lambda q: True,
+        echo=lambda msg: None)
+    assert rc == 6
+
+
+def test_cloud_prompt_keyboard_interrupt_returns_exit_code_6(
+        _isolate_config, monkeypatch):
+    """A Ctrl-C at the cloud prompt is a user cancellation: exit 6, no
+    traceback."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "docker_available", lambda: False)
+
+    def fake_prompt(label):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(setup_mod, "run_cloud_stack",
+                        lambda p, e: p("unused"))
+
+    rc = setup_mod.run_setup(
+        prompt=fake_prompt,
+        confirm=lambda q: True,
+        echo=lambda msg: None)
+    assert rc == 6
+
+
+def test_local_stack_prompt_eof_returns_exit_code_6(_isolate_config,
+                                                    monkeypatch):
+    """The same cancel semantics apply to the local-stack credential
+    prompts: EOF -> exit 6."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "docker_available", lambda: True)
+
+    def fake_prompt(label):
+        raise EOFError("EOF when reading a line")
+    monkeypatch.setattr(setup_mod, "run_local_stack",
+                        lambda p, e: p("unused"))
+
+    rc = setup_mod.run_setup(
+        prompt=fake_prompt,
+        confirm=lambda q: True,
+        echo=lambda msg: None)
+    assert rc == 6
+
+
 def test_local_stack_empty_prompt_answer_falls_back_to_defaults(
         _isolate_config, monkeypatch):
     """Pressing Enter (empty answer) keeps the compose defaults: user=neo4j,

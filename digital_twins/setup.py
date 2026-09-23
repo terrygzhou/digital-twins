@@ -475,27 +475,38 @@ def run_setup(prompt: Callable = click.prompt,
     path).
     """
     # --- 1) backend mode ---------------------------------------------------
-    if skip_services:
-        echo("skipping service startup (--skip-services).")
-    elif force_cloud:
-        if not run_cloud_stack(prompt, echo):
-            return 5
-    elif has_valid_local_config():
-        echo("kb.local.yml already has valid endpoints — skipping service "
-             "startup. Config: "
-             f"{local_config_path()} "
-             "(re-run 'digital-twins setup --cloud' to force cloud.)")
-    elif docker_available() and confirm(
-            "Docker is available. Start the bundled local stack? "
-            "(qdrant + neo4j + embedding-model, ~1-2 min on first run)"):
-        if not run_local_stack(prompt, echo):
-            return 3
-    else:
-        # No docker, or the user declined the local stack: fall back to
-        # cloud mode.
-        echo("falling back to cloud mode.")
-        if not run_cloud_stack(prompt, echo):
-            return 5
+    try:
+        if skip_services:
+            echo("skipping service startup (--skip-services).")
+        elif force_cloud:
+            if not run_cloud_stack(prompt, echo):
+                return 5
+        elif has_valid_local_config():
+            echo("kb.local.yml already has valid endpoints — skipping "
+                 "service startup. Config: "
+                 f"{local_config_path()} "
+                 "(re-run 'digital-twins setup --cloud' to force cloud.)")
+        elif docker_available() and confirm(
+                "Docker is available. Start the bundled local stack? "
+                "(qdrant + neo4j + embedding-model, ~1-2 min on first "
+                "run)"):
+            if not run_local_stack(prompt, echo):
+                return 3
+        else:
+            # No docker, or the user declined the local stack: fall back
+            # to cloud mode.
+            echo("falling back to cloud mode.")
+            if not run_cloud_stack(prompt, echo):
+                return 5
+    except (EOFError, KeyboardInterrupt):
+        # An interrupted prompt (Ctrl-C, or EOF on non-interactive
+        # stdin): a user cancellation, not a failed health check.
+        # Report a clean cancellation instead of leaking the interpreter
+        # 'Aborted!' message.
+        echo("setup was interrupted before the backend was configured — "
+             "re-run 'digital-twins setup' to continue (or set the "
+             "KB_* env vars and re-run).")
+        return 6
 
     # --- 2) init (state DB + migrations, no endpoint prompts) --------------
     # connect() already migrates on open (state.db.connect); no second

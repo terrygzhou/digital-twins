@@ -35,6 +35,7 @@
 #   2  no usable Python >=3.11 was found
 #   3  `digital-twins setup` reported a failing health check
 #   5  `digital-twins setup` could not resolve cloud endpoints
+#   6  `digital-twins setup` was interrupted (Ctrl-C / EOF at a prompt)
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/terrygzhou/digital-twins/main/scripts/install.sh | bash
@@ -303,9 +304,11 @@ main() {
       1) note "setup: a health check failed (see the report above); re-run '$venv_bin setup' after fixing the endpoint." ;;
       3) note "setup: the local Docker stack did not become healthy; re-run after it is up." ;;
       5) note "setup: cloud endpoints could not be resolved (see which KB_* var is empty above)." ;;
+      6) note "setup: the wizard was interrupted before the backend was configured; re-run '$venv_bin setup' (or set the KB_* env vars) to continue." ;;
       *) fail "setup exited unexpectedly ($setup_rc)." ;;
     esac
-    if [ "$setup_rc" -eq 1 ] || [ "$setup_rc" -eq 3 ] || [ "$setup_rc" -eq 5 ]; then
+    if [ "$setup_rc" -eq 1 ] || [ "$setup_rc" -eq 3 ] || \
+       [ "$setup_rc" -eq 5 ] || [ "$setup_rc" -eq 6 ]; then
       exit "$setup_rc"
     fi
   else
