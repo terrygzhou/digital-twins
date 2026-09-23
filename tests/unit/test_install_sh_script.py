@@ -343,3 +343,52 @@ def test_header_step1_matches_actual_venv_behavior():
     # install.sh does NOT auto-install python3-venv; it prints the
     # remediation and exits 2. The header must not overstate that.
     assert "self-bootstrap via python3-venv" not in text
+
+
+# --- UX additions (0.11.x) ---------------------------------------------------
+
+def test_help_under_piped_stdin_prints_fallback_summary(fake_exec):
+    # Simulate `curl ... | bash install.sh --help`: the script is fed on
+    # stdin (bash -s), so $0 is 'bash' and BASH_SOURCE is empty ->
+    # usage() falls back to a short summary instead of silently failing.
+    import subprocess as _sp
+    import shutil as _shutil
+    bash = _shutil.which("bash") or "/bin/bash"
+    exe, log, home = fake_exec
+    env = os.environ.copy()
+    env.update({
+        "INSTALL_SH_EXEC": str(exe),
+        "INSTALL_SH_EXEC_LOG": str(log),
+        "HOME": str(home),
+    })
+    proc = _sp.run(
+        [bash, "-s", "--", "--help"],
+        input=SCRIPT.read_text(),
+        capture_output=True, text=True, env=env,
+    )
+    assert proc.returncode == 0
+    assert "digital-twins installer" in proc.stdout
+    assert "curl -fsSL" in proc.stdout
+
+
+def test_pip_install_no_longer_quiet(fake_exec):
+    # Removing --quiet so non-technical users see pip progress lines.
+    proc, calls = _run(["--no-setup"], fake_exec)
+    assert proc.returncode == 0
+    for c in calls:
+        joined = " ".join(c)
+        if "install" in joined and "digital-twins-kb" in joined:
+            assert "--quiet" not in c, f"--quiet still present: {c}"
+
+
+def test_non_tty_stdin_warning_emitted(fake_exec):
+    # When stdin is not a TTY (piped/curl|bash) and no cloud-env mode,
+    # the script warns the user before launching the wizard so the
+    # non-interactive failure path is documented, not a surprise.
+    proc, calls = _run(["--no-setup"], fake_exec)
+    # --no-setup skips the wizard; the warning is only in the wizard path.
+    # Run without --no-setup to hit the warning.
+    proc, calls = _run([], fake_exec)
+    # With the fake exec the wizard succeeds (rc=0), so check stderr
+    # for the warning line.
+    assert "stdin is not a terminal" in proc.stderr

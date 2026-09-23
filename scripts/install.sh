@@ -97,7 +97,24 @@ usage() {
   # separates the header from the code; `set -euo pipefail` follows it, so
   # stopping at the blank line keeps --help free of code/docstring lines).
   # No line-count range, so growth of the header cannot leak into the body.
-  sed -n '2,/^$/{ p; /^$/q; }' "$0" | grep -E '^#( |$)' | sed 's/^# \{0,2\}//'
+  #
+  # The script text is read from ${BASH_SOURCE[0]} when it is a real file
+  # (normal execution and tests).  When the user's whole journey is
+  #   curl -fsSL .../install.sh | bash
+  # the script is fed on stdin, $0 is 'bash' and BASH_SOURCE is empty —
+  # in that case there is no file to read and --help falls back to a
+  # short summary instead of failing (no network fetch, no surprise).
+  local src="${BASH_SOURCE[0]:-}"
+  if [ -n "$src" ] && [ -r "$src" ]; then
+    sed -n "2,/^$/{ p; /^$/q; }" "$src" | grep -E '^#( |$)' | sed 's/^# \{0,2\}//'
+  else
+    echo "digital-twins installer — non-technical one-liner:"
+    echo
+    echo "  curl -fsSL https://raw.githubusercontent.com/terrygzhou/digital-twins/main/scripts/install.sh | bash"
+    echo
+    echo "With options, download first:"
+    echo "  curl -fsSL .../install.sh -o install.sh && bash install.sh --help"
+  fi
 }
 
 note() { echo "install: $*" >&2; }
@@ -266,8 +283,10 @@ main() {
     extra_spec="${DIST_NAME}"
   fi
   note "installing $extra_spec from PyPI (this can take a while) ..."
-  # --upgrade keeps a re-run current; --quiet keeps the output tidy.
-  if ! run_cmd "${pip_cmd[@]}" --upgrade --quiet "$extra_spec"; then
+  # --upgrade keeps a re-run current.  No --quiet: a non-technical user
+  # gets visible progress (pip download/copy lines) during the step that
+  # can take minutes on a slow link.
+  if ! run_cmd "${pip_cmd[@]}" --upgrade "$extra_spec"; then
     fail "install failed. Check your network / PyPI access and re-run."
   fi
 
@@ -287,7 +306,7 @@ main() {
     *setup*) ;;  # current CLI: 'setup' present in help
     *)
       note "stale CLI detected (no 'setup' subcommand); forcing a reinstall."
-      if ! run_cmd "${pip_cmd[@]}" --upgrade --force-reinstall --quiet "$extra_spec"; then
+      if ! run_cmd "${pip_cmd[@]}" --upgrade --force-reinstall "$extra_spec"; then
         fail "forced reinstall failed. Check your network / PyPI access and re-run."
       fi
       note "reinstalled $extra_spec."
@@ -297,6 +316,19 @@ main() {
   # --- 4) run the setup wizard ---------------------------------------------
   local setup_rc=0
   if [ "$NO_SETUP" -eq 0 ]; then
+    # The wizard prompts for endpoints when the backend is cloud; a
+    # non-interactive stdin (this script piped in, or run in a pipeline)
+    # cannot answer the prompts and the wizard exits 6.  Detect that up
+    # front and tell the user the non-interactive path (--cloud-env with
+    # KB_* env vars, or --no-setup + a later interactive run) so the
+    # failure is a clear "set these vars and re-run", not a surprise.
+    if [ ! -t 0 ] && [ "$CLOUD_ENV" -eq 0 ] && [ "$SKIP_SERVICES" -eq 0 ]; then
+      note "stdin is not a terminal, so the wizard cannot ask questions."
+      note "Non-interactive options:"
+      note "  - set the cloud endpoint env vars (KB_QDRANT__URL etc.) and re-run with --cloud-env,"
+      note "  - or run with --no-setup now, then '$venv_bin setup' in a real terminal."
+      note "Continuing (the wizard will exit 6 if it cannot reach a backend)."
+    fi
     # Build the flag string (empty-safe on bash 3.2 + set -u — no array
     # expansion at all, so macOS's shipped bash 3.2 cannot trip on it).
     local setup_flags=""
@@ -310,7 +342,9 @@ main() {
       1) note "setup: a health check failed (see the report above); re-run '$venv_bin setup' after fixing the endpoint." ;;
       3) note "setup: the local Docker stack did not become healthy; re-run after it is up." ;;
       5) note "setup: cloud endpoints could not be resolved (see which KB_* var is empty above)." ;;
-      6) note "setup: the wizard was interrupted before the backend was configured; re-run '$venv_bin setup' (or set the KB_* env vars) to continue." ;;
+      6) note "setup: the wizard was interrupted before the backend was configured."
+         note "To continue in a real terminal:  source $venv_dir/bin/activate && digital-twins setup"
+         note "Or non-interactive: set the cloud endpoint env vars and re-run with --cloud-env." ;;
       *) fail "setup exited unexpectedly ($setup_rc)." ;;
     esac
     if [ "$setup_rc" -eq 1 ] || [ "$setup_rc" -eq 3 ] || \
@@ -328,8 +362,19 @@ main() {
   fi
 
   echo
-  note "done. Next: $venv_bin run --source fs   (or the web UI: $venv_bin web)"
-  echo "activate anytime with:  source $venv_dir/bin/activate"
+  echo "=== digital-twins is installed ==="
+  echo
+  echo "  1. Activate the environment (any terminal):"
+  echo "       source $venv_dir/bin/activate"
+  echo "  2. Run your first ingest:"
+  echo "       digital-twins run --source fs"
+  echo "  3. Open the web UI:"
+  echo "       digital-twins web"
+  echo
+  echo "  Your admin credentials are in: $HOME/.digital-twins/admin-credentials.txt"
+  echo "  (delete that file after your first login)"
+  echo
+  echo "  Uninstall:  see scripts/uninstall-local.sh in the repo (removes venv + state dir)"
   return 0
 }
 

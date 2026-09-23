@@ -212,13 +212,28 @@ main() {
     extra_spec="${DIST_NAME}"
   fi
   note "installing $extra_spec (this can take a while) ..."
-  if ! run_cmd "${pip_cmd[@]}" --quiet "$extra_spec"; then
+  # No --quiet: a non-technical user gets visible progress (pip
+  # download/copy lines) during the step that can take minutes.
+  if ! run_cmd "${pip_cmd[@]}" "$extra_spec"; then
     fail "install failed. Check your network / PyPI access and re-run."
   fi
 
   # --- 4) run the setup wizard ---------------------------------------------
   local setup_rc=0
   if [ "$NO_SETUP" -eq 0 ]; then
+    # The wizard prompts for endpoints when the backend is cloud; a
+    # non-interactive stdin (this script piped in, or run in a pipeline)
+    # cannot answer the prompts and the wizard exits 6.  Detect that up
+    # front and tell the user the non-interactive path (--cloud-env with
+    # KB_* env vars, or --no-setup + a later interactive run) so the
+    # failure is a clear "set these vars and re-run", not a surprise.
+    if [ ! -t 0 ] && [ "$CLOUD_ENV" -eq 0 ] && [ "$SKIP_SERVICES" -eq 0 ]; then
+      note "stdin is not a terminal, so the wizard cannot ask questions."
+      note "Non-interactive options:"
+      note "  - set the cloud endpoint env vars (KB_QDRANT__URL etc.) and re-run with --cloud-env,"
+      note "  - or run with --no-setup now, then '$venv_bin setup' in a real terminal."
+      note "Continuing (the wizard will exit 6 if it cannot reach a backend)."
+    fi
     # Build the flag string (empty-safe on bash 3.2 + set -u — no array
     # expansion at all, so macOS's shipped bash 3.2 cannot trip on it).
     local setup_flags=""
@@ -234,7 +249,9 @@ main() {
           1) note "setup: a health check failed (see the report above); re-run '$venv_bin setup' after fixing the endpoint." ;;
           3) note "setup: the local Docker stack did not become healthy; re-run after it is up." ;;
           5) note "setup: cloud endpoints could not be resolved (see which KB_* var is empty above)." ;;
-          6) note "setup: the wizard was interrupted before the backend was configured; re-run '$venv_bin setup' (or set the KB_* env vars) to continue." ;;
+          6) note "setup: the wizard was interrupted before the backend was configured."
+         note "To continue in a real terminal:  source $venv_dir/bin/activate && digital-twins setup"
+         note "Or non-interactive: set the cloud endpoint env vars and re-run with --cloud-env." ;;
         esac
         exit "$setup_rc"
         ;;
@@ -251,8 +268,19 @@ main() {
   fi
 
   echo
-  note "done. Next: $venv_bin run --source fs   (or the web UI: $venv_bin web)"
-  echo "activate anytime with:  source $venv_dir/bin/activate"
+  echo "=== digital-twins is installed ==="
+  echo
+  echo "  1. Activate the environment (any terminal):"
+  echo "       source $venv_dir/bin/activate"
+  echo "  2. Run your first ingest:"
+  echo "       digital-twins run --source fs"
+  echo "  3. Open the web UI:"
+  echo "       digital-twins web"
+  echo
+  echo "  Your admin credentials are in: $HOME/.digital-twins/admin-credentials.txt"
+  echo "  (delete that file after your first login)"
+  echo
+  echo "  Uninstall:  see scripts/uninstall-local.sh in the repo (removes venv + state dir)"
   return 0
 }
 
