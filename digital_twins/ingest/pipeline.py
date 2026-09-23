@@ -32,6 +32,7 @@ from digital_twins.state.models import (
     start_audit_run,
     upsert_highwater,
 )
+from digital_twins.ingest import entities  # s4-entity-extraction
 
 
 class PrerequisiteError(Exception):
@@ -276,6 +277,10 @@ def run_pipeline(
                     # text in the graph (chunk text lives in Qdrant
                     # full_content).
                     _upsert_graph(neo4j, name, items, item_hash)
+            # Post-graph entity extraction (s4-entity-extraction,
+            # config-gated; no-op when extraction.enabled is false
+            # or the LLM endpoint is unconfigured).
+            _run_extraction(cfg, neo4j, items, item_hash, run_id, name)
 
             for item in items:
                 upsert_highwater(db, name, item.key, item.ts)
@@ -326,3 +331,74 @@ def _ensure_graph_schema(neo4j) -> None:
         "CREATE INDEX IF NOT EXISTS FOR (si:SourceItem) ON (si.item_id)")
     neo4j.run(
         "CREATE INDEX IF NOT EXISTS FOR (si:SourceItem) ON (si.channel)")
+
+
+def _run_extraction(
+    cfg: dict,
+    neo4j,
+    items: list,
+    item_hash: dict,
+    run_id: str,
+    channel: str,
+) -> None:
+    """Post-graph LLM extraction step (s4-entity-extraction).
+
+    Config-gated: when ``extraction.enabled`` is false (the default) or
+    ``neo4j`` is None, this is a no-op. When enabled and a driver is
+    present, for each ingested item:
+
+    1. ``entities.supersede(item.key, driver=neo4j, cfg=extraction_cfg)``
+       — stamps ``valid_to`` on live MENTIONED/REL edges (BR-6.4).
+    2. ``entities.extract(item.content, title=..., cfg=extraction_cfg)``
+       — one LLM call per item (isolated: failures are logged, not raised).
+    3. ``entities.materialize(...)`` — idempotent MERGE into the graph.
+
+    Per-item failure isolation: an item whose extraction fails logs a
+    warning and the remaining items proceed (matching personal-kb's
+    ``post_sweep`` isolation pattern).
+    """
+    import logging
+
+    extraction_cfg = {
+        "enabled": bool(get(cfg, "extraction.enabled")),
+        "max_text_chars": get(cfg, "extraction.max_text_chars") or 12000,
+        "prompt_version": get(cfg, "extraction.prompt_version") or "",
+    }
+    if not extraction_cfg["enabled"]:
+        return
+    if neo4j is None:
+        logging.debug(
+            "extraction enabled but no Neo4j driver — skipping graph "
+            "entity extraction")
+        return
+
+    llm_cfg = {
+        "endpoint": get(cfg, "llm.endpoint"),
+        "model": get(cfg, "llm.model"),
+        "api_key": get(cfg, "llm.api_key"),
+    }
+
+    for item in items:
+        try:
+            entities.supersede(item.key, driver=neo4j, cfg=extraction_cfg)
+            extraction = entities.extract(
+                item.content,
+                title=str(
+                    item.metadata.get("title", "")
+                    if hasattr(item, "metadata") else ""),
+                cfg={**extraction_cfg, **llm_cfg},
+            )
+            entities.materialize(
+                channel=channel,
+                item_id=item.key,
+                content_hash=item_hash.get(item.key, ""),
+                extraction=extraction,
+                run_id=run_id,
+                captured_at=item.ts,
+                driver=neo4j,
+                cfg=extraction_cfg,
+            )
+        except Exception as exc:  # noqa: BLE001 — per-item isolation
+            logging.warning(
+                "entity extraction failed for item %r in channel %r: %s",
+                item.key, channel, exc)
