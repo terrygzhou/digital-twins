@@ -14,8 +14,11 @@ payload fields.
   single `MERGE (si:SourceItem {item_id})` per item, setting
   `channel`, `content_hash` (SHA-256 of item text). Drop chunk nodes.
 - **Qdrant payload**: add `item_id`, `content_hash`, `content_snippet`,
-  `full_content`, `captured_at`, `total_chunks`, `embed_model`, `source_type`,
-  `source_title`, `tags`; keep `owner`/`owner_tag` moved under `meta`.
+  `full_content`, `captured_at`, `source_title`, `total_chunks`,
+  `embed_model`, `source_type`, `tags` (existing `source_url` stays); keep
+  `owner`/`owner_tag` moved under `meta`; optional provenance passthroughs
+  `run_id`/`trigger` (not contract fields; when present must equal the
+  audit row's values).
 - **Point ID**: switch to content-independent `uuid5(NAMESPACE_DNS,
   "kb:{channel}:{item_id}:{chunk_index}")` (personal-kb `kb/core/ids.py`
   convention) so re-ingest upserts in place (BR-6.1 parity) instead of minting
