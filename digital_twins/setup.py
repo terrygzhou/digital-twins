@@ -332,6 +332,38 @@ def run_local_stack(prompt_text: Callable = click.prompt,
 # Cloud mode
 # ---------------------------------------------------------------------------
 
+def run_cloud_env_stack(echo: Callable = click.echo) -> bool:
+    """Non-interactive cloud setup (--cloud-env): resolve the endpoints
+    from the KB_* env vars alone, never prompt.
+
+    A missing (or empty) required var fails with exit 5 and a
+    remediation that names exactly which vars are unset/empty — the
+    command is safe to run under a pipe or in CI (no stdin reads).
+    """
+    qdrant = os.environ.get("KB_QDRANT__URL", "").strip()
+    neo4j = os.environ.get("KB_NEO4J__URL", "").strip()
+    llm = os.environ.get("KB_LLM__ENDPOINT", "").strip()
+    embedding = os.environ.get("KB_EMBEDDING__ENDPOINT", "").strip()
+    neo4j_user = os.environ.get("KB_NEO4J__USER", "").strip()
+    neo4j_password = os.environ.get("KB_NEO4J__PASSWORD", "").strip()
+    missing = [name for name, value in (
+        ("KB_QDRANT__URL", qdrant), ("KB_NEO4J__URL", neo4j),
+        ("KB_LLM__ENDPOINT", llm)) if not value]
+    if missing:
+        echo("ERROR: cloud endpoints must be non-empty — "
+             f"{' and '.join(missing)} "
+             f"{'is' if len(missing) == 1 else 'are'} "
+             "unset or empty. Set the var(s) and re-run "
+             "'digital-twins setup --cloud-env'; this mode never prompts.")
+        return False
+    write_kb_local(_cloud_content(qdrant, neo4j, llm,
+                                  embedding, neo4j_user, neo4j_password))
+    echo("cloud mode (--cloud-env): no Docker required, no prompts — "
+         "kb.local.yml now points at the cloud endpoints from the "
+         "KB_* env vars.")
+    return True
+
+
 def run_cloud_stack(prompt_text: Callable = click.prompt,
                     echo: Callable = click.echo) -> bool:
     """Prompt for cloud endpoints and write kb.local.yml.
@@ -465,10 +497,14 @@ def run_setup(prompt: Callable = click.prompt,
               confirm: Callable = click.confirm,
               echo: Callable = click.echo,
               force_cloud: bool = False,
-              skip_services: bool = False) -> int:
+              skip_services: bool = False,
+              cloud_env: bool = False) -> int:
     """Run the full setup wizard. Returns the process exit code.
 
     force_cloud: skip docker detection, go straight to the cloud path.
+    cloud_env: non-interactive cloud setup — the endpoints must come
+    from the KB_* env vars, never a prompt; a missing var exits 5
+    naming the var (safe under a pipe or in CI).
     skip_services: explicit "I handle backends myself" — takes precedence
     over everything: never probe Docker, never prompt for endpoints, never
     write kb.local.yml; only init + admin + validate run (the re-run fast
@@ -478,6 +514,9 @@ def run_setup(prompt: Callable = click.prompt,
     try:
         if skip_services:
             echo("skipping service startup (--skip-services).")
+        elif cloud_env:
+            if not run_cloud_env_stack(echo):
+                return 5
         elif force_cloud:
             if not run_cloud_stack(prompt, echo):
                 return 5

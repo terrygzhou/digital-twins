@@ -223,6 +223,67 @@ def test_cloud_failure_returns_exit_code_5(_isolate_config, monkeypatch):
     assert rc == 5
 
 
+def test_cloud_env_resolves_from_env_no_prompts(_isolate_config, monkeypatch):
+    """--cloud-env: cloud endpoints come from KB_* env vars; the prompts
+    are never shown; the written kb.local.yml matches the env values."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "run_health_checks", lambda cfg: [
+        _ok_check(n) for n in ("qdrant", "neo4j", "llm", "embedding")])
+    monkeypatch.setenv("KB_QDRANT__URL", "http://env-q:6333")
+    monkeypatch.setenv("KB_NEO4J__URL", "bolt://env-n:7687")
+    monkeypatch.setenv("KB_LLM__ENDPOINT", "http://env-llm/v1")
+
+    def no_prompt(label):
+        raise AssertionError("--cloud-env must never prompt")
+    rc = setup_mod.run_setup(
+        prompt=no_prompt,
+        confirm=lambda q: True,
+        echo=lambda msg: None,
+        cloud_env=True)
+    assert rc == 0
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["qdrant"]["url"] == "http://env-q:6333"
+    assert data["neo4j"]["url"] == "bolt://env-n:7687"
+    assert data["llm"]["endpoint"] == "http://env-llm/v1"
+
+
+def test_cloud_env_missing_var_exits_5_names_var(_isolate_config,
+                                                  monkeypatch):
+    """--cloud-env with a required KB_* var unset -> exit 5 and the
+    remediation names exactly which var is missing; still no prompt."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setenv("KB_QDRANT__URL", "http://env-q:6333")
+    monkeypatch.delenv("KB_NEO4J__URL", raising=False)
+    monkeypatch.setenv("KB_LLM__ENDPOINT", "http://env-llm/v1")
+
+    echoes = []
+
+    def no_prompt(label):
+        raise AssertionError("--cloud-env must never prompt")
+    rc = setup_mod.run_setup(
+        prompt=no_prompt,
+        confirm=lambda q: True,
+        echo=echoes.append,
+        cloud_env=True)
+    assert rc == 5
+    joined = "\n".join(echoes)
+    # The gate names the missing var, not the set ones:
+    assert "KB_NEO4J__URL" in joined
+    assert "KB_QDRANT__URL" not in joined
+
+
 def test_local_stack_failure_returns_exit_code_3(_isolate_config, monkeypatch):
     config_dir, state_dir = _isolate_config
     import digital_twins.setup as setup_mod

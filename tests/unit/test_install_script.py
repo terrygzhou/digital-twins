@@ -152,6 +152,14 @@ def test_setup_skip_services_flag(fake_exec):
     assert setup_calls and "--skip-services" in setup_calls[0]
 
 
+def test_setup_invoked_with_cloud_env(fake_exec):
+    exe, log, home = fake_exec
+    proc, calls = _run(["--python", str(exe), "--cloud-env"], fake_exec)
+    assert proc.returncode == 0
+    setup_calls = [c for c in calls if "setup" in c]
+    assert setup_calls and "--cloud-env" in setup_calls[0]
+
+
 def test_run_ingest_flag_triggers_run(fake_exec):
     exe, log, home = fake_exec
     proc, calls = _run(["--python", str(exe), "--no-setup", "--run-ingest"], fake_exec)
@@ -203,6 +211,7 @@ def test_help_output_does_not_spill_into_code():
 
 def test_help_lists_all_documented_flags():
     proc = _run_help()
-    for flag in ("--extras", "--cloud", "--skip-services", "--run-ingest",
+    for flag in ("--extras", "--cloud", "--cloud-env", "--skip-services",
+                 "--run-ingest",
                  "--no-setup", "--python", "--dist", "--help"):
         assert flag in proc.stdout, f"{flag} missing from --help"

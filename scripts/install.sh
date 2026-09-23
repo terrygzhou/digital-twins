@@ -45,6 +45,9 @@
 #   Options:
 #     --extras LIST       Comma-separated extras (default: mcp). "" for base.
 #     --cloud             Pass --cloud to `setup` (force cloud backend mode)
+#     --cloud-env         Pass --cloud-env to `setup` (non-interactive cloud
+#                         mode: endpoints come from the KB_* env vars, never
+#                         a prompt; exit 5 names the missing var(s))
 #     --skip-services     Pass --skip-services to `setup`
 #     --run-ingest        After setup, run `digital-twins run --source fs`
 #     --no-setup          Stop after the pip install; do not run the wizard
@@ -82,6 +85,7 @@ MIN_PY_MINOR="11"
 EXTRAS="mcp"
 DIST_OVERRIDE=""
 CLOUD=0
+CLOUD_ENV=0
 SKIP_SERVICES=0
 RUN_INGEST=0
 NO_SETUP=0
@@ -163,6 +167,7 @@ main() {
     case "${args[$i]}" in
       --extras)        i=$((i+1)); EXTRAS="${args[$i]:-}" ;;
       --cloud)         CLOUD=1 ;;
+      --cloud-env)     CLOUD_ENV=1 ;;
       --skip-services) SKIP_SERVICES=1 ;;
       --run-ingest)    RUN_INGEST=1 ;;
       --no-setup)      NO_SETUP=1 ;;
@@ -296,6 +301,7 @@ main() {
     # expansion at all, so macOS's shipped bash 3.2 cannot trip on it).
     local setup_flags=""
     [ "$CLOUD" -eq 1 ]         && setup_flags="${setup_flags} --cloud"
+    [ "$CLOUD_ENV" -eq 1 ]     && setup_flags="${setup_flags} --cloud-env"
     [ "$SKIP_SERVICES" -eq 1 ] && setup_flags="${setup_flags} --skip-services"
     note "running the first-run wizard: $venv_bin setup${setup_flags}"
     run_cmd "$venv_bin" setup $setup_flags || setup_rc=$?

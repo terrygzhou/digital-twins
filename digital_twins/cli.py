@@ -171,10 +171,16 @@ def validate() -> None:
 @click.option("--cloud", "force_cloud", is_flag=True,
               help="Force cloud mode: skip Docker detection and the local "
                    "stack; prompt for the cloud endpoints instead.")
+@click.option("--cloud-env", is_flag=True,
+              help="Non-interactive cloud mode: resolve the endpoints "
+                   "from the KB_* env vars, never prompt. Exits 5 naming "
+                   "the missing var(s) when any required KB_* var is unset "
+                   "or empty (safe under a pipe or in CI).")
 @click.option("--skip-services", is_flag=True,
               help="Assume the backend is already up; skip service startup "
                    "and do init + admin account + health checks only.")
-def setup(force_cloud: bool, skip_services: bool) -> None:
+def setup(force_cloud: bool, skip_services: bool,
+          cloud_env: bool) -> None:
     """First-run wizard: backend (local Docker or cloud) + init + first
     admin account + health report in one command.
 
@@ -193,7 +199,8 @@ def setup(force_cloud: bool, skip_services: bool) -> None:
     """
     from digital_twins.setup import run_setup
     raise SystemExit(run_setup(force_cloud=force_cloud,
-                               skip_services=skip_services))
+                               skip_services=skip_services,
+                               cloud_env=cloud_env))
 
 
 @cli.command()

@@ -168,6 +168,13 @@ def test_setup_cloud_flag(fake_exec):
     assert setup_calls and "--cloud" in setup_calls[0]
 
 
+def test_setup_cloud_env_flag(fake_exec):
+    proc, calls = _run(["--cloud-env"], fake_exec)
+    assert proc.returncode == 0
+    setup_calls = [c for c in calls if "setup" in c]
+    assert setup_calls and "--cloud-env" in setup_calls[0]
+
+
 def test_current_cli_no_force_reinstall(fake_exec):
     # A current CLI (help lists 'setup') must NOT trigger the force
     # reinstall path: exactly one plain 'install --upgrade' call, no
@@ -325,7 +332,8 @@ def test_help_output_does_not_spill_into_code():
 
 def test_help_lists_all_documented_flags():
     proc = _run_help()
-    for flag in ("--extras", "--cloud", "--skip-services", "--run-ingest",
+    for flag in ("--extras", "--cloud", "--cloud-env", "--skip-services",
+                 "--run-ingest",
                  "--no-setup", "--python", "--dist", "--help"):
         assert flag in proc.stdout, f"{flag} missing from --help"
 
