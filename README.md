@@ -36,8 +36,14 @@ It ends with the `digital-twins setup` wizard (backend detection + init +
 admin account + health checks) and tells you the next step. Re-running is a
 safe no-op on a host that is already installed. Useful options:
 `--extras "mcp,local-embedding"` (pick the extras), `--cloud` (no Docker;
-cloud backends), `--run-ingest` (ingest a demo source right away),
-`--no-setup` (stop after the pip install). See
+cloud backends), `--cloud-env` (non-interactive cloud mode: endpoints
+come from the `KB_*` env vars, never a prompt — use under a pipe or in
+CI), `--run-ingest` (ingest a demo source right away),
+`--no-setup` (stop after the pip install).
+When stdin is not a terminal and no cloud mode was given, the installer
+prints the two non-interactive paths (`--cloud-env`, or `--no-setup`
+now + a later `digital-twins setup` in a real terminal) before
+launching the wizard. See
 `bash scripts/install-local.sh --help`.
 
 **Prefer to do it by hand?** The minimal steps the installer runs:
@@ -124,6 +130,7 @@ Flags:
 |------|--------|
 | `--skip-services` | "I handle backends myself": never probe Docker, never prompt, never write `kb.local.yml`; only init + admin + health checks. **Takes precedence over `--cloud` and over a valid `kb.local.yml`** (a re-run where the backend is already up). |
 | `--cloud` | Skip Docker detection, go straight to cloud mode (prompts for the three required endpoints). Set via env (`KB_QDRANT__URL`, `KB_NEO4J__URL`, `KB_LLM__ENDPOINT`) or answer the prompts; optional `KB_EMBEDDING__ENDPOINT`, `KB_NEO4J__USER`, `KB_NEO4J__PASSWORD`. |
+| `--cloud-env` | Non-interactive cloud mode: the three required endpoints must come from `KB_QDRANT__URL` / `KB_NEO4J__URL` / `KB_LLM__ENDPOINT` env vars; never a prompt. Exits 5 naming the missing var(s) when any required var is unset or empty. Safe under a pipe or in CI. |
 
 Exit codes: `0` all checks pass · `1` a check failed (remediation names
 the endpoint) · `3` local stack's mandatory services did not become
@@ -133,7 +140,10 @@ also fail) · `5` cloud endpoints could not be resolved (the remediation
 names exactly which of `KB_QDRANT__URL` / `KB_NEO4J__URL` /
 `KB_LLM__ENDPOINT` are empty; an env var set to an empty string is
 honored as "set but empty" — it fails the gate, it does not fall through
-to the prompt).
+to the prompt) · `6` the wizard was interrupted (Ctrl-C, or EOF at a
+prompt) before the backend was configured — re-run `digital-twins setup`
+in a real terminal, or set the `KB_*` env vars and re-run with
+`--cloud-env`.
 
 ## Exposing to agents (MCP)
 

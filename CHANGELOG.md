@@ -3,6 +3,27 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [Unreleased]
+
+### Changed
+- `install.sh` / `install-local.sh` UX for non-technical users:
+  - `--help` under `curl … | bash` (stdin-fed script) now prints a
+    short one-liner summary instead of nothing — `usage()` falls back
+    when `BASH_SOURCE` is empty.
+  - `--quiet` removed from the pip install calls so download/progress
+    lines are visible during the step that can take minutes.
+  - When stdin is not a terminal and no cloud mode was given, the
+    installer prints the two non-interactive paths (`--cloud-env` with
+    the `KB_*` env vars, or `--no-setup` now + a later interactive
+    `digital-twins setup`) before launching the wizard — a non-
+    interactive failure is documented, not a surprise exit 6.
+  - The closing banner is now a numbered next-steps block (activate
+    venv → first ingest → web UI → admin-credentials path → uninstall
+    pointer).
+  - Exit-6 remediation names the exact re-run command.
+- `README.md`: document `--cloud-env`, exit code 6, and the
+  non-interactive stdin warning.
+
 ## [0.11.2] - 2026-09-22
 
 ### Added
