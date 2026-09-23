@@ -394,14 +394,82 @@ digital-twins serve-mcp                # stdio NDJSON (agent spawns it)
 
 ## Architecture
 
-> **Data lifecycle diagram (D2):**
-> ![digital-twins data lifecycle](diagrams/lifecycle.svg)
-> The interactive source lives at [`diagrams/lifecycle.d2`](diagrams/lifecycle.d2);
-> render it with `d2 diagrams/lifecycle.d2` (output: SVG/PNG). It shows the
-> seven phases: **config → sources (read) → ingest (chunk + embed +
-> deterministic `point_id`) → store (Qdrant / Neo4j / SQLite) → serve
-> (web + MCP, owner-scoped search)**, with **scheduling** and
-> **audit** cross-cutting the middle three.
+> **Data lifecycle diagram:**
+> Mermaid source (rendered vertically):
+
+```mermaid
+flowchart TD
+    %% Phase 0: configuration (the substrate)
+    config["config/ — 4-layer load<br/>env(.env) → local → yml → defaults"]
+
+    %% Phase 1: ingestion (read from sources)
+    subgraph sources["sources (8)"]
+        fs["fs: directory of files"]
+        hermes["hermes: session export"]
+        pi["pi: session store .jsonl"]
+        dsh["dsh: .jsonl.zstd sessions"]
+        paperclip["paperclip: PG DB"]
+        mail["yahoo / gmail: IMAP"]
+        custom["custom: entrypoint"]
+    end
+
+    %% Phase 2: transformation (chunk + embed)
+    prereq{"fail-fast prereq check"}
+    chunk["chunk_text (max_chars, overlap)"]
+    embed["embedder (endpoint or pinned BGE)"]
+    ids{"deterministic point_id (uuid5)"}
+
+    %% Phase 3: storage (upsert + state)
+    qdrant[("Qdrant (vectors, payload)")]
+    neo4j[("Neo4j (graph, optional)")]
+    sqlite[("SQLite (WAL) — highwater + audit_runs")]
+
+    %% Phase 4: scheduling (wraps 1–3)
+    presets["presets (daily/hourly/weekly/monthly/N)"]
+    loop["serve loop + pidfile, tick ~3s"]
+
+    %% Phase 5: retrieval / serving (read side)
+    web["web/ /api/* (search, ingest, audit)"]
+    mcp["mcp/ stdio + http (kb_search, kb_ingest, …)"]
+    search{"owner-scoped vector search"}
+
+    %% Cross-cutting
+    audit["audit_runs — row per run (ok/partial/failed)"]
+    multi["multi-user auth (sessions, tokens, roles)"]
+
+    %% data flow
+    config -->|resolved cfg| sources
+    sources -->|"IngestItem (key, content, ts)"| prereq
+    prereq -->|ok| chunk
+    prereq -.->|"PrerequisiteError → exit 2, audited failed"| audit
+    chunk -->|chunk text| embed
+    embed -->|vectors| ids
+    ids -->|"upsert point (dedup: NFR-1)"| qdrant
+    ids -->|MERGE nodes| neo4j
+    qdrant -->|highwater cursor| sqlite
+    qdrant --> search
+    sqlite --> audit
+
+    %% scheduling drives the pipeline
+    loop -->|"fire due, trigger=schedule"| prereq
+    presets -->|next_fire_at| loop
+
+    %% serving surfaces
+    web -->|Bearer session| search
+    mcp -->|"role-gate + owner-scope"| search
+    web -->|"POST /api/ingest/run, trigger=web"| prereq
+    mcp -->|"kb_ingest, trigger=mcp"| prereq
+
+    %% multi-user wraps serving
+    multi --> web
+    multi --> mcp
+
+```
+
+It shows the phases: **config → sources (read) → ingest (chunk + embed +
+deterministic `point_id`) → store (Qdrant / Neo4j / SQLite) → serve
+(web + MCP, owner-scoped search)**, with **scheduling** and
+**audit** cross-cutting the middle three.
 
 
 ```
