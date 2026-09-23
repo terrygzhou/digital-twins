@@ -1,0 +1,25 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Python 3.12, Neo4j (Cypher), Qdrant, hatchling build, console script
+  `digital-twins`; PyPI dist `digital-twins-kb`, v0.11.0 line.
+  Conventions:
+  - Config precedence: env (KB_ prefix) -> kb.local.yml -> kb.yml -> defaults; no host
+    paths in shipped code (NFR-13 / BR-11).
+  - NFR-1: idempotent MERGE; same content via any trigger = one point.
+  - Spec-013 (specs/013-neo4j-query-tests/plan.md) pins the current Cypher test
+    contract; schema changes update that spec alongside.
+  - Constitution (.specify/memory/constitution.md) gate applies; Test-First.
+  - SDD ledger: .superpowers/sdd/ must stay in sync with tasks.
+  Domain: digital-twins personal knowledge base that must interoperate with
+  personal-kb's S4/ADR-003 Neo4j graph (:SourceItem/:Entity/:MENTIONED/:REL)
+  and Qdrant payload schema (item_id, content_hash, full_content, captured_at,
+  total_chunks, embed_model, ...).
+
+rules:
+  proposal:
+    - Keep proposals under 500 words
+    - Always include a "Non-goals" section
+  tasks:
+    - Break tasks into chunks of max 2 hours
+    - Mark spec-013 test-contract deltas as explicit tasks
