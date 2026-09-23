@@ -29,7 +29,9 @@ it, the wizard does not offer it.
   stop auto-running the wizard; they end with "run `digital-twins setup`".
   A `--with-setup` opt-in reproduces today's combined behavior. `--no-setup`
   is retired (it becomes the default; kept as an accepted no-op alias for
-  one release).
+  one release). `--run-ingest` now implies `--with-setup` (ingesting into an
+  unconfigured host would fail-fast, so the flag can only be useful after
+  setup has run).
 - **Retire / alias `digital-twins init`.** `init` and `setup` overlap
   (both create state DB + admin). `init` becomes a deprecated alias of
   `setup`; remediation text converges on "run `digital-twins setup`".
@@ -37,8 +39,10 @@ it, the wizard does not offer it.
 ## Impact
 - Affected code: `scripts/install.sh`, `scripts/install-local.sh`,
   `digital_twins/setup.py`, `digital_twins/cli.py` (`setup`/`init`
-  subcommands + `--backends` flag), `digital_twins/config/local_io.py`,
-  `digital_twins/health.py` (per-service remediation already exists — reuse).
+  subcommands + `--backends` flag), `digital_twins/health.py` (per-service
+  remediation already exists — reuse), plus user-facing remediation strings
+  that name `init` in `digital_twins/mcp/dispatch.py` and
+  `digital_twins/scheduler/loop.py` (reword to `setup`).
 - Affected specs: none of 001–013 test the *installer auto-run* contract
   directly, but the **installer doc-contract tests**
   (`tests/unit/test_install_sh_script.py`, `test_install_script.py`) assert

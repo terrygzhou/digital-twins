@@ -38,8 +38,18 @@ backend decision being all-or-nothing per run.
 ### D2. Per-service backend choice, additive
 - New `setup` flag: `--backends qdrant=local,llm=<url>,...` (comma-separated
   `service=value` pairs; `value` is `local` or a URL). Also accepted:
-  `--local` (= all four local) and `--cloud` (= all four external, today's
-  `--cloud` behavior). Without any of these, setup keeps the current
+  `--local` (= all four local) and `--cloud` (= all four external, *prompt*
+  mode — today's `--cloud` behavior, unchanged; env-var resolution stays
+  `--cloud-env`'s job).
+- **Flag precedence (deterministic, no prompt):** a flag *present on the
+  command line* wins for the services it names and **suppresses the
+  interactive second pass for those services**. `--local`/`--cloud`/`--cloud-env`
+  name all four services, so they fully suppress the second pass (they
+  deterministically set the resolved map). `--backends qdrant=local` names
+  only `qdrant`: `qdrant` is resolved from the flag, the other three fall
+  through to the second pass (or env, in `--cloud-env`). A service named in
+  more than one source (flag + env) → the flag wins.
+- Without any of these, setup keeps the current
   interactive detection (docker probe → confirm → local, else cloud prompt)
   **but now per-service**: when the user chooses the local stack, a second
   pass asks, per service in `{qdrant,neo4j,llm,embedding}`, "local or
@@ -69,14 +79,34 @@ backend decision being all-or-nothing per run.
   re-run on an already-configured host**, but a *first* run (no valid
   `kb.local.yml`) always writes the full resolved map (including any
   external URLs for services the user pointed elsewhere).
+- **`--skip-services` is pinned as a whole-stack decision, not per-service:**
+  "assume the backend is already up" → never probe Docker, never prompt,
+  never write `kb.local.yml` (the re-run fast path). It is orthogonal to
+  `--backends`: passing both is a contradiction (skip-services says
+  "don't write", backends says "resolve and write") and setup exits with a
+  clear error naming the conflict. It does *not* participate in per-service
+  resolution.
 
 ### D3. `init` → deprecated alias of `setup`
 - `cli.py::init` becomes a thin wrapper: print one deprecation line
   ("`digital-twins init` is deprecated; use `digital-twins setup`") then
-  call the `setup` flow (or, to keep `init`'s narrower promise, just the
-  state-DB + admin + health subset of `run_setup`). Kept for one release.
-- All remediation strings in `health.py` / `cli.py` that say "run
-  `digital-twins init`" change to "run `digital-twins setup`".
+  run the *subset* of `run_setup` that is `init`'s narrower promise —
+  state DB + migrations + first admin + health report — **and migrates
+  `init`'s merge-on-existing behavior into `setup`'s `kb.local.yml` write**:
+  when a valid `kb.local.yml` already exists, re-run prompts fill only the
+  *missing* fields (today's `init` `_merge(starter, existing)`, cli.py
+  L500-503), rather than `write_kb_local()`'s "leave the file untouched".
+  This keeps `tests/integration/test_cli_init.py`'s existing-value
+  assertions green (init's re-run is "existing values kept, missing
+  built-ins added, exit 0"). `--yes` is preserved. Kept for one release.
+- Remediation-string sweep (user-facing only, all four files): every
+  "run `digital-twins init`" / "re-run init/validate" string in
+  `digital_twins/cli.py` (incl. the "no state db" branch at L290-295),
+  `digital_twins/health.py` (L74, L124),
+  `digital_twins/mcp/dispatch.py` (L261), and
+  `digital_twins/scheduler/loop.py` (L210, L236) changes to "run
+  `digital-twins setup`". The test assertion in `tests/unit/test_auth.py`
+  L359 (`"init" in result.output.lower()`) updates to `"setup"`.
 
 ### D4. Docs
 - README "Fast path" splits into **Step 1: Install** (pip / installer /
@@ -92,3 +122,8 @@ backend decision being all-or-nothing per run.
 - No new host paths / dependencies (NFR-13 / BR-11). `--backends` is a
   CLI arg only; nothing is written to disk beyond `kb.local.yml`.
 - NFR-1 (dedup) unaffected — no change to point-ID or payload.
+- `--run-ingest` (installer step 5) now implies `--with-setup`: the
+  installers' `--run-ingest` flag sets `WITH_SETUP=1` internally, so a
+  combined "install + configure + first ingest" one-liner still works;
+  a bare `--run-ingest` without `--with-setup` would ingest into an
+  unconfigured host and fail-fast, so the two flags are not independent.
