@@ -25,6 +25,11 @@
           <input type="password" id="signin-password" required autocomplete="current-password">
         </label>
         <button type="submit" class="btn primary">Sign in</button>
+        <p class="hint">Forgot the password? <button type="button"
+            class="btn ghost" id="load-credentials-btn">Load credentials</button>
+        </p>
+        <p id="credentials-error" class="error" role="alert"></p>
+        <p id="credentials-note" class="hint" hidden></p>
         <p id="signin-error" class="error" role="alert"></p>
       </form>
     </div>
@@ -681,6 +686,37 @@
         function (s) { return probing[s]; });
     }
 
+    // Load the setup-written admin bootstrap credentials
+    // (admin-credentials.txt) into the sign-in form. The endpoint is
+    // public (loopback-only by design) and read-only; it 404s when the
+    // file has been deleted after first login.
+    function doLoadCredentials() {
+      el("credentials-error").textContent = "";
+      el("credentials-note").hidden = true;
+      fetch("/api/auth/credentials").then(function (r) {
+        return r.json().catch(function () { return null; });
+      }).then(function (data) {
+        if (!data) {
+          showError("credentials-error", null);
+          return;
+        }
+        if (data.error) {
+          el("credentials-error").textContent =
+            data.error + (data.remediation ? " — " + data.remediation : "");
+          return;
+        }
+        el("signin-email").value = data.email || "";
+        el("signin-password").value = data.password || "";
+        if (data.note) {
+          el("credentials-note").textContent = data.note;
+          el("credentials-note").hidden = false;
+        }
+      })
+      .catch(function () {
+        showError("credentials-error", null);
+      });
+    }
+
     // ---- boot ---------------------------------------------------------------
 
     function bootstrap() {
@@ -703,6 +739,7 @@
     el("signin-form").addEventListener("submit", doSignin);
     el("signup-form").addEventListener("submit", doSignup);
     el("signout-btn").addEventListener("click", doSignout);
+    el("load-credentials-btn").addEventListener("click", doLoadCredentials);
     el("refresh-points-btn").addEventListener("click", refreshPoints);
     el("search-btn").addEventListener("click", doSearch);
     el("search-query").addEventListener("keydown", function (e) {

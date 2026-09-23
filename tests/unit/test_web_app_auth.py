@@ -398,3 +398,53 @@ def test_me_invalid_token_401(web_app):
         host, port, "/api/me",
         headers={"Authorization": "Bearer not-a-real-token"})
     assert code == 401, f"/api/me with garbage token expected 401, got {code}: {raw[:200]!r}"
+
+
+# --- /api/auth/credentials ---------------------------------------------------
+
+
+def test_credentials_missing_file_404(web_app):
+    """GET /api/auth/credentials with no admin-credentials.txt → 404
+    with remediation, NOT a 500."""
+    _app, _db, host, port = web_app
+    code, parsed, raw = _http_get(host, port, "/api/auth/credentials")
+    assert code == 404, (
+        f"missing credentials file expected 404, got {code}: {raw[:200]!r}"
+    )
+    assert parsed and parsed.get("error") == "no saved credentials", (
+        f"404 body must carry 'no saved credentials': {parsed!r}"
+    )
+    assert "remediation" in parsed, f"remediation hint missing: {parsed!r}"
+
+
+def test_credentials_returns_saved_admin_credentials(web_app, tmp_path):
+    """admin-credentials.txt present → 200 with email + password + note."""
+    _app, _db, host, port = web_app
+    (tmp_path / "admin-credentials.txt").write_text(
+        "email: admin@localhost\n"
+        "password: s3cret-token\n"
+        "# written by 'digital-twins setup' — delete after first login.\n",
+        encoding="utf-8",
+    )
+    code, parsed, raw = _http_get(host, port, "/api/auth/credentials")
+    assert code == 200, (
+        f"present credentials file expected 200, got {code}: {raw[:200]!r}"
+    )
+    assert parsed and parsed.get("email") == "admin@localhost", (
+        f"email field wrong: {parsed!r}"
+    )
+    assert parsed.get("password") == "s3cret-token", (
+        f"password field wrong: {parsed!r}"
+    )
+    assert "note" in parsed, f"delete-reminder note missing: {parsed!r}"
+
+
+def test_credentials_unreadable_file_404(web_app, tmp_path):
+    """admin-credentials.txt with no parseable email/password lines → 404."""
+    _app, _db, host, port = web_app
+    (tmp_path / "admin-credentials.txt").write_text(
+        "garbage line\nno keys here\n", encoding="utf-8")
+    code, parsed, raw = _http_get(host, port, "/api/auth/credentials")
+    assert code == 404, (
+        f"unparseable credentials file expected 404, got {code}: {raw[:200]!r}"
+    )

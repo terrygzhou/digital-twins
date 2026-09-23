@@ -57,11 +57,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from digital_twins import accounts as _accounts_mod
 from digital_twins.accounts import (
@@ -97,6 +99,7 @@ _AUTH_EXEMPT = (
     "/api/auth/signup",
     "/api/auth/signin",
     "/api/auth/signout",
+    "/api/auth/credentials",
 )
 
 _MIME_TYPES = {
@@ -256,6 +259,9 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         if path == "/api/auth/signout" and method == "POST":
             self._handle_signout()
             return
+        if path == "/api/auth/credentials" and method == "GET":
+            self._handle_credentials()
+            return
         self._send_json(404, {"error": "not_found", "path": path})
 
     def _dispatch_rest(self, method: str, path: str, query: str,
@@ -346,6 +352,70 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         with self.server._db_lock:
             revoke_session(self.server.db, token)
         self._send_json(200, {"revoked": True})
+
+    def _handle_credentials(self) -> None:
+        """GET /api/auth/credentials → the setup-written admin bootstrap
+        credentials, if the file still exists.
+
+        ``digital-twins setup`` writes ``<state_dir>/admin-credentials.txt``
+        (mode 600) containing the generated first-admin password, shown
+        once on stdout. This endpoint exposes that same file through the
+        localhost-only UI so a user who lost the one-time printout can
+        still recover it — the trust boundary is the same as the file
+        itself (loopback + the local user who owns the state dir).
+
+        - File missing (deleted after first login, or never written) →
+          ``404 {"error": "no saved credentials"}`` with remediation
+          (re-run ``digital-twins setup``; it re-prints when no admin
+          exists... an existing admin gets a hint instead).
+        - File present → ``200 {"email", "password", "source"}``.
+        Never writes; read-only. The UI shows a delete reminder.
+        """
+        state_dir = Path(
+            self.server.config.get("state_dir", "")
+        ).expanduser()
+        if not state_dir.is_dir():
+            self._send_json(404, {
+                "error": "no saved credentials",
+                "remediation": ("state dir not found — re-run "
+                                "'digital-twins setup' to create the "
+                                "admin account"),
+            })
+            return
+        cred_file = state_dir / "admin-credentials.txt"
+        if not cred_file.is_file():
+            self._send_json(404, {
+                "error": "no saved credentials",
+                "remediation": ("admin-credentials.txt is missing — "
+                                 "delete the state dir and re-run "
+                                 "'digital-twins setup', or create a "
+                                 "new account with the sign-up form"),
+            })
+            return
+        text = cred_file.read_text(encoding="utf-8")
+        email = ""
+        password = ""
+        for line in text.splitlines():
+            m = re.match(r"^\s*email:\s*(.+)$", line)
+            if m:
+                email = m.group(1).strip()
+            m = re.match(r"^\s*password:\s*(.+)$", line)
+            if m:
+                password = m.group(1).strip()
+        if not email or not password:
+            self._send_json(404, {
+                "error": "no saved credentials",
+                "remediation": ("admin-credentials.txt is unreadable "
+                                 "— re-run 'digital-twins setup'"),
+            })
+            return
+        self._send_json(200, {
+            "email": email,
+            "password": password,
+            "source": "admin-credentials.txt",
+            "note": ("delete this file after your first login "
+                     "(setup printed it once on purpose)"),
+        })
 
     # --- /api/me handler (T006) ---------------------------------------------
 
