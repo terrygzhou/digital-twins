@@ -25,7 +25,9 @@
       vocabulary, no new fields if absent);
       move `owner`/`owner_tag` under `meta`.
 - [ ] 2.2 Unit tests: payload contract assertions (field presence, item-level
-      hash shared across chunks of one item, owner under meta).
+      hash shared across chunks of one item, owner under meta, and any present
+      `run_id`/`trigger` equal to the audit row's values for that run —
+      matching the spec scenario assertion).
 
 ## 3. Neo4j S4 graph (digital_twins/ingest/pipeline.py::_upsert_graph)
 - [ ] 3.1 Replace `_upsert_graph` with `MERGE (si:SourceItem {item_id: $id})

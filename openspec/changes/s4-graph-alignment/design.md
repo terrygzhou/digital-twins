@@ -43,7 +43,7 @@ Qdrant payload: `source, source_url, item_key, chunk_index, ts, text`
 | Qdrant `source_title` | ❌ | optional; default `""` |
 | Qdrant `tags` | ❌ | `[]` (channel extras may supply) |
 | Qdrant `owner`/`owner_tag` | top-level | move under `meta` |
-| Qdrant `run_id` / `trigger` | ❌ (optional) | NOT part of the S4 schema — personal-kb's query layer never filters on them; they are BR-4.6 operational provenance. **Decision:** include them as *optional* passthroughs only when the pipeline already has them (it does: `run_id` L163, `trigger` L134). Values must equal the audit-row `run_id`/`trigger` (reuse the pipeline's existing arguments verbatim — no new value vocabulary). Not a contract field: a missing value must never break interop. |
+| Qdrant `run_id` / `trigger` | ❌ (optional) | NOT part of the S4 schema — personal-kb's query layer never filters on them; they are BR-4.6 operational provenance. **Decision:** include them as *optional* passthroughs only when the pipeline already has them (it does: `run_id` L163, `trigger` L134). Values must equal the audit-row `run_id`/`trigger` (reuse the pipeline's existing arguments verbatim — no new value vocabulary; the four values in use are `manual` (CLI `--once`), `schedule` (scheduler loop), `mcp` (MCP dispatch), `web` (web app)). Not a contract field: a missing value must never break interop. |
 
 ## Point ID migration
 `ids.py` today: `uuid5(NAMESPACE_URL, "prefix|item_key|idx|content_hash")`
