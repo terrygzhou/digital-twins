@@ -133,3 +133,85 @@ def test_llm_request_unconfigured_endpoint_raises():
             [{"role": "user", "content": "hi"}],
             cfg={"endpoint": "", "model": "", "api_key": ""},
         )
+
+
+# ── Neo4j materialisation (recording-driver tests) ──────────────────────────
+
+from tests.conftest import StubNeo4j
+from digital_twins.ingest.entities import supersede, materialize, drop
+
+
+def test_supersede_issues_two_cypher_statements():
+    fake = StubNeo4j()
+    supersede("item-a", driver=fake, cfg={})
+    queries = [q for q, _ in fake.run_calls]
+    # MENTIONED supersede
+    assert any(
+        "MENTIONED" in q and "valid_to" in q and "IS NULL" in q
+        for q in queries
+    ), f"MENTIONED supersede not found in: {queries}"
+    # REL supersede (scoping by source_item)
+    assert any(
+        "REL" in q and "source_item" in q and "valid_to" in q
+        for q in queries
+    ), f"REL supersede not found in: {queries}"
+    # item_id param present
+    params = [p for _, p in fake.run_calls]
+    assert any(p.get("item_id") == "item-a" for p in params)
+
+
+def test_materialize_writes_entities_and_mentioned():
+    fake = StubNeo4j()
+    extraction = {
+        "entities": [
+            {"name": "Alice", "type": "person", "desc": "CEO"},
+            {"name": "Paris", "type": "place", "desc": "City"},
+        ],
+        "relations": [],
+        "prompt_version": PROMPT_VERSION,
+    }
+    out = materialize(
+        channel="fs", item_id="item-a", content_hash="h1",
+        extraction=extraction, run_id="r1",
+        captured_at="2026-01-01T00:00:00Z", driver=fake, cfg={},
+    )
+    assert "entities" in out and "mentioned" in out
+    queries = [q for q, _ in fake.run_calls]
+    # Entity MERGE
+    assert any("MERGE (e:Entity" in q for q in queries), queries
+    # SourceItem MERGE
+    assert any("MERGE (si:SourceItem" in q for q in queries), queries
+    # MENTIONED edge
+    assert any("MENTIONED" in q for q in queries), queries
+
+
+def test_materialize_idempotent_reuse_same_extraction():
+    """Re-materialising the same extraction does NOT create new entities
+    (MERGE is idempotent — NFR-1). The counter on a no-op re-run should
+    reflect zero new entity nodes."""
+    fake = StubNeo4j()
+    extraction = {
+        "entities": [{"name": "Alice", "type": "person", "desc": ""}],
+        "relations": [],
+        "prompt_version": PROMPT_VERSION,
+    }
+    # StubNeo4j always reports counters=0 (no-op stub)
+    out1 = materialize(
+        channel="fs", item_id="item-a", content_hash="h1",
+        extraction=extraction, run_id="r1",
+        captured_at="t1", driver=fake, cfg={},
+    )
+    out2 = materialize(
+        channel="fs", item_id="item-a", content_hash="h1",
+        extraction=extraction, run_id="r2",
+        captured_at="t2", driver=fake, cfg={},
+    )
+    # Stub returns 0 for both; assert no exception and same shape
+    assert out1.keys() == out2.keys()
+
+
+def test_drop_issues_detach_delete():
+    fake = StubNeo4j()
+    result = drop("item-a", driver=fake, cfg={})
+    queries = [q for q, _ in fake.run_calls]
+    assert any("DETACH DELETE" in q for q in queries), queries

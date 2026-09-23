@@ -216,3 +216,155 @@ def extract(text: str, *, title: str = "", cfg: dict | None = None) -> dict:
         "relations": relations[:100],
         "prompt_version": prompt_version(cfg),
     }
+
+
+# ── Neo4j materialisation ────────────────────────────────────────────────────
+
+
+def _now() -> str:
+    """UTC ISO-8601 timestamp for edge/node bookkeeping fields."""
+    return datetime.now(UTC).isoformat()
+
+
+def _run(driver, cypher: str, **params) -> int:
+    """Run one write Cypher; return a non-zero counter when the query
+    actually wrote anything. Tolerates the stub driver (no SummaryCounters)."""
+    with driver.session() as s:
+        result = s.run(cypher, **params)
+        try:
+            summary = result.consume()
+            c = summary.counters
+            return (
+                _safe_int(c.nodes_created, 0)
+                + _safe_int(c.nodes_deleted, 0)
+                + _safe_int(c.relationships_created, 0)
+                + _safe_int(c.relationships_deleted, 0)
+                + _safe_int(c.properties_set, 0)
+            )
+        except AttributeError:
+            # Stub driver: no SummaryCounters — treat as 0 updates.
+            return 0
+
+
+def supersede(item_id: str, *, driver, cfg: dict | None = None) -> int:
+    """Stamp ``valid_to`` on all live MENTIONED + REL edges owned by
+    ``item_id`` so re-extraction re-issues them (BR-6.4)."""
+    now = _now()
+    # MENTIONED supersede
+    _run(
+        driver,
+        "MATCH (si:SourceItem {item_id: $item_id})-[m:MENTIONED]->() "
+        "WHERE m.valid_to IS NULL "
+        "SET m.valid_to = $now",
+        item_id=item_id, now=now,
+    )
+    # REL supersede (scoping by source_item)
+    _run(
+        driver,
+        "MATCH ()-[r:REL]->() "
+        "WHERE r.source_item = $item_id AND r.valid_to IS NULL "
+        "SET r.valid_to = $now",
+        item_id=item_id, now=now,
+    )
+    return 0
+
+
+def materialize(
+    *,
+    channel: str,
+    item_id: str,
+    content_hash: str,
+    extraction: dict,
+    run_id: str,
+    captured_at: str,
+    driver,
+    cfg: dict | None = None,
+) -> dict:
+    """Idempotent MERGE of one extraction's entities + MENTIONED edges (NFR-1).
+
+    Returns ``{"entities": N, "mentioned": N, "relations": 0}`` where N is
+    the non-zero write counter (0 on a no-op re-run). REL step is a no-op
+    (design decision 1 — REL production is a follow-up change).
+    """
+    now = _now()
+    entities = extraction.get("entities") or []
+    pv = extraction.get("prompt_version") or PROMPT_VERSION
+    entities_written = 0
+    mentioned_written = 0
+
+    # Step 1: per-entity MERGE
+    for ent in entities:
+        name = ent.get("name", "")
+        etype = ent.get("type", "")
+        desc = ent.get("desc", "")
+        entities_written += _run(
+            driver,
+            "MERGE (e:Entity {name: $name, type: $type}) "
+            "ON CREATE SET e.created = $now, e.desc = $desc "
+            "ON MATCH SET e.last_seen = $now, "
+            "e.desc = CASE WHEN $desc <> '' THEN $desc ELSE e.desc END",
+            name=name, type=etype, desc=desc, now=now,
+        )
+
+    # Step 2: SourceItem MERGE
+    _run(
+        driver,
+        "MERGE (si:SourceItem {item_id: $item_id}) "
+        "SET si.channel = $channel, si.content_hash = $content_hash, "
+        "si.last_run_id = $run_id, si.last_captured_at = $captured_at",
+        item_id=item_id, channel=channel,
+        content_hash=content_hash, run_id=run_id,
+        captured_at=captured_at,
+    )
+
+    # Step 3: per-entity MENTIONED
+    for ent in entities:
+        name = ent.get("name", "")
+        etype = ent.get("type", "")
+        mentioned_written += _run(
+            driver,
+            "MATCH (si:SourceItem {item_id: $item_id}) "
+            "MATCH (e:Entity {name: $name, type: $type}) "
+            "MERGE (si)-[m:MENTIONED]->(e) "
+            "ON CREATE SET m.captured_at = $captured_at, m.run_id = $run_id, "
+            "m.prompt_version = $pv, m.valid_from = $now "
+            "ON MATCH SET m.valid_to = NULL, m.last_seen = $now, "
+            "m.run_id = $run_id",
+            item_id=item_id, name=name, type=etype,
+            captured_at=captured_at, run_id=run_id,
+            pv=pv, now=now,
+        )
+
+    # Step 4: REL — intentionally no-op (design decision 1, follow-up change)
+    # relations_written = 0
+
+    return {
+        "entities": entities_written,
+        "mentioned": mentioned_written,
+        "relations": 0,
+    }
+
+
+def drop(item_id: str, *, driver, cfg: dict | None = None) -> bool:
+    """DETACH-DELETE a SourceItem and prune orphaned entities (BR-6.3).
+
+    Returns True when a SourceItem was actually deleted.
+    """
+    with driver.session() as s:
+        result = s.run(
+            "MATCH (si:SourceItem {item_id: $item_id}) "
+            "DETACH DELETE si RETURN count(si) AS deleted",
+            item_id=item_id,
+        )
+        record = result.single()
+        deleted = int(record["deleted"]) if record else 0
+        if deleted > 0:
+            # Prune entities no longer referenced by any SourceItem
+            _run(
+                driver,
+                "MATCH (e:Entity) "
+                "WHERE NOT (e)<-[:MENTIONED]-(:SourceItem) "
+                "AND NOT (e)-[:REL]->() AND NOT (:Entity)-[:REL]->(e) "
+                "DELETE e",
+            )
+    return bool(deleted)
