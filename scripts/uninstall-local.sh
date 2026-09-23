@@ -9,7 +9,10 @@
 #   exit 0  success (nothing left to remove, or every step succeeded)
 #   exit 1  a step failed and --force was not given (remediation printed)
 #   exit 2  --tear-down-volumes was requested but a volume could not be
-#           identified (named; nothing was removed)
+#           identified (named; nothing was removed).  This exit code applies
+#           only when --force was NOT given; under --force a failed
+#           `down -v` is treated as a transient step failure and the script
+#           continues (exit 0), reporting the failure in kept:.
 #
 # Host-neutral (NFR-13): no host paths, usernames, or interpreter pins.
 # No image refs: docker-compose.yml remains the single source of image pins;
@@ -84,7 +87,11 @@ installed (it prints what it would have removed and exits 0).
 Options:
   --tear-down-volumes   Also `docker compose down -v`: removes the named
                        volumes (qdrant-data, neo4j-data, digital-twins-state).
-                       All ingested content is lost.  Off by default.
+                       All ingested content is lost.  Off by default.  If
+                       `down -v` fails: without --force the script exits 2
+                       (volume-identification failure); with --force it
+                       continues and reports the failure in the final kept:
+                       report.
   --remove-data         Also remove the machine-local config dir
                        (KB_CONFIG_DIR or ~/.config/digital-twins) and state
                        dir (KB_STATE_DIR or ~/.digital-twins).  Off by
@@ -94,9 +101,6 @@ Options:
   --skip-docker         Skip the docker compose down step entirely (for
                        hosts that use cloud/external backends).
   --help                Show this help.
-
-Environment overrides:
-  UNINSTALL_TIMEOUT_S  Max seconds to wait for docker compose down (default 60).
 USAGE
 }
 
@@ -236,7 +240,12 @@ main() {
             removed="$removed docker stack + volumes"
           else
             note "ERROR: docker compose down -v failed — the volumes could not be removed."
-            return "$EXIT_VOLUMES"
+            if [ "$FORCE" -eq 1 ]; then
+              note "continuing past the docker step (--force)."
+              kept="$kept docker stack + volumes (down -v failed)"
+            else
+              return "$EXIT_VOLUMES"
+            fi
           fi
         fi
       else

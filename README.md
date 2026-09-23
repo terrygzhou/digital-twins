@@ -588,5 +588,8 @@ removed by this script.
 
 Exit codes: `0` success (or everything was already absent) · `1` a step
 failed and `--force` was not given (remediation names the step and the
-manual command) · `2` `--tear-down-volumes` was requested but a volume could
-not be identified (nothing was removed).
+manual command) · `2` `--tear-down-volumes` was requested and `down -v`
+failed (a volume could not be identified; nothing was removed) — this exit
+code applies only without `--force`; under `--force` a failed `down -v` is
+treated as a transient step failure, the script continues, and the failure
+is reported in the final `kept:` line.
