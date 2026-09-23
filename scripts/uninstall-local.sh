@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # 015 T001 (US1): local uninstall — one invocation on a host that was set up
 # with scripts/bootstrap-local.sh + pip install digital-twins.
-# Contract (R1): all external command invocations MUST route through
-# run_cmd() so UNINSTALL_EXEC can intercept them in tests
+# R1: all external command invocations route through run_cmd() so
+# UNINSTALL_EXEC can intercept them in tests
 # (tests/unit/test_uninstall_script.py, pending).
 #
 # Contract: specs/015-service-teardown/contracts/uninstall-cli.md (pending)
