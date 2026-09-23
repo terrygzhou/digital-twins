@@ -11,7 +11,8 @@ re-extraction, `drop` on reconcile).
 ## What changes
 - New `digital_twins/ingest/entities.py`: LLM extraction of
   `Entity {name, type, desc}` (ENTITY_TYPES: person/organization/place/
-  event/concept) + `MENTIONED` edges from `SourceItem`, prompt versioned.
+  event/concept, with `product`/`url` planned for a future prompt version
+  bump) + `MENTIONED` edges from `SourceItem`, prompt versioned.
 - `supersede()` stamps `valid_to` on re-extraction; `drop()` DETACH-DELETes
   orphaned entities on reconcile (BR-6.3/6.4 parity).
 - LLM access is config-gated (new knob, default off); no dependency

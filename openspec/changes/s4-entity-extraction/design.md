@@ -160,23 +160,23 @@ same `llm.*` surface personal-kb uses, so a single deployment configures both):
 
 ## Open questions
 
-1. **Extraction trigger surface:** should extraction run on every surface
-   (schedule, CLI `--once`, MCP `kb_ingest`, web) or only on schedule?
-   Decision: every surface where Neo4j is configured and
-   `extraction.enabled` is true — matching the "every ingest surface writes
+1. **Extraction trigger surface:** extraction runs on the MCP
+   (`kb_ingest`) and web ingest surfaces in addition to schedule and CLI
+   `--once` — every surface where Neo4j is configured and
+   `extraction.enabled` is true, matching the "every ingest surface writes
    the graph" decision in s4-graph-alignment. The MCP fast path
-   (`kb_ingest`) is the same `run_pipeline` call, so extraction is
-   synchronous there too (bounded by the item's text length, not by a
-   batch cap). *Revisit trigger:* if LLM latency becomes a problem on the
-   MCP surface, add an `extraction.defer_mcp` knob to defer extraction to
-   the next schedule tick.
+   (`kb_ingest`) and web ingest call the same `run_pipeline`, so
+   extraction is synchronous there too (bounded by the item's text
+   length, not by a batch cap). *Revisit trigger:* if LLM latency becomes
+   a problem on the MCP surface, add an `extraction.defer_mcp` knob to
+   defer extraction to the next schedule tick.
 
-2. **Entity type set completeness:** `person/organization/place/event/
-   concept` matches personal-kb's `ENTITY_TYPES`. If digital-twins content
-   needs additional types (e.g., `document`, `product`, `url`), that is a
-   prompt + type-set change in both systems (version bump). *Revisit
-   trigger:* first user report of a missing entity type.
+2. **Entity type set completeness:** start with personal-kb's
+   `person/organization/place/event/concept` (matching `ENTITY_TYPES`).
+   Plan to add `product` and `url` in a future prompt version bump
+   (requires re-extraction across both systems). *Revisit trigger:* first
+   user report of a missing entity type.
 
-3. **LLM timeout / retry:** personal-kb uses a fixed 120 s timeout with
-   no retry. digital-twins matches this in this change. *Revisit trigger:*
-   if extraction failures correlate with LLM latency, add a retry knob.
+3. **LLM timeout / retry:** keep personal-kb's fixed 120 s timeout with
+   no retry. *Revisit trigger:* if extraction failures correlate with LLM
+   latency, add a retry knob.
