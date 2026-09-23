@@ -266,6 +266,45 @@ def _resolve_qdrant_factory(config):
     return factory
 
 
+def _resolve_neo4j_driver(config):
+    """Lazy Neo4j driver resolver (S4 alignment, task 3.3).
+
+    Mirrors ``_resolve_qdrant_factory``: a zero-arg factory so the
+    driver is only constructed after the prerequisite check passes,
+    and so tests can monkeypatch the module attribute.
+
+    Returns ``None`` — never raises — when the knobs are unconfigured
+    or construction fails: those cases mean the run proceeds
+    Qdrant-only, matching ``run_pipeline``'s optional-neo4j semantics
+    (the graph write is skipped and a warning is logged, not fatal).
+    """
+    import logging
+
+    from ..config.schema import get
+
+    url = get(config, "neo4j.url")
+    user = get(config, "neo4j.user")
+    password = get(config, "neo4j.password")
+    if not (url and user and password):
+        logging.warning(
+            "kb_ingest: neo4j.url/user/password not fully configured "
+            "— proceeding Qdrant-only (no graph writes)")
+        return None
+
+    def factory():
+        from ..scheduler.loop import build_neo4j_driver
+        driver = build_neo4j_driver(config)
+        return driver
+
+    try:
+        return factory()
+    except Exception as exc:
+        logging.warning(
+            "kb_ingest: Neo4j driver construction failed (%s) — "
+            "proceeding Qdrant-only (no graph writes)", exc)
+        return None
+
+
 def _resolve_embedder(config):
     """Lazy embedder: the heavy model loads on first call, not at call start.
 
@@ -806,18 +845,58 @@ def _kb_search_body(ctx: MCPContext, args: dict) -> dict:
     # The real qdrant-client ``query_points`` returns a ``QueryResponse``
     # (points under ``.points``); test fakes may return a bare list.
     points = results.points if hasattr(results, "points") else results
-    rows = [
+    payload_rows = [
         {
             "score": r.score,
             "source_url": (r.payload or {}).get("source_url"),
             "text": (r.payload or {}).get("text"),
+            "full_content": (r.payload or {}).get("full_content"),
+            "content_snippet": (r.payload or {}).get("content_snippet"),
             "source": (r.payload or {}).get("source"),
             "chunk_index": (r.payload or {}).get("chunk_index"),
+            "item_id": (r.payload or {}).get("item_id"),
+            "id": r.id,
         }
         for r in points
     ]
-    rows.sort(key=lambda row: row["score"] or 0.0, reverse=True)
+    rows = sorted(payload_rows,
+                  key=lambda row: row["score"] or 0.0, reverse=True)
+    if args.get("expand"):
+        rows = _attach_graph_expansion(ctx, rows)
     return {"ok": True, "results": rows, "count": len(rows)}
+
+
+def _attach_graph_expansion(ctx, rows: list) -> list:
+    """Attach graph-relative sibling chunks to search results.
+
+    Only invoked when the caller opts in (``args["expand"]``).  When
+    Neo4j is not configured (no ``neo4j.url`` in the config) the
+    function returns the rows unchanged — the Qdrant-only path is
+    unaffected.  When configured, each hit's ``id`` (the deterministic
+    ``point_id``) is used to query the graph for sibling chunks under
+    the same channel in the S4 ``:SourceItem`` graph; the results are
+    attached as a ``"related"`` list on each row.
+    """
+    from ..ingest import graph_query
+    from ..config.schema import get as cfg_get
+    url = cfg_get(ctx.config, "neo4j.url")
+    if not url:
+        return rows  # neo4j not configured — skip graph expansion
+    try:
+        from ..scheduler.loop import build_neo4j_driver
+        driver = build_neo4j_driver(ctx.config)
+    except Exception:
+        return rows  # driver construction failed — Qdrant-only result
+
+    try:
+        for row in rows:
+            item_id = (row.get("payload") or {}).get("item_id") or row.get("item_id")
+            if not item_id:
+                continue
+            row["related"] = graph_query.expand_relatives(driver, item_id)
+        return rows
+    finally:
+        driver.close()
 
 
 def _kb_chat_body(ctx: MCPContext, args: dict) -> dict:
@@ -1026,11 +1105,16 @@ def _kb_ingest_body(ctx: MCPContext, args: dict) -> dict:
     #    monkeypatch seam — the test monkeypatches dispatch.run_pipeline,
     #    which is what the body reads).  NO agent_kind kwarg
     #    (run_pipeline's signature has none, ingest/pipeline.py:105).
-    #    neo4j left at its default (Qdrant-only).
+    #    S4 alignment (task 3.3): the Neo4j driver is resolved from
+    #    the config and passed as ``neo4j=`` so that every ingest
+    #    surface writes the graph, not just CLI/schedule.  When
+    #    unconfigured or unconstructable, the resolver returns None
+    #    and the run proceeds Qdrant-only (logged, not fatal).
+    neo4j_driver = _resolve_neo4j_driver(merged_cfg)
     run_pipeline = globals().get("run_pipeline", _pipeline_mod.run_pipeline)
     try:
         summary = run_pipeline(
-            merged_cfg, ctx.db, qdrant_factory, embedder,
+            merged_cfg, ctx.db, qdrant_factory, embedder, neo4j_driver,
             source_names=source_names,
             trigger="mcp",
             scheduled_by=ctx.caller_email,

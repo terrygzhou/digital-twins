@@ -35,17 +35,45 @@ def qdrant():
 
 
 class StubNeo4j:
-    """Minimal stand-in for the official neo4j Driver (unit tests only)."""
+    """Minimal stand-in for the official neo4j Driver (unit tests only).
+
+    Mirrors the two surfaces the package uses:
+
+    * the driver-level ``.run(query, **params)`` (the pipeline's
+      ``neo4j`` parameter contract — 002 US2), and
+    * the ``.session()`` context manager the graph read path
+      (:mod:`digital_twins.ingest.graph_query`) uses for retrieval
+      queries.
+    """
 
     def __init__(self) -> None:
         self.run_calls: list[tuple] = []
+        self.session_calls: list[tuple] = []
 
     def session(self, **kwargs):  # noqa: D401 - interface parity stub
         return self
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
     def run(self, query, **params):
         self.run_calls.append((query, params))
-        return []
+        self.session_calls.append((query, params))
+
+        class _Result:
+            """Mimics neo4j Result: .data() returns list[dict] of records."""
+            def __init__(self, rows):
+                self._rows = rows
+            def data(self):
+                return self._rows
+            def single(self):
+                return self._rows[0] if self._rows else None
+
+        # Default: empty result.  Tests can set .stub_rows to override.
+        return _Result(getattr(self, "stub_rows", []) or [])
 
 
 @pytest.fixture

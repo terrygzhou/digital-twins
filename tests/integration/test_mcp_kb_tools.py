@@ -98,9 +98,10 @@ def _ctx(db, email, role, config, agent_kind="test"):
 # ---------------------------------------------------------------------------
 
 class _FakeQueryPoint:
-    def __init__(self, score, payload):
+    def __init__(self, score, payload, id=None):
         self.score = score
         self.payload = payload
+        self.id = id
 
 
 class _FakeQdrantClient:
@@ -242,7 +243,7 @@ def test_kb_search_service_token_owner_scoped(db, tmp_path, monkeypatch):
     assert result["count"] == 1
     for row in result["results"]:
         assert set(row.keys()) == {"score", "source_url", "text", "source",
-                                   "chunk_index"}
+                                   "chunk_index", "id"}
 
     # (iii) a second owner's point never appears: the filter's match value
     #     is the service account's tag (bob's tag differs), so the fake

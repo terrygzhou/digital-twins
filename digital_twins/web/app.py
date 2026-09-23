@@ -672,11 +672,44 @@ class _WebAppHandler(BaseHTTPRequestHandler):
                 "text": (r.payload or {}).get("text"),
                 "source": (r.payload or {}).get("source"),
                 "chunk_index": (r.payload or {}).get("chunk_index"),
+                "id": r.id,
             }
             for r in points
         ]
         rows.sort(key=lambda row: row["score"] or 0.0, reverse=True)
+        # 5. Optional graph expansion (expand=true): attach sibling chunks
+        #    under the same KbItem.  Silently no-ops when neo4j is not
+        #    configured (qdrant-only path unchanged).
+        if body.get("expand"):
+            rows = self._attach_graph_expansion(rows)
         self._send_json(200, {"results": rows})
+
+    def _attach_graph_expansion(self, rows: list) -> list:
+        """Attach graph-relative sibling chunks to search results.
+
+        Mirrors ``mcp.dispatch._attach_graph_expansion``.  No-ops when
+        ``neo4j.url`` is not configured so the Qdrant-only path is
+        unaffected.
+        """
+        from ..ingest import graph_query
+        from ..config.schema import get as cfg_get
+        url = cfg_get(self.server.config, "neo4j.url")
+        if not url:
+            return rows
+        try:
+            from ..scheduler.loop import build_neo4j_driver
+            driver = build_neo4j_driver(self.server.config)
+        except Exception:
+            return rows
+        try:
+            for row in rows:
+                chunk_id = row.get("id")
+                if not chunk_id:
+                    continue
+                row["related"] = graph_query.expand_relatives(driver, chunk_id)
+            return rows
+        finally:
+            driver.close()
 
     # --- /api/ingest/run handler (T012) ----------------------------------------
 
@@ -761,6 +794,31 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         # pass a minimal config without these sections).
         merged_cfg = _merge_defaults(config)
 
+        def _resolve_neo4j_driver(cfg):
+            """Lazy Neo4j driver resolver (S4 alignment task 3.3).
+
+            Mirrors the MCP dispatch helper: returns None (Qdrant-only
+            fallback, logged not fatal) when the knobs are unconfigured
+            or construction fails.
+            """
+            import logging
+            url = _cfg_get(cfg, "neo4j.url")
+            user = _cfg_get(cfg, "neo4j.user")
+            password = _cfg_get(cfg, "neo4j.password")
+            if not (url and user and password):
+                logging.warning(
+                    "web ingest: neo4j.url/user/password not fully "
+                    "configured — proceeding Qdrant-only (no graph writes)")
+                return None
+            try:
+                from ..scheduler.loop import build_neo4j_driver
+                return build_neo4j_driver(cfg)
+            except Exception as exc:
+                logging.warning(
+                    "web ingest: Neo4j driver construction failed (%s) — "
+                    "proceeding Qdrant-only (no graph writes)", exc)
+                return None
+
         def _resolve_qdrant():
             if qdrant_client is not None:
                 return qdrant_client
@@ -782,11 +840,16 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             # at call time via the module attribute so test monkeypatches
             # of ``pipeline_mod.run_pipeline`` intercept the hand-off.
             run_pipeline = _pipeline_mod.run_pipeline
+            # S4 alignment: resolve the Neo4j driver from config when
+            # configured (graph writes on the web surface too); Qdrant-only
+            # fallback when unconfigured / unconstructable.
+            neo4j_driver = _resolve_neo4j_driver(merged_cfg)
             summary = run_pipeline(
                 merged_cfg,
                 db,
                 _resolve_qdrant,
                 self._pooled_embedder(),
+                neo4j_driver,
                 source_names=source_names,
                 trigger="web",
                 scheduled_by=caller_email,

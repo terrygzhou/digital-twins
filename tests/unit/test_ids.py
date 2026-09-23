@@ -74,3 +74,70 @@ def test_overlap_equal_to_max_chars_rejected_by_schema(tmp_path):
         "chunking:\n  max_chars: 100\n  overlap: 100\n", encoding="utf-8")
     with pytest.raises(SchemaError):
         load(cwd=tmp_path, config_dir=tmp_path)
+
+# --- S4 point-ID scheme (s4-graph-alignment task 1.1) -----------------------
+# The content-independent uuid5(NAMESPACE_DNS, "kb:{channel}:{item_id}:{idx}")
+# scheme is the personal-kb kb/core/ids.py convention: it shares one uuid5
+# ID space across the two systems so re-ingest upserts in place instead of
+# minting a new point when content changes.
+
+from digital_twins.ingest.ids import point_id_s4
+
+
+def test_point_id_s4_is_valid_uuid_and_deterministic():
+    a = point_id_s4("fs", "notes/a.txt", 0)
+    b = point_id_s4("fs", "notes/a.txt", 0)
+    assert a == b
+    uuid.UUID(a)
+
+
+def test_point_id_s4_is_content_independent():
+    # The whole point of S4: content change no longer mints a new point ID.
+    assert point_id_s4("fs", "k", 0) == point_id_s4("fs", "k", 0)
+    assert point_id_s4("fs", "k", 0, content="one") == \
+        point_id_s4("fs", "k", 0, content="two")
+    # but channel / item_id / chunk_index still vary the ID
+    assert point_id_s4("fs", "k", 0) != point_id_s4("fs", "k", 1)
+    assert point_id_s4("fs", "k", 0) != point_id_s4("hermes", "k", 0)
+    assert point_id_s4("fs", "k", 0) != point_id_s4("fs", "k2", 0)
+
+
+def test_point_id_s4_namespace_is_dns():
+    """The ID space must match personal-kb: uuid5 over NAMESPACE_DNS."""
+    expected = str(uuid.uuid5(
+        uuid.NAMESPACE_DNS, "kb:fs:a:0"))
+    assert point_id_s4("fs", "a", 0) == expected
+
+
+def test_point_id_s4_no_cross_system_collision_with_pk_string_form():
+    """personal-kb mints `uuid5(NAMESPACE_DNS, f"kb:{channel}:{item_id}:"
+    f"{chunk_index}")`; a different (channel, item_id) pair must never
+    collide. digital-twins `fs` vs personal-kb `files` stay distinct by
+    construction (the recorded cross-system collision decision)."""
+    pk_files = str(uuid.uuid5(
+        uuid.NAMESPACE_DNS, "kb:files:a:0"))
+    assert point_id_s4("fs", "a", 0) != pk_files
+    pk_sessions = str(uuid.uuid5(
+        uuid.NAMESPACE_DNS, "kb:sessions:msg1:0"))
+    assert point_id_s4("session", "msg1", 0) != pk_sessions
+
+
+def test_legacy_point_id_fires_one_run_deprecation_warning(monkeypatch):
+    """Task 1.2: the legacy content-dependent point_id is deprecated in
+    favor of point_id_s4 — one-run DeprecationWarning naming the
+    replacement (mirror of the config-knob mechanism)."""
+    import warnings
+    from digital_twins.ingest import deprecation as dep
+    monkeypatch.delattr(dep, "_ALREADY_WARNED", raising=False)
+    dep._ALREADY_WARNED = set()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        point_id("fs:", "a", 0, "x")
+        assert len(caught) == 1
+        assert issubclass(caught[0].category, DeprecationWarning)
+        assert "point_id_s4" in str(caught[0].message)
+    # second call in the same process: no re-warn
+    with warnings.catch_warnings(record=True) as caught2:
+        warnings.simplefilter("always")
+        point_id("fs:", "a", 0, "x")
+        assert caught2 == []

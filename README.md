@@ -394,6 +394,16 @@ digital-twins serve-mcp                # stdio NDJSON (agent spawns it)
 
 ## Architecture
 
+> **Data lifecycle diagram (D2):**
+> ![digital-twins data lifecycle](diagrams/lifecycle.svg)
+> The interactive source lives at [`diagrams/lifecycle.d2`](diagrams/lifecycle.d2);
+> render it with `d2 diagrams/lifecycle.d2` (output: SVG/PNG). It shows the
+> seven phases: **config → sources (read) → ingest (chunk + embed +
+> deterministic `point_id`) → store (Qdrant / Neo4j / SQLite) → serve
+> (web + MCP, owner-scoped search)**, with **scheduling** and
+> **audit** cross-cutting the middle three.
+
+
 ```
                 ┌──────────────────────────────────────────────┐
                 │           digital_twins (package)            │

@@ -80,10 +80,11 @@ _BASE_CFG = {
 # ---------------------------------------------------------------------------
 
 class _FakeQueryPoint:
-    """Mimics a qdrant_client query result row: .score + .payload."""
-    def __init__(self, score, payload):
+    """Mimics a qdrant_client query result row: .score + .payload + .id."""
+    def __init__(self, score, payload, id=None):
         self.score = score
         self.payload = payload
+        self.id = id
 
 
 class _FakeQdrantClient:
@@ -316,7 +317,8 @@ def test_kb_search_success_shape_sorted_desc(db, monkeypatch):
     # exact field set per row
     for r in result["results"]:
         assert set(r.keys()) == {"score", "source_url", "text", "source",
-                                 "chunk_index"}
+                                  "chunk_index", "id", "item_id",
+                                  "full_content", "content_snippet"}
     # the highest-score row is first
     assert result["results"][0]["source_url"] == "high"
 

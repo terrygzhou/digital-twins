@@ -201,12 +201,17 @@ def test_kb_ingest_scheduler_success_shape(db, monkeypatch):
     args = call["args"]
     kwargs = call["kwargs"]
 
-    # Positional: (merged_cfg, db, qdrant_factory, embedder)
-    assert len(args) >= 2, f"expected ≥2 positional args: {args}"
-    merged_cfg, db_arg = args[0], args[1]
+    # Positional: (merged_cfg, db, qdrant_factory, embedder, neo4j_driver)
+    assert len(args) >= 4, f"expected ≥4 positional args: {args}"
+    merged_cfg, db_arg, qdrant_factory, embedder = args[0:4]
     assert db_arg is db, "second positional arg must be ctx.db"
     assert isinstance(merged_cfg, dict), (
         f"first positional arg must be a dict: {merged_cfg!r}")
+    # S4 alignment (task 3.3): the 5th positional arg is the resolved
+    # Neo4j driver — None when neo4j.url is unconfigured in this test
+    # (Qdrant-only fallback), so the run proceeds without graph writes.
+    assert args[4] is None, (
+        f"unconfigured Neo4j must pass neo4j=None: {args[4]!r}")
     # merged_cfg must carry the caller's enabled source.
     assert merged_cfg["sources"]["hermes"]["enabled"] is True
 
@@ -460,3 +465,66 @@ def test_kb_ingest_merged_cfg_keeps_sibling_schema_defaults(db, monkeypatch):
         f"flat merge dropped the sibling chunking.overlap default "
         f"(schema DEFAULTS['chunking.overlap'] == 100): "
         f"chunking subtree = {merged_cfg.get('chunking')!r}")
+
+
+# ---------------------------------------------------------------------------
+# S4 alignment task 3.3: _resolve_neo4j_driver + kb_ingest passes it
+# ---------------------------------------------------------------------------
+
+def test_resolve_neo4j_driver_unconfigured_returns_none(monkeypatch):
+    """Unconfigured knobs → None (Qdrant-only fallback, logged not fatal)."""
+    cfg = {"neo4j": {"url": None, "user": None, "password": None}}
+    assert dispatch_mod._resolve_neo4j_driver(cfg) is None
+
+
+def test_resolve_neo4j_driver_configured_returns_driver(
+        db, monkeypatch):
+    """Configured knobs → the real driver object (from build_neo4j_driver)."""
+    from digital_twins.scheduler import loop as loop_mod
+    sentinel = object()
+
+    def fake_build(cfg):
+        fake_build.called = True
+        return sentinel
+    fake_build.called = False
+    monkeypatch.setattr(loop_mod, "build_neo4j_driver", fake_build)
+
+    cfg = {"neo4j": {"url": "bolt://n:7687", "user": "u", "password": "p"}}
+    driver = dispatch_mod._resolve_neo4j_driver(cfg)
+    assert driver is sentinel
+    assert fake_build.called
+
+
+def test_kb_ingest_passes_neo4j_driver_to_run_pipeline(
+        db, monkeypatch):
+    """When Neo4j is configured, the resolved driver reaches run_pipeline
+    as the 5th positional arg (not None)."""
+    sentinel = object()
+    monkeypatch.setattr(
+        dispatch_mod, "_resolve_neo4j_driver",
+        lambda cfg: sentinel, raising=False)
+
+    db.execute(
+        "INSERT INTO audit_runs (run_id, started_at, completed_at, status, "
+        "trigger, scheduled_by, per_source_counts) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("run-y", "2025-01-01T00:00:00Z", "2025-01-01T00:00:01Z",
+         "ok", "mcp", "admin@example.com", "null"),
+    )
+    db.commit()
+
+    rec = _RunRecorder(summary=_mk_summary(run_id="run-y"))
+    monkeypatch.setattr(dispatch_mod, "run_pipeline", rec, raising=False)
+
+    result = dispatch(
+        _ctx(db, config=dict(_CFG_ENABLED),
+             email="admin@example.com", role="scheduler"),
+        "kb_ingest", {"source": "hermes"})
+
+    assert result["ok"] is True, f"unexpected error: {result!r}"
+    call = rec.calls[0]
+    assert len(call["args"]) >= 5, (
+        f"expected 5 positional args (with neo4j driver): "
+        f"{len(call['args'])}")
+    assert call["args"][4] is sentinel, (
+        "the resolved Neo4j driver must be the 5th positional arg")

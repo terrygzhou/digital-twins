@@ -167,6 +167,40 @@ def validate() -> None:
     raise SystemExit(_exit_code(results))
 
 
+@cli.group(name="migrate")
+def migrate_group() -> None:
+    """Database migrations (graph store label cleanups)."""
+
+
+@migrate_group.command()
+@click.option("--dry-run", is_flag=True,
+              help="Report node counts without deleting.")
+def s4(dry_run: bool) -> None:
+    """S4 graph alignment: remove legacy :KbItem/:KbChunk nodes (task 4.1).
+
+    Idempotent — a database that never held the pre-S4 labels reports
+    0 nodes deleted. :SourceItem nodes are never touched.
+    """
+    cfg = load()
+    driver = _cli_resolve_neo4j_driver(cfg)
+    if driver is None:
+        click.echo(
+            "migrate s4: no Neo4j endpoint resolvable via the config layer "
+            "(neo4j.url/user/password) — nothing to do",
+            err=True)
+        raise SystemExit(1)
+    from digital_twins.neo4j_migration import migrate_s4
+    res = migrate_s4(driver, dry_run=dry_run)
+    if dry_run:
+        click.echo(f"would delete (dry run): "
+                   f"{res['would_delete']['KbItem']} :KbItem, "
+                   f"{res['would_delete']['KbChunk']} :KbChunk")
+    else:
+        click.echo(f"deleted: "
+                   f"{res['deleted']['KbItem']} :KbItem, "
+                   f"{res['deleted']['KbChunk']} :KbChunk")
+
+
 @cli.command()
 @click.option("--cloud", "force_cloud", is_flag=True,
               help="Force cloud mode: skip Docker detection and the local "
@@ -362,10 +396,13 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
 
         qdrant = None if dry_run else qdrant_factory
         embedder = None if dry_run else _make_embedder(cfg)
+        # S4 alignment: graph writes on the CLI surface too — the driver
+        # resolves to None (Qdrant-only fallback) when unconfigured.
+        neo4j_driver = None if dry_run else _cli_resolve_neo4j_driver(cfg)
 
         try:
             summary = run_pipeline(
-                cfg, db, qdrant, embedder,
+                cfg, db, qdrant, embedder, neo4j_driver,
                 source_names=list(source_names) or None,
                 max_items=max_items, dry_run=dry_run,
                 trigger=trigger, scheduled_by=scheduled_by,
@@ -394,6 +431,28 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
         click.echo(f"{mode} {summary.points} point(s) — run_id {summary.run_id}")
     finally:
         db.close()
+
+
+def _cli_resolve_neo4j_driver(cfg):
+    """Resolve the Neo4j driver for the CLI `run` surface (S4 task 3.3).
+
+    Returns None (Qdrant-only fallback) when the knobs are unconfigured
+    or construction fails — logged, not fatal.
+    """
+    import logging
+    url = get(cfg, "neo4j.url")
+    user = get(cfg, "neo4j.user")
+    password = get(cfg, "neo4j.password")
+    if not (url and user and password):
+        return None
+    try:
+        from digital_twins.scheduler.loop import build_neo4j_driver
+        return build_neo4j_driver(cfg)
+    except Exception as exc:
+        logging.warning(
+            "run: Neo4j driver construction failed (%s) — proceeding "
+            "Qdrant-only (no graph writes)", exc)
+        return None
 
 
 def _make_embedder(cfg):

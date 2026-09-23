@@ -135,8 +135,12 @@ def serve_once_tick(db, config) -> dict:
             # passed through); success or not, advance the schedule.
             # R6: pass owner=owner so the pipeline stamps owner + owner_tag
             # on each point payload (per-user scoping, SC-005).
+            # S4 alignment: graph writes on the schedule surface too —
+            # the driver is resolved from config (None = Qdrant-only
+            # fallback when unconfigured / unconstructable).
+            neo4j_driver = _resolve_neo4j_driver(merged_config)
             run_pipeline(
-                merged_config, db, qdrant, embedder,
+                merged_config, db, qdrant, embedder, neo4j_driver,
                 source_names=[source],
                 trigger="schedule",
                 scheduled_by=owner,
@@ -159,6 +163,35 @@ def serve_once_tick(db, config) -> dict:
     queue_depth = len(due) - len(fired) - len(skipped)
 
     return {"fired": fired, "skipped": skipped, "queue_depth": queue_depth}
+
+
+def _resolve_neo4j_driver(config):
+    """Resolve the Neo4j driver from config (S4 alignment task 3.3).
+
+    Returns ``None`` (Qdrant-only fallback, logged not fatal) when the
+    knobs are unconfigured or construction fails — matching
+    ``run_pipeline``'s optional-neo4j semantics, but making the default
+    for a configured deployment graph-writing on the schedule surface.
+    """
+    import logging
+
+    from ..config.schema import get
+
+    url = get(config, "neo4j.url")
+    user = get(config, "neo4j.user")
+    password = get(config, "neo4j.password")
+    if not (url and user and password):
+        logging.warning(
+            "schedule tick: neo4j.url/user/password not fully configured "
+            "— proceeding Qdrant-only (no graph writes)")
+        return None
+    try:
+        return build_neo4j_driver(config)
+    except Exception as exc:
+        logging.warning(
+            "schedule tick: Neo4j driver construction failed (%s) — "
+            "proceeding Qdrant-only (no graph writes)", exc)
+        return None
 
 
 def _qdrant_factory(config) -> callable:

@@ -80,6 +80,13 @@ def _neo4j_driver_class(connect_exc=None, run_ok=False):
                 def run(self_, query):
                     if not run_ok:
                         raise _AuthFailure("denied")
+
+                    class _R:
+                        def single(self_):
+                            return {"n": 0}
+                        def data(self_):
+                            return []
+                    return _R()
             return _S()
 
         def close(self):
@@ -155,13 +162,55 @@ def test_neo4j_auth_failure_gets_credential_hint(monkeypatch):
     assert "correct neo4j.user" in r.remediation
 
 
-def test_neo4j_healthy(monkeypatch):
+def test_neo4j_healthy_probes_sourceitem(monkeypatch):
+    """S4 shape: the health probe counts :SourceItem nodes (the label the
+    pipeline writes after s4-graph-alignment), not the legacy :KbItem."""
+    seen = []
     Driver = _neo4j_driver_class(run_ok=True)
-    _install_module(monkeypatch, "neo4j", GraphDatabase=type("G", (), {"driver": staticmethod(lambda url, auth=None: Driver(url, auth))}))
+
+    class _CapDriver:
+        """Wraps the fake driver; records every Cypher the probe runs."""
+
+        def __init__(self, url, auth=None):
+            self._d = Driver(url, auth)
+            self.url = url
+            self.auth = auth
+            self.closed = False
+
+        def verify_connectivity(self):
+            self._d.verify_connectivity()
+
+        def session(self):
+            real = self._d.session()
+
+            class _Cap:
+                def __enter__(self_):
+                    real.__enter__()
+                    return self_
+
+                def __exit__(self_, *a):
+                    return real.__exit__(*a)
+
+                def run(self_, query, **params):
+                    seen.append(query)
+                    return real.run(query, **params)
+            return _Cap()
+
+        def close(self):
+            self._d.close()
+            self.closed = True
+
+    _install_module(monkeypatch, "neo4j",
+                    GraphDatabase=type("G", (),
+                                       {"driver": staticmethod(_CapDriver)}))
     r = health.check_neo4j(
-        _cfg(neo4j={"url": "bolt://n:7687", "user": "neo4j", "password": "x"}))
+        _cfg(neo4j={"url": "bolt://n:7687", "user": "neo4j",
+                    "password": "x"}))
     assert r.ok
     assert "auth ok" in r.detail
+    assert any("SourceItem" in q for q in seen), (
+        f"probe must count SourceItem nodes, saw: {seen}")
+    assert not any("KbItem" in q for q in seen)
 
 
 # --- llm tests ---------------------------------------------------------------

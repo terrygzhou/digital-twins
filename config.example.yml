@@ -15,6 +15,14 @@ neo4j:
   url: ""          # env: KB_NEO4J__URL
   user: ""         # env: KB_NEO4J__USER
   password: ""     # env: KB_NEO4J__PASSWORD
+  # S4 graph store: when all three are set, every ingest surface
+  # (schedule / run --once / MCP / web) writes :SourceItem nodes
+  # (deduped on item_id; chunk text is NOT stored here — it lives in
+  # Qdrant's payload `full_content` field). Leave unset to run
+  # Qdrant-only (graph writes silently skipped, logged).
+  # After upgrading from a pre-S4 install, run `digital-twins migrate s4`
+  # to remove legacy :KbItem/:KbChunk nodes, then re-ingest (point IDs
+  # are content-independent under the S4 scheme — old points are orphans).
 llm:
   endpoint: ""     # env: KB_LLM__ENDPOINT
   model: ""        # env: KB_LLM__MODEL

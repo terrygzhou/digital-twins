@@ -246,6 +246,16 @@ def _kb_search_schema() -> dict:
                 "default": 5,
                 "description": "Max results to return (default 5, max 100).",
             },
+            "expand": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "Also return S4 graph neighbours (sibling SourceItems "
+                    "in the same channel) for each hit, keyed on the "
+                    "payload item_id (requires neo4j.url configured; "
+                    "silently skipped otherwise)."
+                ),
+            },
             "agent_kind": _agent_kind_prop(),
         },
         "required": ["query"],

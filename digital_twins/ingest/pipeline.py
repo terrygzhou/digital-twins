@@ -25,7 +25,7 @@ from digital_twins.ingest.embedding import (
     load_embedder,
     model_dimension,
 )
-from digital_twins.ingest.ids import point_id
+from digital_twins.ingest.ids import content_hash, point_id_s4
 from digital_twins.sources import UnknownSourceError, build as build_source
 from digital_twins.state.models import (
     finish_audit_run,
@@ -204,20 +204,31 @@ def run_pipeline(
                     break
             counts[name] = len(items)
 
-            chunks = []  # (point_id, chunk_index, item, text)
+            # S4 point-ID scheme (s4-graph-alignment): content-independent
+            # (channel, item_id, chunk_index) identity, shared with
+            # personal-kb's one uuid5 ID space. Chunk count is known before
+            # embedding, so it can be stamped on every chunk's payload.
+            chunks = []  # (point_id, chunk_index, item, text, n_chunks)
             for item in items:
-                for i, text in enumerate(chunk_text(item.content, max_chars, overlap)):
-                    pid = point_id(source.capability.prefix, item.key, i, text)
-                    chunks.append((pid, i, item, text))
+                texts = chunk_text(item.content, max_chars, overlap)
+                for i, text in enumerate(texts):
+                    pid = point_id_s4(name, item.key, i)
+                    chunks.append((pid, i, item, text, len(texts)))
 
             if dry_run:
                 total_points += len(chunks)
                 continue
 
             if chunks:
-                vectors = embedder([text for *_, text in chunks])
+                vectors = embedder([text for *_x, text in chunks])
+                # Item-level content hash (S4): shared by every chunk of
+                # one item — the staleness signal that replaces the
+                # legacy content-dependent point ID.
+                item_hash = {item.key: content_hash(item.content)
+                             for item in items}
+                embed_model = get(cfg, "embedding.model") or DEFAULT_MODEL
                 points = []
-                for (pid, i, item, text), vector in zip(chunks, vectors):
+                for (pid, i, item, text, n), vector in zip(chunks, vectors):
                     payload = {
                         "source": name,
                         "source_url": f"{source.capability.prefix}{item.key}",
@@ -225,16 +236,33 @@ def run_pipeline(
                         "chunk_index": i,
                         "ts": item.ts,
                         "text": text,
+                        # --- S4 payload alignment (s4-graph-alignment) ---
+                        # item_id: the join key into SourceItem.item_id.
+                        "item_id": item.key,
+                        # item-level hash, shared by all chunks of this item.
+                        "content_hash": item_hash[item.key],
+                        "full_content": text,
+                        "content_snippet": text[:200],
+                        "captured_at": item.ts,
+                        "total_chunks": n,
+                        "embed_model": embed_model,
+                        "source_type": name,
+                        "source_title": item.metadata.get("title", "") if hasattr(item, "metadata") else "",
+                        "tags": item.metadata.get("tags", []) if hasattr(item, "metadata") else [],
+                        # 003 multi-user: owner stamping moved under `meta`
+                        # (query-time filter for per-user scoping, SC-005).
+                        # The owner tag is a payload field only — it does NOT
+                        # enter the point ID (NFR-1).
+                        "meta": {
+                            "owner": owner,
+                            "owner_tag": f"{owner}-ingest" if owner else None,
+                        },
                     }
-                    # R6 (003 multi-user): stamp the owner + owner_tag on the
-                    # point payload when owner is set (query-time filter for
-                    # per-user scoping, SC-005). When owner is None the
-                    # payload is unchanged (001/002 behavior).
-                    # The owner tag is a payload field only — it does NOT
-                    # enter the point ID (dedup is content-level, NFR-1).
-                    if owner is not None:
-                        payload["owner"] = owner
-                        payload["owner_tag"] = f"{owner}-ingest"
+                    # Optional provenance passthroughs (S4 decision): when
+                    # written they equal the audit row's values for this run
+                    # verbatim — no new value vocabulary.
+                    payload["run_id"] = run_id
+                    payload["trigger"] = trigger
                     points.append(qm.PointStruct(
                         id=pid,
                         vector=vector,
@@ -243,7 +271,11 @@ def run_pipeline(
                 client.upsert(QDRANT_COLLECTION, points=points, wait=True)
                 total_points += len(points)
                 if neo4j is not None:
-                    _upsert_graph(neo4j, name, source.capability.prefix, chunks)
+                    # S4 graph write: one :SourceItem node per item, keyed
+                    # on the join key (item.key). No chunk nodes, no chunk
+                    # text in the graph (chunk text lives in Qdrant
+                    # full_content).
+                    _upsert_graph(neo4j, name, items, item_hash)
 
             for item in items:
                 upsert_highwater(db, name, item.key, item.ts)
@@ -259,19 +291,38 @@ def run_pipeline(
             source.close()
 
 
-def _upsert_graph(neo4j, name: str, prefix: str, chunks) -> None:
-    """Minimal graph shape: one node per item, one per chunk, HAS_CHUNK links."""
-    seen_items = set()
-    for pid, i, item, text in chunks:
-        url = f"{prefix}{item.key}"
-        if url not in seen_items:
-            neo4j.run(
-                "MERGE (n:KbItem {source_url: $u}) "
-                "SET n.source = $s, n.item_key = $k, n.ts = $ts",
-                u=url, s=name, k=item.key, ts=item.ts)
-            seen_items.add(url)
+def _upsert_graph(neo4j, channel: str, items, item_hash: dict) -> None:
+    """S4 graph write: one ``:SourceItem`` node per item, deduped on the
+    join key ``item_id`` (= the source's ``item.key`` — the same value
+    written as the Qdrant payload ``item_id``).
+
+    ``MERGE`` makes the write idempotent: re-ingesting the same item
+    re-stamps ``channel``/``content_hash`` in place instead of minting
+    a node. The node carries no chunk text — the chunk content lives in
+    Qdrant's ``full_content`` payload field (S4 decision: Neo4j is the
+    entity/relation graph; Qdrant is the vector + payload store).
+    ``content_hash`` is the item-level hash (shared by all chunks),
+    computed by the caller and passed in.
+    """
+    _ensure_graph_schema(neo4j)
+    for item in items:
         neo4j.run(
-            "MERGE (c:KbChunk {id: $id}) SET c.text = $t "
-            "WITH c MERGE (i:KbItem {source_url: $u}) "
-            "MERGE (i)-[:HAS_CHUNK]->(c)",
-            id=pid, t=text, u=url)
+            "MERGE (si:SourceItem {item_id: $id}) "
+            "SET si.channel = $ch, si.content_hash = $hash",
+            id=item.key, ch=channel,
+            hash=item_hash[item.key])
+
+
+def _ensure_graph_schema(neo4j) -> None:
+    """Idempotent schema bootstrap for the S4 graph.
+
+    Secondary index on ``SourceItem.item_id`` (the join key into the
+    Qdrant payload ``item_id``) and on ``SourceItem.channel`` (the
+    provenance value used by channel-scoped graph reads).
+    ``CREATE INDEX IF NOT EXISTS`` is a no-op on an already-created
+    index, so this is safe to run on every graph-enabled pipeline pass.
+    """
+    neo4j.run(
+        "CREATE INDEX IF NOT EXISTS FOR (si:SourceItem) ON (si.item_id)")
+    neo4j.run(
+        "CREATE INDEX IF NOT EXISTS FOR (si:SourceItem) ON (si.channel)")

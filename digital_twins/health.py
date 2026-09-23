@@ -138,7 +138,26 @@ def check_neo4j(cfg) -> HealthResult:
             driver.verify_connectivity()
             with driver.session() as session:
                 session.run("RETURN 1")
-            return HealthResult("neo4j", True, f"reachable; auth ok at {url}")
+                # Graph shape probe: run a COUNT over the labels the
+                # read path relies on.  On a fresh instance the labels
+                # do not exist yet — the probe simply returns 0 (or the
+                # query succeeds with an empty result).  A non-zero count
+                # means the write path has run at least once.  This is a
+                # soft diagnostic: a healthy-but-empty graph is not an
+                # error, so the check stays ok=True; the count is
+                # surfaced in the detail string for operators.
+                # S4 graph shape: probe the label the pipeline writes
+                # (openspec change s4-graph-alignment — SourceItem
+                # replaces KbItem/KbChunk).
+                count_result = session.run(
+                    "MATCH (si:SourceItem) RETURN count(si) AS n").single()
+                n_items = count_result["n"] if count_result else 0
+                if n_items:
+                    detail = (f"reachable; auth ok at {url}; "
+                              f"{n_items} SourceItem node(s) in graph")
+                else:
+                    detail = f"reachable; auth ok at {url} (graph empty)"
+            return HealthResult("neo4j", True, detail)
         finally:
             driver.close()
     except Exception as exc:

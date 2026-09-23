@@ -32,7 +32,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from digital_twins.health import QDRANT_COLLECTION
-from digital_twins.ingest.ids import point_id
+from digital_twins.ingest.ids import content_hash, point_id_s4
 from digital_twins.ingest.pipeline import run_pipeline
 from digital_twins.state.db import connect
 from digital_twins.state.migrations import migrate
@@ -97,10 +97,13 @@ def _owner_ids(qdrant, owner: str, tag: str | None = None):
     ``tag`` is given, on ``owner_tag`` as well). This is the multi-user
     isolation primitive — it must return exactly that user's points.
     """
-    conditions = [FieldCondition(key="owner", match=MatchValue(value=owner))]
+    # S4 payload: owner fields moved under the `meta` payload subtree.
+    conditions = [
+        FieldCondition(key="meta.owner", match=MatchValue(value=owner))]
     if tag is not None:
         conditions.append(
-            FieldCondition(key="owner_tag", match=MatchValue(value=tag)))
+            FieldCondition(key="meta.owner_tag",
+                           match=MatchValue(value=tag)))
     scroll = qdrant.scroll(
         QDRANT_COLLECTION,
         with_payload=True,
@@ -214,11 +217,12 @@ def test_owner_isolation_query_returns_each_users_content_only(
     assert set(alice_ids) | set(bob_ids) == {p.id for p in _all_points(qdrant)}
 
     # The content is actually each user's own (the owner field is a correct
-    # discriminator, not just present).
-    alice_texts = {p["text"] for p in _scroll_payloads(qdrant)
-                   if p.get("owner") == "alice"}
-    bob_texts = {p["text"] for p in _scroll_payloads(qdrant)
-                 if p.get("owner") == "bob"}
+    # discriminator, not just present).  S4 payload: the chunk text lives in
+    # `full_content` and owner moved under `meta`.
+    alice_texts = {p["full_content"] for p in _scroll_payloads(qdrant)
+                   if p.get("meta", {}).get("owner") == "alice"}
+    bob_texts = {p["full_content"] for p in _scroll_payloads(qdrant)
+                 if p.get("meta", {}).get("owner") == "bob"}
     assert alice_texts == {"alice one", "alice two"}
     assert bob_texts == {"bob one", "shared secret"}
 
@@ -229,10 +233,9 @@ def test_same_content_ingested_by_two_users_yields_one_point(
     alice AND bob yields **one** point, not two.
 
     The owner tag is a *payload field, not a dedup key*. The deterministic
-    point ID is content-derived (``point_id(prefix, item_key, chunk_index,
-    text)``); the owner tag must NOT enter it. If it did, the same content
-    under two owners would upsert two distinct points and this assertion
-    fails.
+    point ID is the S4 content-independent scheme (``point_id_s4``);
+    the owner tag must NOT enter it. If it did, the same content under
+    two owners would upsert two distinct points and this assertion fails.
     """
     # The content both users ingest — one file, identical item_key + text.
     # (bob_dir already contains "shared.txt" = "shared secret"; we add the
@@ -262,16 +265,17 @@ def test_same_content_ingested_by_two_users_yields_one_point(
         f"got {_point_count(qdrant)} — the owner tag leaked into the "
         f"point ID and broke NFR-1 one-record dedup")
 
-    # The shared point is content-derived and owner-independent: exactly one
-    # such point exists, and its ID is the deterministic content hash.
-    shared_pid = point_id("fs:", "shared.txt", 0, "shared secret")
+    # The shared point is content-independent and owner-independent:
+    # exactly one such point exists, and its ID is the deterministic S4
+    # scheme (fs source name -> channel "fs"; item.key "shared.txt").
+    shared_pid = point_id_s4("fs", "shared.txt", 0)
     shared = [p.id for p in _all_points(qdrant)
-              if p.payload.get("item_key") == "shared.txt"]
+              if p.payload.get("item_id") == "shared.txt"]
     assert len(shared) == 1, (
         f"the shared content produced {len(shared)} points, expected 1 "
         f"(one record regardless of owner — NFR-1)")
     assert shared[0] == shared_pid, (
-        f"shared point ID {shared[0]!r} != content-derived "
+        f"shared point ID {shared[0]!r} != S4-deterministic "
         f"{shared_pid!r} — owner tag entered the point ID")
 
 
@@ -280,10 +284,10 @@ def test_owner_tag_does_not_enter_point_id_across_owners(
     """Structural guarantee behind NFR-1: two runs with different owners
     over the SAME content produce the SAME point ID.
 
-    The point ID is a pure function of (prefix, item_key, chunk_index,
-    text) — not of the owner. This is the invariant that makes the
-    one-record dedup hold; if the owner tag ever became part of the ID,
-    this test would fail.
+    The point ID is a pure function of the S4 identity
+    (channel, item_id, chunk_index) — not of the owner, and not of the
+    content. This is the invariant that makes the one-record dedup hold;
+    if the owner tag ever became part of the ID, this test would fail.
     """
     # One file, identical content, ingested by alice then by bob.
     d = tmp_path / "dup_files"
@@ -309,9 +313,9 @@ def test_owner_tag_does_not_enter_point_id_across_owners(
         f"expected 1 point after two owner runs over the same content, "
         f"got {_point_count(qdrant)} — owner tag is a dedup key")
 
-    # And it is the deterministic content-derived ID.
-    expected = point_id("fs:", "note.txt", 0, "one note only")
+    # And it is the deterministic S4 ID (content-independent).
+    expected = point_id_s4("fs", "note.txt", 0)
     scroll = qdrant.scroll(QDRANT_COLLECTION, with_payload=True, limit=10)
     points = scroll[0] if isinstance(scroll, tuple) else scroll.points
     assert points[0].id == expected, (
-        f"point ID {points[0].id!r} != content-derived {expected!r}")
+        f"point ID {points[0].id!r} != S4-deterministic {expected!r}")

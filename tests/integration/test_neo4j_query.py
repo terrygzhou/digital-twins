@@ -6,10 +6,10 @@ this module exercises each one's *query* (not just its reachability):
 * ``health.check_neo4j`` — the only read query the package issues:
   the driver executes ``RETURN 1`` inside a session (round-trip: the
   recording fake actually runs it).
-* ``ingest.pipeline._upsert_graph`` — the write queries: one
-  ``MERGE (n:KbItem ...)`` per distinct item URL (deduped via
-  ``seen_items``) and one ``MERGE (c:KbChunk ...) ... HAS_CHUNK``
-  per chunk, with the exact parametrised Cypher pinned here.
+* ``ingest.pipeline._upsert_graph`` — the S4 write queries (openspec
+  change s4-graph-alignment): one ``MERGE (si:SourceItem ...)`` per
+  item, plus the two idempotent index DDL statements, with the exact
+  parametrised Cypher pinned here.
 * ``scheduler.loop`` driver wiring — the lazy factory builds a
   driver from the ``neo4j.url/user/password`` knobs, and the
   fail-closed branch (unset knobs) raises ``ConfigError`` naming the
@@ -55,7 +55,14 @@ class _RecordingSession:
 
     def run(self, query, **params):
         self._rec.append((query, params))
-        return "RESULT"
+
+        class _Result:
+            def single(self):
+                return {"n": 0}
+            def data(self):
+                return []
+
+        return _Result()
 
 
 class _RecordingDriver:
@@ -92,8 +99,9 @@ def _install_neo4j_module(monkeypatch, rec):
 # --- 1. health check: the shipped read query --------------------------------
 
 
-def test_check_neo4j_runs_return_one_query(monkeypatch):
-    """Round-trip: check_neo4j executes exactly one read query (RETURN 1)."""
+def test_check_neo4j_runs_read_queries(monkeypatch):
+    """Round-trip: check_neo4j runs RETURN 1 (connectivity) plus the
+    S4 graph shape probe (SourceItem count) — both through one session."""
     rec = []
     _install_neo4j_module(monkeypatch, rec)
     r = health.check_neo4j(
@@ -101,7 +109,8 @@ def test_check_neo4j_runs_return_one_query(monkeypatch):
     assert r.ok and "auth ok" in r.detail
     assert len(rec) == 1
     queries = [q for q, _ in rec[0].rec]
-    assert queries == ["RETURN 1"]
+    assert "RETURN 1" in queries
+    assert any("SourceItem" in q for q in queries)
     assert rec[0].closed
 
 
@@ -120,33 +129,40 @@ class _RecordingNeo4j:
 
 
 def test_upsert_graph_cypher_write_queries():
-    """Exact Cypher + params: item MERGE once per distinct URL, chunk
-    MERGE + HAS_CHUNK link per chunk."""
+    """S4 write queries pinned: 2 idempotent CREATE INDEX IF NOT EXISTS
+    schema bootstrap statements (SourceItem.item_id / .channel), then
+    one ``MERGE (si:SourceItem {item_id})`` per item with channel +
+    item-level content_hash — deduped on item_id, no chunk nodes, no
+    chunk text in the graph (chunk text lives in Qdrant full_content)."""
+    from digital_twins.ingest.ids import content_hash
     fake = _RecordingNeo4j()
-    a = SimpleNamespace(key="a", ts="ts-a")
-    b = SimpleNamespace(key="b", ts="ts-b")
-    chunks = [
-        ("p1", 0, a, "text-a0"),
-        ("p2", 1, a, "text-a1"),  # same item a, second chunk
-        ("p3", 2, b, "text-b0"),
-    ]
-    pipeline._upsert_graph(fake, "notes", "fs:", chunks)
+    a = SimpleNamespace(key="a", content="text-a")
+    b = SimpleNamespace(key="b", content="text-b")
+    items = [a, b]
+    item_hash = {"a": content_hash("text-a"), "b": content_hash("text-b")}
+    pipeline._upsert_graph(fake, "notes", items, item_hash)
 
-    item_q = [(q, p) for q, p in fake.queries if "HAS_CHUNK" not in q]
-    chunk_q = [(q, p) for q, p in fake.queries if "HAS_CHUNK" in q]
-    # 3 chunks -> 2 distinct item URLs + 3 chunk/link writes.
+    index_q = [(q, p) for q, p in fake.queries if "CREATE INDEX" in q]
+    item_q = [(q, p) for q, p in fake.queries
+              if "MERGE (si:SourceItem" in q]
+    # Schema bootstrap: two idempotent index DDL statements, run first.
+    assert len(index_q) == 2
+    assert all("IF NOT EXISTS" in q for q, _ in index_q)
+    assert "SourceItem" in index_q[0][0] and "SourceItem" in index_q[1][0]
+    # One node per item, deduped on the join key (item.key).
     assert len(item_q) == 2
-    assert len(chunk_q) == 3
-    # item writes: params pinned (url = prefix + key).
-    assert item_q[0][1] == {"u": "fs:a", "s": "notes", "k": "a", "ts": "ts-a"}
-    assert item_q[1][1] == {"u": "fs:b", "s": "notes", "k": "b", "ts": "ts-b"}
-    # the first query is the item write for the first chunk's item.
-    assert "MERGE (n:KbItem {source_url: $u})" in fake.queries[0][0]
-    # chunk writes: node + link in one query, params pinned.
-    assert chunk_q[0][1] == {"id": "p1", "t": "text-a0", "u": "fs:a"}
-    for q in (q for q, _ in chunk_q):
-        assert "MERGE (c:KbChunk {id: $id})" in q
-        assert "MERGE (i)-[:HAS_CHUNK]->(c)" in q
+    assert item_q[0][1] == {"id": "a", "ch": "notes",
+                             "hash": content_hash("text-a")}
+    assert item_q[1][1] == {"id": "b", "ch": "notes",
+                             "hash": content_hash("text-b")}
+    for q in (q for q, _ in item_q):
+        assert "MERGE (si:SourceItem {item_id: $id})" in q
+        assert "si.channel = $ch" in q
+        assert "si.content_hash = $hash" in q
+    # No legacy labels anywhere in the write path.
+    legacy = [q for q, _ in fake.queries
+              if "KbItem" in q or "KbChunk" in q or "HAS_CHUNK" in q]
+    assert legacy == []
 
 
 # --- 3. driver wiring -------------------------------------------------------
@@ -196,15 +212,131 @@ def test_live_neo4j_read_query_against_configured_endpoint():
     driver = loop.build_neo4j_driver(cfg)
     try:
         with driver.session() as s:
-            n = s.run("MATCH (i:KbItem) RETURN count(i) AS n").single()["n"]
+            n = s.run(
+                "MATCH (si:SourceItem) RETURN count(si) AS n").single()["n"]
         assert isinstance(n, int) and n >= 0
         if n:
             with driver.session() as s:
                 rows = s.run(
-                    "MATCH (i:KbItem)-[:HAS_CHUNK]->(c:KbChunk) "
-                    "RETURN i.source_url AS u, c.id AS cid LIMIT 5").data()
-            assert rows, "KbItem nodes exist but no HAS_CHUNK edges"
+                    "MATCH (si:SourceItem) "
+                    "RETURN si.item_id AS id, si.channel AS ch LIMIT 5").data()
+            assert rows, "SourceItem nodes exist but the query returned none"
             for row in rows:
-                assert "u" in row and "cid" in row
+                assert "id" in row and "ch" in row
     finally:
         driver.close()
+
+# --- 4. s4 migration: legacy label removal (spec scenario) ----------------
+
+class _RecordingMigrator:
+    """Driver-shaped fake for the migration module's query surface:
+    ``.run(query, **params)`` returning a single-{"n": int} result."""
+
+    def __init__(self, counts: dict | None = None):
+        self.queries = []
+        self._counts = counts or {}
+
+    def run(self, query, **params):
+        self.queries.append((query, params))
+        counts = self._counts
+
+        def _single(q=query):
+            for lbl, cnt in counts.items():
+                if f"(n:{lbl}" in q:
+                    return {"n": cnt}
+            return {"n": 0}
+
+        class _Result:
+            def single(self):
+                return _single()
+
+        return _Result()
+def test_migrate_s4_deletes_legacy_labels_idempotent():
+    """Real (non-dry) run: two DETACH DELETE statements (KbItem, KbChunk),
+    idempotent no-op on a fresh DB (counts 0). No :SourceItem statement."""
+    from digital_twins import neo4j_migration
+    fake = _RecordingMigrator()
+    res = neo4j_migration.migrate_s4(fake, dry_run=False)
+    deletes = [q for q, _ in fake.queries if "DETACH DELETE" in q]
+    assert len(deletes) == 2
+    assert any("KbItem" in q for q in deletes)
+    assert any("KbChunk" in q for q in deletes)
+    assert not any("SourceItem" in q for q, _ in fake.queries)
+    assert res["deleted"]["KbItem"] == 0
+    assert res["deleted"]["KbChunk"] == 0
+
+
+def test_migrate_s4_dry_run_reports_counts_without_deleting():
+    """Dry run: count queries only, no DELETE, counts surfaced (spec
+    scenario 'Migration on legacy database')."""
+    from digital_twins import neo4j_migration
+    fake = _RecordingMigrator(counts={"KbItem": 3, "KbChunk": 11})
+    res = neo4j_migration.migrate_s4(fake, dry_run=True)
+    assert res["dry_run"] is True
+    assert res["would_delete"] == {"KbItem": 3, "KbChunk": 11}
+    assert not any("DELETE" in q for q, _ in fake.queries)
+    counts = [q for q, _ in fake.queries if "count" in q]
+    assert any("KbItem" in q for q in counts)
+    assert any("KbChunk" in q for q in counts)
+
+
+def test_migrate_s4_fresh_db_reports_zero():
+    """Spec scenario 'Migration on fresh database': completes, reports 0
+    nodes deleted."""
+    from digital_twins import neo4j_migration
+    fake = _RecordingMigrator()
+    res = neo4j_migration.migrate_s4(fake, dry_run=False)
+    assert res["dry_run"] is False
+    assert res["deleted"] == {"KbItem": 0, "KbChunk": 0}
+
+
+# --- 5. CLI surface: `digital-twins migrate s4` ------------------------------
+
+def test_cli_migrate_s4_invokes_migrate_s4(monkeypatch):
+    """`migrate s4` resolves the driver via the config layer and hands it to
+    ``migrate_s4`` (dry-run passthrough). No host values anywhere."""
+    from click.testing import CliRunner
+    from digital_twins.cli import cli
+    from digital_twins import neo4j_migration
+
+    calls = []
+
+    def fake_driver(cfg):
+        calls.append(("driver", cfg))
+        return _RecordingMigrator()
+
+    monkeypatch.setattr("digital_twins.cli.load",
+                        lambda: {"state_dir": "/tmp/never"})
+
+    monkeypatch.setattr(
+        "digital_twins.cli._cli_resolve_neo4j_driver", fake_driver)
+
+    def fake_migrate(driver, dry_run=False):
+        calls.append(("migrate", dry_run))
+        return {"dry_run": dry_run,
+                "would_delete": {"KbItem": 0, "KbChunk": 0},
+                "deleted": {"KbItem": 0, "KbChunk": 0}}
+
+    monkeypatch.setattr(neo4j_migration, "migrate_s4", fake_migrate)
+    runner = CliRunner()
+    r = runner.invoke(cli, ["migrate", "s4", "--dry-run"])
+    assert r.exit_code == 0, r.output
+    assert "driver" in [c[0] for c in calls]
+    assert ("migrate", True) in calls
+    assert "would delete" in r.output
+
+
+def test_cli_migrate_s4_fails_closed_without_neo4j_knobs(monkeypatch):
+    """Unconfigured neo4j knobs -> _cli_resolve_neo4j_driver returns None
+    -> command exits 1 with a remediation message (no crash)."""
+    from click.testing import CliRunner
+    from digital_twins.cli import cli
+
+    monkeypatch.setattr("digital_twins.cli._cli_resolve_neo4j_driver",
+                        lambda cfg: None)
+    monkeypatch.setattr("digital_twins.cli.load",
+                        lambda: {"state_dir": "/tmp/never"})
+    runner = CliRunner()
+    r = runner.invoke(cli, ["migrate", "s4"])
+    assert r.exit_code == 1
+    assert "no Neo4j endpoint resolvable" in r.output
