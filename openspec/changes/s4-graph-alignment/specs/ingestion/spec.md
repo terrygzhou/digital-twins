@@ -5,9 +5,12 @@
 ### Requirement: Qdrant points carry S4-compatible payload fields
 Every chunk point written by digital-twins shall include the fields
 `item_id`, `content_hash`, `full_content`, `content_snippet`,
-`captured_at`, `total_chunks`, `embed_model`, `source_type`, `tags`,
-`run_id`, `trigger`, and a `meta` object (multi-user `owner`/`owner_tag`
-fields shall live under `meta`, not at top level). `content_hash` shall be
+`captured_at`, `source_url`, `source_title`, `total_chunks`,
+`embed_model`, `source_type`, `tags`, and a `meta` object (multi-user
+`owner`/`owner_tag` fields shall live under `meta`, not at top level).
+Provenance fields `run_id`/`trigger` shall NOT be treated as contract
+fields; when present they must equal the audit row's `run_id`/`trigger`
+for that run. `content_hash` shall be
 computed from the item's full text and be identical across all chunks of
 that item. `item_id` is the single join key between Qdrant and Neo4j —
 it equals the `SourceItem.item_id` node property and the source's
@@ -18,8 +21,9 @@ it equals the `SourceItem.item_id` node property and the source's
   (schedule, run, mcp, web)
 - **THEN** each of the N points carries `item_id` equal to the item's
   stable key, `total_chunks` equal to N, one shared item-level
-  `content_hash`, and a `trigger` matching the entry surface;
-  `meta` carries any owner fields.
+  `content_hash`, and all required fields above; `meta` carries any
+  owner fields; any present `run_id`/`trigger` equals the audit row's
+  values for that run.
 
 ### Requirement: Neo4j writes the S4 SourceItem node
 Ingest with Neo4j enabled shall write one `(:SourceItem {item_id, channel,
@@ -52,3 +56,10 @@ wrote the legacy shape.
 - **WHEN** `digital-twins migrate s4` runs against a database without
   legacy labels
 - **THEN** it completes successfully, reporting 0 nodes deleted.
+
+#### Scenario: Migration on legacy database
+- **WHEN** `digital-twins migrate s4 --dry-run` runs against a database
+  containing `KbItem`/`KbChunk` nodes
+- **THEN** it reports the node counts without deleting; a subsequent
+  real run deletes all `KbItem`/`KbChunk` nodes and leaves
+  `:SourceItem` untouched.

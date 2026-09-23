@@ -43,7 +43,7 @@ Qdrant payload: `source, source_url, item_key, chunk_index, ts, text`
 | Qdrant `source_title` | ❌ | optional; default `""` |
 | Qdrant `tags` | ❌ | `[]` (channel extras may supply) |
 | Qdrant `owner`/`owner_tag` | top-level | move under `meta` |
-| Qdrant `run_id` / `trigger` | ❌ | personal-kb `make_payload` carries both (BR-4.6 "who/what initiated the run"); digital-twins' pipeline already tracks `run_id` in scope (L252). **Decision:** include both in the aligned payload for full S4 contract parity; the pipeline's existing `run_id` is reused, `trigger` defaults to `"cli"` / `"schedule"` / `"mcp"` / `"web"` matching the entry surface. |
+| Qdrant `run_id` / `trigger` | ❌ (optional) | NOT part of the S4 schema — personal-kb's query layer never filters on them; they are BR-4.6 operational provenance. **Decision:** include them as *optional* passthroughs only when the pipeline already has them (it does: `run_id` L163, `trigger` L134). Values must equal the audit-row `run_id`/`trigger` (reuse the pipeline's existing arguments verbatim — no new value vocabulary). Not a contract field: a missing value must never break interop. |
 
 ## Point ID migration
 `ids.py` today: `uuid5(NAMESPACE_URL, "prefix|item_key|idx|content_hash")`

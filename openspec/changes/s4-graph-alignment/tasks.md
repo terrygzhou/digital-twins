@@ -19,8 +19,10 @@
       `content_hash` (item-level, shared by chunks), `full_content`,
       `content_snippet` (text[:200]), `captured_at` (rename of `ts`),
       `total_chunks`, `embed_model` (from config), `source_type`,
-      `tags: []`, `run_id` (reuse pipeline's existing `run_id`),
-      `trigger` (entry-surface name: `cli`/`schedule`/`mcp`/`web`);
+      `tags: []`; optional provenance passthroughs `run_id`/`trigger` —
+      when written they MUST equal the audit-row `run_id`/`trigger`
+      (reuse the pipeline's existing arguments verbatim; no new value
+      vocabulary, no new fields if absent);
       move `owner`/`owner_tag` under `meta`.
 - [ ] 2.2 Unit tests: payload contract assertions (field presence, item-level
       hash shared across chunks of one item, owner under meta).
