@@ -131,7 +131,11 @@
       } else if (res && res.message) {
         node.textContent = res.message;
       } else {
-        node.textContent = "";
+        // Silent-failure guard: a null/undefined res means the request never
+        // returned JSON (network error, server down, non-JSON body). Render
+        // an explicit message so the form never looks dead.
+        node.textContent = "Could not reach the server — is " +
+          "digital-twins web running?";
       }
     }
 
@@ -182,6 +186,10 @@
           if (!ok && data && data.error) {
             showError("search-error", data);
           }
+        })
+        .catch(function () {
+          el("point-count").textContent = "unavailable";
+          showError("search-error", { error: "network error" });
         });
     }
 
@@ -205,6 +213,10 @@
           node.textContent = [
             r.status, r.trigger, r.scheduled_by, r.started_at, r.completed_at
           ].filter(Boolean).join(" · ");
+        })
+        .catch(function () {
+          el("audit-row").textContent = "Unavailable.";
+          showError("audit-error", { error: "network error" });
         });
     }
 
@@ -313,6 +325,10 @@
           div.appendChild(meta);
           out.appendChild(div);
         });
+      })
+      .catch(function () {
+        showError("search-error", { error: "network error" });
+        el("search-results").textContent = "";
       });
     }
 
@@ -337,6 +353,10 @@
           "Run " + data.run_id + " → " + data.status;
         refreshPoints();
         refreshAudit();
+      })
+      .catch(function () {
+        showError("ingest-error", { error: "network error" });
+        el("ingest-result").textContent = "";
       });
     }
 
@@ -362,6 +382,10 @@
           return;
         }
         el("chat-answer").textContent = data.answer;
+      })
+      .catch(function () {
+        showError("chat-error", { error: "network error" });
+        el("chat-answer").textContent = "";
       });
     }
 
