@@ -598,6 +598,93 @@ def test_local_stack_half_up_polls_survivors(_isolate_config, monkeypatch):
     assert data["qdrant"]["url"] == "http://localhost:6333"
 
 
+def test_local_stack_up_failure_surfaces_compose_output(
+        _isolate_config, monkeypatch):
+    """When `docker compose up` fails, the captured compose output (last
+    lines) is echoed before the 'checking health anyway' fall-through,
+    so the user sees the actual error instead of a blank fallback."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    monkeypatch.setattr(setup_mod, "_gpu_present", lambda: False)
+
+    def fake_compose(args, **kw):
+        if args[0] == "up":
+            out = kw.get("output")
+            if out is not None:
+                out.append("Error response from daemon: port is already "
+                           "allocated on 0.0.0.0:7474")
+            return 1
+        return 0
+    monkeypatch.setattr(setup_mod, "_docker_compose", fake_compose)
+    monkeypatch.setattr(setup_mod, "_poll_url", lambda url, **kw: True)
+
+    echoed = []
+    ok = setup_mod.run_local_stack(prompt_text=lambda q: "unused",
+                                   echo=echoed.append)
+    assert ok is True  # mandatory services still healthy -> continue
+    joined = "\n".join(echoed)
+    assert "port is already allocated" in joined
+    assert "checking health anyway" in joined
+
+
+def test_local_stack_pull_failure_warns_with_output(
+        _isolate_config, monkeypatch):
+    """A failed `docker compose pull` no longer fails silently: the
+    captured compose output is echoed as a warning, and the wizard
+    continues to `up` (which pulls anything missing)."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    monkeypatch.setattr(setup_mod, "_gpu_present", lambda: False)
+
+    def fake_compose(args, **kw):
+        if args[0] == "pull":
+            out = kw.get("output")
+            if out is not None:
+                out.append("Error: no such image qdrant/qdrant:1.9.7")
+            return 1
+        return 0
+    monkeypatch.setattr(setup_mod, "_docker_compose", fake_compose)
+    monkeypatch.setattr(setup_mod, "_poll_url", lambda url, **kw: True)
+
+    echoed = []
+    ok = setup_mod.run_local_stack(prompt_text=lambda q: "unused",
+                                   echo=echoed.append)
+    assert ok is True
+    joined = "\n".join(echoed)
+    assert "no such image" in joined  # pull error surfaced, not silent
+
+
+def test_local_stack_reports_each_service_individually(
+        _isolate_config, monkeypatch):
+    """Each service gets its own status line: healthy mandatory services
+    are confirmed individually, and a failed mandatory service gets a
+    service-specific remediation line (qdrant port-6333 vs neo4j
+    credentials) instead of one aggregated blob."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    monkeypatch.setattr(setup_mod, "_gpu_present", lambda: False)
+    monkeypatch.setattr(setup_mod, "_docker_compose", lambda a, **k: 0)
+
+    def fake_poll(url, **kw):
+        # qdrant (6333) and embedding-model (8080) healthy;
+        # neo4j (7687) down.
+        return "7687" not in url
+    monkeypatch.setattr(setup_mod, "_poll_url", fake_poll)
+
+    echoed = []
+    ok = setup_mod.run_local_stack(prompt_text=lambda q: "unused",
+                                   echo=echoed.append)
+    assert ok is False  # mandatory neo4j down -> hard failure
+    joined = "\n".join(echoed)
+    assert "qdrant: healthy" in joined
+    assert "neo4j: FAILED the health check" in joined
+    assert "docker compose logs neo4j" in joined  # per-service remediation
+    assert "embedding-model: healthy" in joined
+
+
 def test_create_admin_account_idempotent(_isolate_config, monkeypatch):
     """Two consecutive calls: first creates (returns the password), the
     second reads the existing row back (empty password, no second row)."""

@@ -193,12 +193,17 @@ def _resolve_compose_file() -> str:
 
 
 def _docker_compose(args: list, compose_file: str | None = None,
-                    extra_env: dict | None = None) -> int:
+                    extra_env: dict | None = None,
+                    output: list | None = None) -> int:
     """Run `docker compose -f <file> <args>`; return the exit code.
 
     compose_file: explicit path; when None, resolved via _resolve_compose_file().
     extra_env: host env vars merged in for the compose subprocess (used
     to pass the user's Neo4j credential choices through to the stack).
+    output: optional list; when given, the tail of the combined
+    stdout+stderr (last 40 non-empty lines) is appended to it so callers
+    can surface the actual compose error on failure instead of a blank
+    fallback message.
     """
     if compose_file is None:
         compose_file = _resolve_compose_file()
@@ -207,9 +212,14 @@ def _docker_compose(args: list, compose_file: str | None = None,
         env.update(extra_env)
     result = subprocess.run(
         ["docker", "compose", "-f", compose_file, *args],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        capture_output=True, text=True,
         env=env,
     )
+    if output is not None:
+        text = (result.stdout or "") + (result.stderr or "")
+        lines = [line for line in text.splitlines() if line.strip()]
+        if lines:
+            output.append("\n".join(lines[-40:]))
     return result.returncode
 
 
@@ -255,7 +265,14 @@ def run_local_stack(prompt_text: Callable = click.prompt,
 
     # Pull the backend images (qdrant + neo4j are pre-built; llm and
     # embedding-model use standard images — no build step needed).
-    _docker_compose(["pull", "qdrant", "neo4j"])
+    pull_out: list = []
+    pull_rc = _docker_compose(["pull", "qdrant", "neo4j"], output=pull_out)
+    if pull_rc != 0:
+        echo("docker compose pull failed (images may be missing or the "
+             "network is unreachable):")
+        for line in (pull_out[0].splitlines() if pull_out else []):
+            echo(f"  {line}")
+        echo("continuing anyway — `up` will pull anything missing.")
     # digital-twins service is optional (the CLI runs on the host); only
     # include it when the compose file was found in a git checkout.
     up_services = ["qdrant", "neo4j", "embedding-model"]
@@ -269,11 +286,17 @@ def run_local_stack(prompt_text: Callable = click.prompt,
     echo(f"starting local stack: {', '.join(up_services)}")
     # Pass the chosen credentials to compose (matches the compose-file
     # defaults unless the user overrode them).
+    up_out: list = []
     rc = _docker_compose(
         ["up", "-d", *up_services],
         extra_env={"NEO4J_USER": neo4j_user,
-                   "NEO4J_PASSWORD": neo4j_password})
+                   "NEO4J_PASSWORD": neo4j_password},
+        output=up_out)
     if rc != 0:
+        if up_out:
+            echo("docker compose up reported errors (last lines):")
+            for line in up_out[0].splitlines():
+                echo(f"  {line}")
         echo("docker compose up failed — some services may already be up "
              "from a previous run; checking health anyway.")
         # Do NOT give up: the stack may be partially up. Fall through to
@@ -283,29 +306,46 @@ def run_local_stack(prompt_text: Callable = click.prompt,
     else:
         up_failed = False
 
-    # Health-poll the mandatory services (llm is non-fatal when skipped).
+    # Health-poll each service and report them individually — one line per
+    # service with service-specific remediation, so the user sees exactly
+    # which of qdrant / neo4j / llm / embedding-model is down.
+    _MANDATORY_REMEDY = {
+        "qdrant": ("run 'docker compose logs qdrant' to inspect the "
+                   "container, free port 6333 if something else owns "
+                   "it, then re-run 'digital-twins setup' to finish."),
+        "neo4j": ("run 'docker compose logs neo4j' to inspect the "
+                  "container; if the container was started with "
+                  "different credentials, re-run setup and enter the "
+                  "same credentials it was started with."),
+    }
     failed = []
     for svc in ("qdrant", "neo4j"):
-        if not _poll_url(_HEALTH_URLS[svc]):
+        if _poll_url(_HEALTH_URLS[svc]):
+            echo(f"{svc}: healthy")
+        else:
             failed.append(svc)
+            echo(f"{svc}: FAILED the health check -> "
+                 f"{_MANDATORY_REMEDY[svc]}")
     if gpu:
-        if not _poll_url(_HEALTH_URLS["llm"]):
-            echo("llm did not become healthy — point KB_LLM__ENDPOINT at an "
-                 "external LLM; the rest of the stack is kept.")
-    embed_ok = _poll_url(_HEALTH_URLS["embedding-model"])
-    if not embed_ok:
-        echo("embedding-model: UNHEALTHY — embedding falls back to the "
-             "in-process default; the rest of the stack is kept.")
+        if _poll_url(_HEALTH_URLS["llm"]):
+            echo("llm: healthy")
+        else:
+            echo("llm: FAILED the health check -> point KB_LLM__ENDPOINT "
+                 "at an external LLM; the rest of the stack is kept.")
+    if _poll_url(_HEALTH_URLS["embedding-model"]):
+        echo("embedding-model: healthy")
+    else:
+        echo("embedding-model: FAILED the health check -> embedding "
+             "falls back to the in-process default; the rest of the "
+             "stack is kept.")
     if failed:
         if up_failed:
             echo("remediation: some services are up (re-run setup to "
                  "finish); run 'docker compose logs <service>' for the "
                  "failed ones.")
         else:
-            echo("ERROR: service(s) did not become healthy: "
-                 f"{', '.join(failed)}")
-            echo("remediation: run 'docker compose logs <service>', "
-                 "then re-run setup.")
+            echo("remediation: fix the failed service(s) above, then "
+                 "re-run 'digital-twins setup'.")
         return False
     if up_failed:
         echo("some services failed to start but the mandatory ones are "
