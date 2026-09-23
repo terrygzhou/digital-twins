@@ -277,10 +277,10 @@ def run_pipeline(
                     # text in the graph (chunk text lives in Qdrant
                     # full_content).
                     _upsert_graph(neo4j, name, items, item_hash)
-            # Post-graph entity extraction (s4-entity-extraction,
-            # config-gated; no-op when extraction.enabled is false
-            # or the LLM endpoint is unconfigured).
-            _run_extraction(cfg, neo4j, items, item_hash, run_id, name)
+                    # Post-graph entity extraction (s4-entity-extraction,
+                    # config-gated; no-op when extraction.enabled is false
+                    # or the LLM endpoint is unconfigured).
+                    _run_extraction(cfg, neo4j, items, item_hash, run_id, name)
 
             for item in items:
                 upsert_highwater(db, name, item.key, item.ts)
@@ -377,6 +377,11 @@ def _run_extraction(
         "model": get(cfg, "llm.model"),
         "api_key": get(cfg, "llm.api_key"),
     }
+    if not llm_cfg["endpoint"]:
+        logging.debug(
+            "extraction enabled but llm.endpoint not configured — "
+            "skipping entity extraction")
+        return
 
     for item in items:
         try:
