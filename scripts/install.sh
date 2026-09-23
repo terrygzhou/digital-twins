@@ -339,7 +339,9 @@ main() {
     run_cmd "$venv_bin" setup $setup_flags || setup_rc=$?
     case "$setup_rc" in
       0) note "setup: all health checks passed." ;;
-      1) note "setup: a health check failed (see the report above); re-run '$venv_bin setup' after fixing the endpoint." ;;
+      1) note "setup: a step failed (see the report above)."
+         note "If a health check failed: fix the endpoint, then re-run '$venv_bin setup'."
+         note "If the wizard was interrupted: re-run '$venv_bin setup' in a real terminal." ;;
       3) note "setup: the local Docker stack did not become healthy; re-run after it is up." ;;
       5) note "setup: cloud endpoints could not be resolved (see which KB_* var is empty above)." ;;
       6) note "setup: the wizard was interrupted before the backend was configured."

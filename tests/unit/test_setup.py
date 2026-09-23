@@ -550,6 +550,8 @@ def test_local_stack_no_gpu_omits_llm_and_embedding(_isolate_config,
 
     # No nvidia-smi binary: the _gpu_present probe reports False.
     monkeypatch.setattr(setup_mod, "_gpu_present", lambda: False)
+    # Stub the health poll so the test does not wait on the 300s deadline.
+    monkeypatch.setattr(setup_mod, "_poll_url", lambda url, **kw: True)
     # Capture what up_services would be by looking at the compose args.
     compose_args = []
     def fake_compose(args, **kw):
@@ -866,6 +868,31 @@ def test_cloud_prompt_keyboard_interrupt_returns_exit_code_6(
     rc = setup_mod.run_setup(
         prompt=fake_prompt,
         confirm=lambda q: True,
+        echo=lambda msg: None)
+    assert rc == 6
+
+
+def test_confirm_abort_returns_exit_code_6(_isolate_config, monkeypatch):
+    """The curl|bash case: Docker is available so the wizard asks the
+    "Start the bundled local stack?" confirm; on closed stdin, real
+    click.confirm() raises click.exceptions.Abort (NOT EOFError) —
+    that must be a clean exit 6, not a leaked 'Aborted!' / exit 1."""
+    import click.exceptions
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "docker_available", lambda: True)
+
+    def fake_confirm(q):
+        raise click.exceptions.Abort()
+
+    rc = setup_mod.run_setup(
+        prompt=lambda label: "",
+        confirm=fake_confirm,
         echo=lambda msg: None)
     assert rc == 6
 

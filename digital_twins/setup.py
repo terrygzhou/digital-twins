@@ -537,14 +537,17 @@ def run_setup(prompt: Callable = click.prompt,
             echo("falling back to cloud mode.")
             if not run_cloud_stack(prompt, echo):
                 return 5
-    except (EOFError, KeyboardInterrupt):
-        # An interrupted prompt (Ctrl-C, or EOF on non-interactive
-        # stdin): a user cancellation, not a failed health check.
-        # Report a clean cancellation instead of leaking the interpreter
-        # 'Aborted!' message.
+    except (EOFError, KeyboardInterrupt, click.exceptions.Abort):
+        # An interrupted prompt: Ctrl-C (KeyboardInterrupt), EOF on
+        # non-interactive stdin (raw EOFError), or click's Abort —
+        # click.confirm()/click.prompt() raise Abort (not EOFError) when
+        # stdin is a closed pipe, which is exactly the curl|bash case.
+        # All three are a user cancellation, not a failed health check:
+        # report a clean cancellation instead of leaking the 'Aborted!'
+        # message and exit 1.
         echo("setup was interrupted before the backend was configured — "
              "re-run 'digital-twins setup' to continue (or set the "
-             "KB_* env vars and re-run).")
+             "KB_* env vars and re-run with --cloud-env).")
         return 6
 
     # --- 2) init (state DB + migrations, no endpoint prompts) --------------
