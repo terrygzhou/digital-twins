@@ -1035,3 +1035,175 @@ def test_local_stack_empty_prompt_answer_falls_back_to_defaults(
     data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
     assert data["neo4j"]["user"] == "neo4j"
     assert data["neo4j"]["password"] == "password"
+
+
+# ---------------------------------------------------------------------------
+# Embedding readiness (setup verifies the embedding path end-to-end)
+# ---------------------------------------------------------------------------
+
+def test_setup_verifies_embedding_endpoint_not_ready(_isolate_config,
+                                                      monkeypatch):
+    """A configured embedding.endpoint that fails its /models probe is
+    surfaced as 'embedding: NOT ready' with the endpoint-specific
+    remediation (names KB_EMBEDDING__ENDPOINT) — not the in-process
+    model hint; exit code stays 0 (advisory step, health all ok)."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+    (config_dir / "kb.local.yml").parent.mkdir(parents=True)
+    (config_dir / "kb.local.yml").write_text(
+        yaml.safe_dump({"qdrant": {"url": "http://q:6333"},
+                        "embedding": {"endpoint": "http://e:8080/v1"}}),
+        encoding="utf-8")
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "run_health_checks",
+                        lambda cfg: [_ok_check(n) for n in
+                                     ("qdrant", "neo4j", "llm", "embedding")])
+
+    from digital_twins.health import HealthResult
+    bad_embed = HealthResult(
+        "embedding", False,
+        "unreachable: URLError: Connection refused",
+        "check embedding.endpoint (env: KB_EMBEDDING__ENDPOINT) is a "
+        "live OpenAI-compatible URL",
+        status="unreachable")
+    import digital_twins.health as health_mod
+    monkeypatch.setattr(health_mod, "check_embedding",
+                        lambda cfg: bad_embed)
+
+    lines = []
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                              confirm=lambda q: True,
+                              echo=lines.append)
+    joined = "\n".join(lines)
+    assert "embedding: NOT ready" in joined
+    assert "KB_EMBEDDING__ENDPOINT" in joined
+    assert rc == 0
+
+
+def test_setup_embedding_ready_endpoint_prints_ok(_isolate_config,
+                                                  monkeypatch):
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+    (config_dir / "kb.local.yml").parent.mkdir(parents=True)
+    (config_dir / "kb.local.yml").write_text(
+        yaml.safe_dump({"qdrant": {"url": "http://q:6333"},
+                        "embedding": {"endpoint": "http://e:8080/v1"}}),
+        encoding="utf-8")
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "run_health_checks",
+                        lambda cfg: [_ok_check(n) for n in
+                                     ("qdrant", "neo4j", "llm", "embedding")])
+    from digital_twins.health import HealthResult
+    good = HealthResult("embedding", True,
+                        "reachable (http://e:8080/v1/models -> HTTP 200)",
+                        status="ok")
+    import digital_twins.health as health_mod
+    monkeypatch.setattr(health_mod, "check_embedding", lambda cfg: good)
+
+    lines = []
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                              confirm=lambda q: True,
+                              echo=lines.append)
+    joined = "\n".join(lines)
+    assert "embedding: ready" in joined
+    assert "NOT ready" not in joined
+    assert rc == 0
+
+
+def test_setup_skip_services_skips_embedding_verification(_isolate_config,
+                                                          monkeypatch):
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "run_health_checks",
+                        lambda cfg: [_ok_check(n) for n in
+                                     ("qdrant", "neo4j", "llm", "embedding")])
+    monkeypatch.setattr(setup_mod, "embedding_ready",
+                        lambda echo=None, **kw: (_ for _ in ()).throw(
+                            AssertionError("embedding_ready must not run "
+                                           "under --skip-services")))
+
+    rc = setup_mod.run_setup(skip_services=True,
+                             prompt=lambda q: "unused",
+                             confirm=lambda q: True,
+                             echo=lambda m: None)
+    assert rc == 0
+
+
+def test_setup_in_process_embedding_probe(_isolate_config, monkeypatch):
+    """No embedding.endpoint -> the in-process path: load the pinned
+    model, embed one probe text, report ready."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+    (config_dir / "kb.local.yml").parent.mkdir(parents=True)
+    (config_dir / "kb.local.yml").write_text(
+        yaml.safe_dump({"qdrant": {"url": "http://q:6333"}}),
+        encoding="utf-8")
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "run_health_checks",
+                        lambda cfg: [_ok_check(n) for n in
+                                     ("qdrant", "neo4j", "llm", "embedding")])
+
+    probed = []
+    class _FakeEmbedder:
+        def encode(self, texts):
+            probed.extend(texts)
+            return [[0.0] * 384 for _ in texts]
+    import digital_twins.ingest.embedding as emb
+    monkeypatch.setattr(emb, "load_embedder",
+                        lambda model, device: _FakeEmbedder())
+
+    lines = []
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                              confirm=lambda q: True,
+                              echo=lines.append)
+    joined = "\n".join(lines)
+    assert "embedding: ready (in-process" in joined
+    assert "setup probe" in probed
+    assert rc == 0
+
+
+def test_setup_in_process_embedding_missing_extra(_isolate_config,
+                                                   monkeypatch):
+    """No endpoint + sentence-transformers not installed -> 'NOT ready'
+    with the extra-install remediation; exit code stays 0."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+    (config_dir / "kb.local.yml").parent.mkdir(parents=True)
+    (config_dir / "kb.local.yml").write_text(
+        yaml.safe_dump({"qdrant": {"url": "http://q:6333"}}),
+        encoding="utf-8")
+    state_dir.mkdir(parents=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
+    monkeypatch.setattr(setup_mod, "run_health_checks",
+                        lambda cfg: [_ok_check(n) for n in
+                                     ("qdrant", "neo4j", "llm", "embedding")])
+    import digital_twins.ingest.embedding as emb
+    monkeypatch.setattr(
+        emb, "load_embedder",
+        lambda model, device: (_ for _ in ()).throw(
+            emb.LocalEmbedderError("in-process embedding needs the "
+                                   "'local-embedding' extra")))
+
+    lines = []
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                              confirm=lambda q: True,
+                              echo=lines.append)
+    joined = "\n".join(lines)
+    assert "embedding: NOT ready (in-process" in joined
+    assert "local-embedding" in joined
+    assert rc == 0

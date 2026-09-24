@@ -565,6 +565,59 @@ def run_local_stack(prompt_text: Callable = click.prompt,
 
 
 # ---------------------------------------------------------------------------
+# Embedding readiness (install-setup-separation follow-up)
+# ---------------------------------------------------------------------------
+
+def embedding_ready(echo: Callable = click.echo,
+                    cfg=None,
+                    _check_embedding=None) -> None:
+    """Verify the configured embedding path can actually embed a query.
+
+    Search and chat fail-closed when the query cannot be embedded (a 503
+    whose hint names only the in-process model knobs), so setup verifies
+    the configured path end-to-end and prints a remediation line when it
+    is not ready.  No config change is made — remediation is printed,
+    never applied.
+
+    - ``embedding.endpoint`` set -> reuse check_embedding(): the /models
+      probe is exactly "can this endpoint embed".
+    - no endpoint -> in-process: load the pinned model and embed one probe
+      text.  The heavy import + model download happens at most once per
+      host lifetime (first setup, or when the model cache is cold); later
+      re-runs hit a warm cache and finish in milliseconds.
+    """
+    if cfg is None:
+        from digital_twins.config import load
+        cfg = load()
+    from digital_twins.config.schema import get
+    endpoint = get(cfg, "embedding.endpoint")
+    if endpoint:
+        from digital_twins.health import check_embedding
+        r = (_check_embedding or check_embedding)(cfg)
+        if r.ok:
+            echo(f"embedding: ready ({r.detail})")
+        else:
+            echo(f"embedding: NOT ready — {r.detail}")
+            echo(f"  -> {r.remediation}")
+        return
+    # In-process path: load the pinned model on the resolved device and
+    # embed one probe text (sentence-transformers lazy-loads on first
+    # use — a cold cache downloads the model here, on first setup).
+    model = get(cfg, "embedding.model") or "BAAI/bge-small-en-v1.5"
+    device = get(cfg, "embedding.device") or "auto"
+    from digital_twins.ingest.embedding import (
+        LocalEmbedderError, load_embedder)
+    try:
+        load_embedder(model, device).encode(["setup probe"])
+        echo(f"embedding: ready (in-process {model}, {device})")
+    except LocalEmbedderError as exc:
+        echo(f"embedding: NOT ready (in-process {model}) — {exc}")
+        echo("  -> search/chat will fail with a 503 until this is fixed: "
+             "install the 'local-embedding' extra, or set "
+             "embedding.endpoint (env: KB_EMBEDDING__ENDPOINT).")
+
+
+# ---------------------------------------------------------------------------
 # Cloud mode
 # ---------------------------------------------------------------------------
 
@@ -914,6 +967,13 @@ def run_setup(prompt: Callable = click.prompt,
     via resolve_backends() and threaded into run_local_stack(resolved=...)
     so mixed local/external choices start only the local services in
     Docker and write one kb.local.yml.
+
+    After the health checks, the configured embedding path is verified
+    end-to-end (embedding_ready): a live endpoint probe when
+    embedding.endpoint is set, otherwise a one-shot in-process model
+    load + probe embed.  A not-ready path prints a remediation line but
+    does not fail the wizard (the wizard is advisory here; exit code
+    stays 0/1 per the health checks).
     """
     # --- 0) contradiction gate ---------------------------------------------
     if skip_services and backends:
@@ -1083,6 +1143,19 @@ def run_setup(prompt: Callable = click.prompt,
             line += f"  -> {r.remediation}"
         echo(line)
     exit_code = 0 if all(r.ok for r in results) else 1
+
+    # --- 4b) embedding readiness -------------------------------------------
+    # A healthy health-check line is not the whole story: search/chat
+    # fail-closed when the query cannot be embedded (an endpoint that
+    # answers /models but is actually down still leaves search broken,
+    # and a missing in-process extra does too).  verify_embedding_path()
+    # checks the configured path end-to-end and prints a remediation
+    # line when it is not ready — advisory only, exit_code untouched:
+    # the wizard has configured what it can; the user fixes the
+    # embedding path with the printed remediation and re-runs
+    # 'digital-twins setup' (light: the valid-config fast path).
+    if not skip_services:
+        embedding_ready(echo=echo)
 
     # --- 5) enable the fs demo source (the README fast path's last step) ----
     # --skip-services means "I handle backends and sources myself": the
