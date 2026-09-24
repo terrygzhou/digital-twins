@@ -106,6 +106,8 @@ def test_bad_python_override_exits_2(fake_exec):
 
 
 def test_happy_path_no_setup(fake_exec):
+    # --no-setup is now a no-op alias (the installer is install-only by
+    # default): the wizard is never invoked and a one-line note is printed.
     exe, log, home = fake_exec
     # The fake exec itself stands in as the "python" (it answers the version
     # probe and succeeds at everything else).
@@ -114,8 +116,28 @@ def test_happy_path_no_setup(fake_exec):
     joined = " ".join(" ".join(c) for c in calls)
     assert "venv" in joined
     assert "install" in joined and "digital-twins-kb[mcp]" in joined
-    # No setup wizard invocation.
+    # No setup wizard invocation in the fake-exec JSONL log.
     assert not any("setup" in c for c in calls)
+    assert "--no-setup is a no-op" in proc.stderr
+
+
+def test_default_is_install_only(fake_exec):
+    # No flags: the installer stops after the pip install, never invokes
+    # the wizard, and points the user at `digital-twins setup`.
+    exe, log, home = fake_exec
+    proc, calls = _run(["--python", str(exe)], fake_exec)
+    assert proc.returncode == 0
+    assert not any("setup" in c for c in calls)
+    assert "install-only" in proc.stderr
+    assert "digital-twins setup" in proc.stdout
+
+
+def test_with_setup_runs_wizard(fake_exec):
+    # --with-setup opts in: the fake-exec log MUST contain a `setup` call.
+    exe, log, home = fake_exec
+    proc, calls = _run(["--python", str(exe), "--with-setup"], fake_exec)
+    assert proc.returncode == 0
+    assert any("setup" in c for c in calls), f"expected a setup call: {calls}"
 
 
 def test_extras_flag_passed_to_pip(fake_exec):
@@ -136,8 +158,9 @@ def test_base_install_no_extras(fake_exec):
 
 
 def test_setup_invoked_with_cloud(fake_exec):
+    # --cloud only takes effect when the wizard runs (--with-setup).
     exe, log, home = fake_exec
-    proc, calls = _run(["--python", str(exe), "--cloud"], fake_exec)
+    proc, calls = _run(["--python", str(exe), "--with-setup", "--cloud"], fake_exec)
     assert proc.returncode == 0
     setup_calls = [c for c in calls if "setup" in c]
     assert setup_calls, "expected a setup invocation"
@@ -145,19 +168,31 @@ def test_setup_invoked_with_cloud(fake_exec):
 
 
 def test_setup_skip_services_flag(fake_exec):
+    # --skip-services only takes effect when the wizard runs (--with-setup).
     exe, log, home = fake_exec
-    proc, calls = _run(["--python", str(exe), "--skip-services"], fake_exec)
+    proc, calls = _run(["--python", str(exe), "--with-setup", "--skip-services"], fake_exec)
     assert proc.returncode == 0
     setup_calls = [c for c in calls if "setup" in c]
     assert setup_calls and "--skip-services" in setup_calls[0]
 
 
 def test_setup_invoked_with_cloud_env(fake_exec):
+    # --cloud-env only takes effect when the wizard runs (--with-setup).
     exe, log, home = fake_exec
-    proc, calls = _run(["--python", str(exe), "--cloud-env"], fake_exec)
+    proc, calls = _run(["--python", str(exe), "--with-setup", "--cloud-env"], fake_exec)
     assert proc.returncode == 0
     setup_calls = [c for c in calls if "setup" in c]
     assert setup_calls and "--cloud-env" in setup_calls[0]
+
+
+def test_cloud_flag_ignored_without_with_setup(fake_exec):
+    # Without --with-setup the installer is install-only: the --cloud flag
+    # is ignored (a note is printed), and the wizard never runs.
+    exe, log, home = fake_exec
+    proc, calls = _run(["--python", str(exe), "--cloud"], fake_exec)
+    assert proc.returncode == 0
+    assert not any("setup" in c for c in calls)
+    assert "--cloud is ignored without --with-setup" in proc.stderr
 
 
 def test_run_ingest_flag_triggers_run(fake_exec):
@@ -211,7 +246,10 @@ def test_help_output_does_not_spill_into_code():
 
 def test_help_lists_all_documented_flags():
     proc = _run_help()
-    for flag in ("--extras", "--cloud", "--cloud-env", "--skip-services",
+    for flag in ("--extras", "--with-setup", "--cloud", "--cloud-env",
+                 "--skip-services",
                  "--run-ingest",
+                 # --no-setup stays documented as the no-op alias (kept for
+                 # one release; prints a note).
                  "--no-setup", "--python", "--dist", "--help"):
         assert flag in proc.stdout, f"{flag} missing from --help"
