@@ -174,9 +174,10 @@ old nodes.
 (a) **NFR-1 dedup is within-system.** The same item ingested via schedule,
 `run --once`, MCP, or web UI yields one Qdrant point (content-independent
 point ID under the S4 scheme). Cross-system content dedup (the same
-underlying document reaching both digital-twins and personal-kb) is
-out of scope: it requires a channel-mapping table (digital-twins source
-name → personal-kb channel), which is blocked on personal-kb's
+underlying document reaching digital-twins and a separate knowledge-base
+system that shares the `personal_kb` Qdrant collection) is out of scope:
+it requires a channel-mapping table (this package's source name → the
+other system's channel), which is blocked on the other system's
 channel-registry ACL. Revisit if that ACL is made available.
 
 (b) **Chunk text lives in Qdrant, not Neo4j.** The Neo4j graph stores
