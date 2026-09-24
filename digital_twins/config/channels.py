@@ -22,8 +22,10 @@ def channel_view(config_dir=None, env=None) -> dict:
 
     Args:
         config_dir: config directory (default: resolved from env/defaults).
-        env: explicit environment mapping (``.env`` files ignored); the real
-            process environment is still consulted for credential env vars.
+        env: explicit environment mapping (``.env`` files ignored). When
+            given, this mapping is authoritative for the credential-set
+            check; when ``env`` is None, the real process environment
+            (``os.environ``) is consulted instead.
 
     Returns:
         ``{source_name: {"enabled": bool, "max_items": int, "timeout_s": int,
@@ -40,11 +42,11 @@ def channel_view(config_dir=None, env=None) -> dict:
     for name, entry in cfg["sources"].items():
         if name not in BUILTIN_SOURCES and not entry.get("entrypoint"):
             continue
-        view[name] = _channel_row(name, entry)
+        view[name] = _channel_row(name, entry, env=env)
     return view
 
 
-def _channel_row(name: str, entry: dict) -> dict:
+def _channel_row(name: str, entry: dict, env=None) -> dict:
     from ..sources import build as _build  # lazy: keep config layer light
 
     row = {
@@ -70,7 +72,10 @@ def _channel_row(name: str, entry: dict) -> dict:
         # custom sources declare their credential env var in config
         credential = str(entry.get("credential") or "")
     if credential:
-        row["credential_set"] = bool(os.environ.get(credential, ""))
+        if env is not None:
+            row["credential_set"] = bool(env.get(credential, ""))
+        else:
+            row["credential_set"] = bool(os.environ.get(credential, ""))
     else:
         row["credential_set"] = True  # no credential declared -> ready
     return row

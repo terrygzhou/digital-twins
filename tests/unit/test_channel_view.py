@@ -85,10 +85,15 @@ def test_prerequisites_ready_when_extra_set(tmp_path, monkeypatch):
 
 
 def test_credential_set_flips_with_env(tmp_path, monkeypatch):
+    """The credential-set check honors the explicit env mapping (gate fix
+    T7): the var must be present in the mapping itself, not just the
+    process environment."""
     _cleared_creds(monkeypatch)
     assert _view(tmp_path, monkeypatch=monkeypatch)["yahoo"]["credential_set"] is False
-    monkeypatch.setenv("YMAIL_APP_PASSWORD", "s3cret-value")
-    view = _view(tmp_path, monkeypatch=monkeypatch)
+    # the mapping is authoritative: set the var in the mapping, not the
+    # process env
+    view = _view(tmp_path, env_extra={"YMAIL_APP_PASSWORD": "s3cret-value"},
+                 monkeypatch=monkeypatch)
     assert view["yahoo"]["credential_set"] is True
     # the credential value must never appear anywhere in the view
     assert "s3cret-value" not in yaml.safe_dump(view)
@@ -148,8 +153,54 @@ def test_custom_credential_env_var(tmp_path, monkeypatch):
         "extra": {"dir": str(files)}}}}
     view = _view(tmp_path, kb_doc=doc, monkeypatch=monkeypatch)
     assert view["mytool"]["credential_set"] is False
-    monkeypatch.setenv("MYTOOL_TOKEN", "tok")
-    assert _view(tmp_path, kb_doc=doc, monkeypatch=monkeypatch)["mytool"]["credential_set"] is True
+    # gate fix T7: the var in the explicit env mapping is authoritative
+    assert _view(tmp_path, kb_doc=doc,
+                 env_extra={"MYTOOL_TOKEN": "tok"},
+                 monkeypatch=monkeypatch)["mytool"]["credential_set"] is True
+
+
+# --- 1.1b channel_view env param (credential-set lookup) ---------------------
+
+
+def test_credential_set_uses_explicit_env_when_given(tmp_path, monkeypatch):
+    """An explicit env mapping is authoritative for the credential-set check
+    (gate fix T7): it does NOT leak the process env."""
+    _cleared_creds(monkeypatch)
+    monkeypatch.delenv("YMAIL_APP_PASSWORD", raising=False)
+    view = _view(tmp_path, env_extra={"YMAIL_APP_PASSWORD": "x"},
+                 monkeypatch=monkeypatch)
+    assert view["yahoo"]["credential_set"] is True
+    # and the value never appears in the view (FR-004): no yaml key or
+    # scalar holds the value "x" (the prerequisite strings name the env
+    # *var*, which is fine — only the value is secret)
+    dumped = yaml.safe_load(yaml.safe_dump(view))
+    def has_value(node):
+        if isinstance(node, dict):
+            return any(v == "x" or has_value(v) for v in node.values())
+        if isinstance(node, list):
+            return any(has_value(v) for v in node)
+        return node == "x"
+    assert not has_value(dumped), "credential value leaked into the view"
+
+
+def test_empty_explicit_env_wins_over_process_env(tmp_path, monkeypatch):
+    """Passing env={} is a snapshot: process env vars are NOT consulted
+    for the credential-set check when env is an explicit mapping."""
+    _cleared_creds(monkeypatch)
+    monkeypatch.setenv("YMAIL_APP_PASSWORD", "s3cret-value")
+    cfgdir = _cfgdir(tmp_path)
+    view = channel_view(str(cfgdir), env=_env(cfgdir))
+    # _env() carries KB_CONFIG_DIR only -> no credential var in the mapping
+    assert view["yahoo"]["credential_set"] is False
+
+
+def test_process_env_consulted_when_env_is_none(tmp_path, monkeypatch):
+    """env=None keeps the os.environ lookup (pre-existing behavior)."""
+    _cleared_creds(monkeypatch)
+    cfgdir = _cfgdir(tmp_path)
+    assert channel_view(str(cfgdir))["yahoo"]["credential_set"] is False
+    monkeypatch.setenv("YMAIL_APP_PASSWORD", "x")
+    assert channel_view(str(cfgdir))["yahoo"]["credential_set"] is True
 
 
 # --- 1.2 channel_write -------------------------------------------------------

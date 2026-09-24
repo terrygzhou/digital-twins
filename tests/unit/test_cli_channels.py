@@ -71,11 +71,24 @@ def test_channels_list_missing_prerequisite_shows(cfg):
     assert r.exit_code == 0, r.output
     line = next(ln for ln in r.output.splitlines()
                 if ln.split() and ln.split()[0] == "pi")
-    assert "-" not in line.split()[-1] or "SessionDir" in line or "prereq" in line.lower()
-    # simpler, robust check: the row's prerequisites column is not "-"
+    # unsatisfied prerequisites render as "BLOCKED: <names>" (spec: a
+    # source with unsatisfied prerequisites is marked BLOCKED, not bare)
     cols = line.split()
     assert cols[0] == "pi"
+    assert "BLOCKED:" in line, f"pi with no sessions dir must show BLOCKED: {line!r}"
     assert cols[-1] != "-", f"pi with no sessions dir must not be ready: {line!r}"
+
+
+def test_channels_list_ready_shows_dash(cfg):
+    # fs has no prerequisites on a fresh install -> the column renders "-"
+    r = _run(cfg, "list")
+    assert r.exit_code == 0, r.output
+    line = next(ln for ln in r.output.splitlines()
+                if ln.split() and ln.split()[0] == "fs")
+    cols = line.split()
+    assert cols[0] == "fs"
+    assert "BLOCKED" not in line, f"fs has no prerequisites: {line!r}"
+    assert cols[-1] == "-", f"fs ready row must end with '-': {line!r}"
 
 
 def test_channels_list_enabled_shows_yes(cfg):

@@ -1824,17 +1824,20 @@ def run_history(as_user: str, all_users: bool) -> None:
 
 def _print_channel_table(view: dict, names=None) -> None:
     """Print channel rows: name, enabled, max_items, timeout_s, credential,
-    prerequisites (comma-joined, '-' when ready). Alphabetical."""
+    prerequisites ('BLOCKED: <comma-joined names>' when the channel has
+    unsatisfied prerequisites, '-' when ready). Alphabetical."""
     names = sorted(names or view.keys())
     rows = []
     for name in names:
         r = view[name]
-        rows.append((name,
-                     "yes" if r["enabled"] else "no",
-                     str(r["max_items"]),
-                     str(r["timeout_s"]),
-                     "set" if r["credential_set"] else "not-set",
-                     ", ".join(r["prerequisites"]) or "-"))
+        prereq = r["prerequisites"]
+        cells = (name,
+                 "yes" if r["enabled"] else "no",
+                 str(r["max_items"]),
+                 str(r["timeout_s"]),
+                 "set" if r["credential_set"] else "not-set",
+                 ("BLOCKED: " + ", ".join(prereq)) if prereq else "-")
+        rows.append(cells)
     header = ("name", "enabled", "max_items", "timeout_s",
               "credential", "prerequisites")
     widths = [max(len(h), *(len(r[i]) for r in rows))

@@ -259,18 +259,18 @@ in config), one row per channel:
 | max_items | effective per-run cap |
 | timeout_s | effective per-run timeout (seconds) |
 | credential | `set` / `not-set` (booleans only — never the value) |
-| prerequisites | comma-joined missing prerequisites, or `-` when ready |
+| prerequisites | `BLOCKED: <comma-joined missing prerequisites>` when the channel has unsatisfied prerequisites, or `-` when ready |
 
 ```
 $ digital-twins channels list
 name          enabled  max_items  timeout_s  credential  prerequisites
-dsh           no       200        1500       set         -
+dsh           no       200        1500       set         BLOCKED: dsh sessions_dir not set
 fs            no       200        1500       set         -
-gmail         no       200        1500       not-set     GMAIL_APP_PASSWORD
+gmail         no       200        1500       not-set     BLOCKED: GMAIL_APP_PASSWORD not set
 hermes        yes      50         300        set         -
-pi            no       200        1500       set         -
-paperclip     no       200        1500       set         -
-yahoo         no       200        1500       not-set     YMAIL_APP_PASSWORD
+pi            no       200        1500       set         BLOCKED: pi sessions_dir not set
+paperclip     no       200        1500       set         BLOCKED: paperclip sessions_dir not set
+yahoo         no       200        1500       not-set     BLOCKED: YMAIL_APP_PASSWORD not set
 ```
 
 #### `channels status <name>`
@@ -282,7 +282,7 @@ BR-11.2.2):
 ```
 $ digital-twins channels status gmail
 name     enabled  max_items  timeout_s  credential  prerequisites
-gmail    no       200        1500       not-set     GMAIL_APP_PASSWORD
+gmail    no       200        1500       not-set     BLOCKED: GMAIL_APP_PASSWORD not set
 ```
 
 #### `channels enable <name> [--max-items N] [--timeout-s N]`
@@ -349,7 +349,9 @@ Returns 200 with the masked channel view:
 - `credential_set` — boolean only; **credential values are never
   returned** (FR-004 / BR-12.2.2).
 - `prerequisites` — empty list when the channel is ready; one or more
-  strings naming missing prerequisites or a broken entrypoint.
+  strings naming missing prerequisites or a broken entrypoint. In the
+  CLI table a non-empty list renders as `BLOCKED: <names>` (spec:
+  unsatisfied prerequisites are marked BLOCKED, never bare names).
 - `env_overrides` — sorted list of `KB_SOURCES__<NAME>__*` (and
   per-source credential) env var names currently set that shadow a
   channel knob in the resolved config.

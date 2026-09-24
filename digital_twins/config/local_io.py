@@ -83,6 +83,10 @@ def channel_write(updates, target=None, env=None) -> Path:
     Raises:
         SchemaError: unknown source name, unknown source key, or a
             non-sources / empty / malformed payload (fail-fast, BR-11.2.2).
+
+    Note: source-name validation runs against the default-resolved config
+    (no config_dir param), so a locally-registered custom source in a
+    non-default config context may be spuriously rejected.
     """
     if not isinstance(updates, dict) or "sources" not in updates:
         raise SchemaError(
