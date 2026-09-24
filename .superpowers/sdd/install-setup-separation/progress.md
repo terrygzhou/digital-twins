@@ -97,3 +97,24 @@ Checked:
 - Note: sandbox switched to danger-full-access + approvals disabled → subagents
   can now write the wtm worktree directly; patch-handoff model retired.
 - Next: T4.1 (init deprecation), T4.2 (remediation sweep), T5.1/T5.2 docs, T6.
+
+## T4 rulings (before dispatch) — 2026-08-24
+
+- **T4.1 merge-on-existing:** the task text's "migrate that merge behavior
+  into setup's kb.local.yml write path" is satisfied by keeping `init` as a
+  fully functional alias of the narrower subset (prompt-missing + merge-on-
+  existing + state DB + admin + health), while `setup`'s write path stays
+  "write when absent" — the two commands coexist; `init` is the merge-on-
+  existing surface, `setup` is the from-scratch wizard. Both remain green.
+- **T4.2 sweep scope (verified by grep in the wtm worktree at 42c2b60):**
+  `cli.py` L321/L1099/L1159/L1237/L1400/L1452/L1511/L1559 ("no state db —
+  run 'digital-twins init' first") + L316 comment + L417 ("run init or set
+  KB_QDRANT__URL"); `health.py` L74/L124 ("re-run init/validate" →
+  "re-run setup/validate"); `mcp/dispatch.py` L261; `scheduler/loop.py`
+  L210/L236; `tests/unit/test_auth.py` L359 assertion `"init" in ...` →
+  `"setup" in ...`. No other files contain user-facing init remediation
+  strings. **Out of sweep:** `tests/unit/test_validate.py` L32 (asserts the
+  health remediation string "then re-run init/validate" — MUST be updated
+  alongside health.py) and all tests that drive the `init` command itself
+  (test_cli_init.py, test_quickstart_scenarios.py, test_init.py — they test
+  the deprecated alias, keep green, do not reword).
