@@ -309,3 +309,59 @@ select:focus {
   font-size: 0.8rem;
   color: var(--muted);
 }
+
+/* ---- channels panel (channels-config) ------------------------------------ */
+
+.channels-panel .channels-rows {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.channel-row {
+  display: grid;
+  grid-template-columns: 6rem 1fr auto auto auto auto;
+  gap: 0.5rem;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.channel-row .channel-name {
+  font-weight: 600;
+}
+
+.channel-row .channel-number {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  width: 5rem;
+}
+
+.channel-row .channel-badges {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.channel-row .channel-badges .badge {
+  font-size: 0.7rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  white-space: nowrap;
+}
+
+.channel-row .status-pill {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  white-space: nowrap;
+}
+
+.channel-row .status-pill.ok { color: #1a7f37; border-color: #1a7f37; }
+.channel-row .status-pill.unconfigured { color: var(--muted); }

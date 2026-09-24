@@ -114,6 +114,18 @@
       <p id="services-error" class="error" role="alert"></p>
       <div id="services-rows" class="services-rows"></div>
     </section>
+    <section class="card channels-panel" id="channels-panel" hidden>
+      <h2>Ingestion channels (admin only)
+        <button id="channels-refresh-btn" class="btn ghost small">Refresh</button>
+      </h2>
+      <p class="hint">
+        Save writes to <code>kb.local.yml</code>; active
+        <code>KB_SOURCES__*</code> environment variables shadow the saved
+        values.
+      </p>
+      <p id="channels-error" class="error" role="alert"></p>
+      <div id="channels-rows" class="channels-rows"></div>
+    </section>
   </main>
 
   <script>
@@ -176,6 +188,14 @@
         loadServices();
       } else {
         el("services-panel").hidden = true;
+      }
+      // Channels panel: admin-only config surface (channels-config SC-004
+      // discipline — same gate as the services panel, co-located).
+      if (me && me.role === "admin") {
+        el("channels-panel").hidden = false;
+        loadChannels();
+      } else {
+        el("channels-panel").hidden = true;
       }
     }
 
@@ -685,6 +705,148 @@
       el("services-test-all-btn").disabled = SERVICES.some(
         function (s) { return probing[s]; });
     }
+
+    // ---- channels panel (channels-config: admin channel config surface) --
+    //
+    // The panel is admin-only (SC-004 discipline): showKbView() unhides it
+    // only when me.role === "admin", co-located with the services gate.
+    // Rows render from the T3 masked view (GET /api/config/channels):
+    // {sources: {<name>: {enabled, max_items, timeout_s, credential_set,
+    // prerequisites}}, env_overrides: [var names]} — credential VALUES
+    // never reach the UI (FR-004 is a backend guarantee; this panel
+    // renders no credential field at all).  Save posts one source per
+    // button; the 200 body is the post-write view, which re-renders the
+    // panel.  There is deliberately no add/registration UI: custom
+    // channels are the CLI `channels add` surface only (the T3 POST
+    // 404s any source the GET view does not carry).
+
+    function loadChannels() {
+      fetch("/api/config/channels", { headers: authHeaders() })
+        .then(function (r) { return r.json().catch(function () { return null; }); })
+        .then(function (data) {
+          if (!data || data.error) {
+            showError("channels-error", data);
+            return;
+          }
+          renderChannels(data);
+        });
+    }
+
+    function renderChannels(view) {
+      var out = el("channels-rows");
+      out.innerHTML = "";
+      var overrides = view.env_overrides || [];
+      if (overrides.length) {
+        var envLine = document.createElement("p");
+        envLine.className = "hint";
+        envLine.id = "channels-env-overrides";
+        envLine.textContent = "env vars shadowing saved values: "
+          + overrides.join(", ");
+        out.appendChild(envLine);
+      }
+      var names = Object.keys(view.sources || {}).sort();
+      names.forEach(function (name) {
+        var s = (view.sources || {})[name];
+        var row = document.createElement("div");
+        row.className = "channel-row";
+        row.id = "channels-row-" + name;
+
+        var nameEl = document.createElement("span");
+        nameEl.className = "channel-name";
+        nameEl.textContent = name;
+        row.appendChild(nameEl);
+
+        var badges = document.createElement("span");
+        badges.className = "channel-badges";
+        var prereqs = s.prerequisites || [];
+        if (prereqs.length) {
+          var pill = document.createElement("span");
+          pill.className = "status-pill unconfigured";
+          pill.textContent = "prerequisites: " + prereqs.join(", ");
+          badges.appendChild(pill);
+        } else {
+          var ready = document.createElement("span");
+          ready.className = "status-pill ok";
+          ready.textContent = "ready";
+          badges.appendChild(ready);
+        }
+        if (s.credential_set) {
+          var cred = document.createElement("span");
+          cred.className = "badge";
+          cred.textContent = "credential configured";
+          badges.appendChild(cred);
+        }
+        row.appendChild(badges);
+
+        var enabled = document.createElement("label");
+        enabled.className = "inline";
+        var enabledInp = document.createElement("input");
+        enabledInp.type = "checkbox";
+        enabledInp.checked = !!s.enabled;
+        enabledInp.id = "channels-enabled-" + name;
+        enabledInp.setAttribute("aria-label", name + " enabled");
+        enabled.appendChild(enabledInp);
+        enabled.appendChild(document.createTextNode(" enabled"));
+        row.appendChild(enabled);
+
+        var maxItemsInp = document.createElement("input");
+        maxItemsInp.type = "number";
+        maxItemsInp.className = "channel-number";
+        maxItemsInp.id = "channels-max-items-" + name;
+        maxItemsInp.value = String(s.max_items);
+        maxItemsInp.setAttribute("aria-label", name + " max_items");
+        row.appendChild(maxItemsInp);
+
+        var timeoutInp = document.createElement("input");
+        timeoutInp.type = "number";
+        timeoutInp.className = "channel-number";
+        timeoutInp.id = "channels-timeout-s-" + name;
+        timeoutInp.value = String(s.timeout_s);
+        timeoutInp.setAttribute("aria-label", name + " timeout_s");
+        row.appendChild(timeoutInp);
+
+        var save = document.createElement("button");
+        save.className = "btn ghost small channels-save-btn";
+        save.textContent = "Save";
+        save.addEventListener("click", function () {
+          saveChannel(name, enabledInp, maxItemsInp, timeoutInp);
+        });
+        row.appendChild(save);
+
+        out.appendChild(row);
+      });
+    }
+
+    function saveChannel(name, enabledInp, maxItemsInp, timeoutInp) {
+      var body = {};
+      var section = {};
+      section.enabled = enabledInp.checked;
+      section.max_items = parseInt(maxItemsInp.value, 10);
+      section.timeout_s = parseInt(timeoutInp.value, 10);
+      body[name] = section;
+      var prevError = el("channels-error");
+      prevError.textContent = "";
+      fetch("/api/config/channels", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(body)
+      }).then(function (r) {
+        return r.json().catch(function () { return null; });
+      }).then(function (data) {
+        // 404 / 422 / 409 / 500 all carry an `error` payload — surface
+        // it in channels-error and keep the current rows (no re-render).
+        if (!data || data.error) {
+          showError("channels-error", data);
+          return;
+        }
+        // The 200 body is the post-write masked view: re-render from it.
+        renderChannels(data);
+      }).catch(function () {
+        showError("channels-error", { error: "network error" });
+      });
+    }
+
+    el("channels-refresh-btn").addEventListener("click", loadChannels);
 
     // Load the setup-written admin bootstrap credentials
     // (admin-credentials.txt) into the sign-in form. The endpoint is
