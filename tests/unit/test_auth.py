@@ -356,7 +356,7 @@ def test_run_once_as_no_state_db_distinct_message(tmp_path, monkeypatch):
     assert result.exit_code == 2, f"exit={result.exit_code} out={result.output}"
     # The message names the setup gap, not a credential failure.
     assert "no state db" in result.output.lower()
-    assert "init" in result.output.lower()
+    assert "setup" in result.output.lower()
     # It does NOT use the credential-failure phrase.
     assert "authentication failed" not in result.output.lower()
 

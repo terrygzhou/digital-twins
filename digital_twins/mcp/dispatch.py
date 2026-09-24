@@ -258,7 +258,7 @@ def _resolve_qdrant_factory(config):
         if not url:
             from ..config.schema import SchemaError
             raise SchemaError(
-                "qdrant.url is not set — run init or set KB_QDRANT__URL")
+                "qdrant.url is not set — run setup or set KB_QDRANT__URL")
         from qdrant_client import QdrantClient
         return QdrantClient(
             url=url, api_key=get(config, "qdrant.api_key") or None)

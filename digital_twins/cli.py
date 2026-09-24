@@ -316,12 +316,12 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
         if not state_dir.is_dir():
             # "no state db" is a setup condition, not a credential failure:
             # the accounts store is missing, so authentication could not be
-            # attempted. Naming the fix ("run init") keeps this distinct from
+            # attempted. Naming the fix ("run setup") keeps this distinct from
             # a bad-password "authentication failed" below (T020 deferred-minor
             # from the T011 review).
             click.echo(
                 f"cannot authenticate as '{as_user}': no state db at "
-                f"{state_dir} — run 'digital-twins init' first", err=True)
+                f"{state_dir} — run 'digital-twins setup' first", err=True)
             raise SystemExit(2)
         db = connect(state_dir)
         try:
@@ -417,7 +417,7 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
         def qdrant_factory():
             if not qdrant_url:
                 raise ConfigError(
-                    "qdrant.url is not set — run init or set KB_QDRANT__URL")
+                    "qdrant.url is not set — run setup or set KB_QDRANT__URL")
             from qdrant_client import QdrantClient
             return QdrantClient(
                 url=qdrant_url,
@@ -509,11 +509,19 @@ def _make_embedder(cfg):
     "--yes", is_flag=True,
     help="Do not prompt: keep existing values, leave missing endpoints unset.")
 def init(yes: bool) -> None:
-    """First-run setup: endpoints, starter kb.local.yml, state DB, health report.
+    """Deprecated alias of the ``setup`` subset: state DB, migrations,
+    first admin, health report.
 
-    Idempotent: existing values are kept, only missing pieces are prompted
-    or added; an interrupted init can be re-run safely.
+    Deprecated in favor of ``digital-twins setup``. Kept as a fully
+    functional alias of the narrower setup subset (endpoints, starter
+    kb.local.yml, state DB, migrations, first admin, health report).
+    Idempotent: existing values are kept, only missing pieces are
+    prompted or added; an interrupted init can be re-run safely.
     """
+    click.echo(
+        "NOTE: 'digital-twins init' is deprecated — run 'digital-twins "
+        "setup' instead (init remains available as an alias of the setup "
+        "subset).")
     cfg = load()
     overrides: dict = {}
     for path, label, hide in _ENDPOINT_PROMPTS:
@@ -1099,7 +1107,7 @@ def token_create(as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
@@ -1159,7 +1167,7 @@ def token_list(as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
@@ -1237,7 +1245,7 @@ def token_revoke(token_id: int, as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
@@ -1400,7 +1408,7 @@ def account_list(as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
@@ -1452,7 +1460,7 @@ def account_set_role(email: str, role: str, as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
@@ -1511,7 +1519,7 @@ def account_delete(email: str, as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
@@ -1559,7 +1567,7 @@ def account_whoami(as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
