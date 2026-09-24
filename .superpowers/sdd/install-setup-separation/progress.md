@@ -118,3 +118,16 @@ Checked:
   alongside health.py) and all tests that drive the `init` command itself
   (test_cli_init.py, test_quickstart_scenarios.py, test_init.py — they test
   the deprecated alias, keep green, do not reword).
+
+## T4 execution log
+
+- **Implementer:** single subagent, T4.1 + T4.2 combined (branch `t4-impl`, base `42c2b60`).
+- **Commits:** `3900dca` (T4.1, cli.py only, 12+/4-), `dca5179` (T4.2, 6 files, 29+/21-).
+- **Patch:** `T4.patch` = `git diff 42c2b60 dca5179` (range diff, clean tree, all 6 files verified in `--stat`).
+- **Wtm apply:** `7746a1c` (single commit, 6 files, 29+/21-).
+- **Gate 1 (init/validate/auth/health/quickstart/cli-init):** 71 passed.
+- **Gate 2 (installer + setup):** 75 passed.
+- **Reviewer:** PASS (all 5 checklist items). Nits: (1) docstring 2nd-paragraph broader than "narrower subset" framing; (2) notice spans 3 physical lines. Both non-blocking.
+- **Wtm tasks.md:** `af5a6f8` (T4.1/T4.2 marked `[x]`).
+- **Main checkout:** `f003f08` (tasks.md T4 marks synced).
+- **Next:** T5.1 (README split), T5.2 (docs/configuration.md), T6 (6.1 full pytest + guards; 6.2 best-effort manual).
