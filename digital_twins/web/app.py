@@ -1264,68 +1264,6 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         self._send_json(200, view)
 
 
-    # --- /api/config/channels handlers (channels-config T3) ----------------
-    #
-    # Admin-gated channel (source) config surface, mirroring the services
-    # panel pattern: GET returns the masked channel view (credential values
-    # never returned — only credential_set booleans, FR-004); POST persists
-    # a partial update via channel_write to kb.local.yml and returns the
-    # post-write masked view.  404 unknown source, 422 value outside the
-    # knob's declared type / out-of-range.  Custom-channel registration is
-    # a CLI `channels add` operation only (ruling, carry-forward from Task
-    # 2 review): the web API rejects any source not in the GET view with
-    # 404.
-
-    def _config_channels_view(self, config_dir: str, env) -> dict:
-        """Build the masked channel view + env_overrides (GET/POST 200).
-
-        The per-source rows come from ``config.channels.channel_view``
-        (the same helper the CLI ``channels`` group uses).  ``env_overrides``
-        lists the env var names currently set that shadow a source knob
-        (the ``KB_SOURCES__<NAME>__*`` knob vars, plus the credential env
-        vars the sources declare) — the same env_overrides approach as
-        :meth:`_config_services_view`.  Credential values are never
-        returned (FR-004).
-        """
-        from digital_twins.config.channels import channel_view
-        from digital_twins.config import schema as _schema
-        from digital_twins.config.knobs import KNOBS
-        try:
-            sources = channel_view(config_dir=config_dir, env=env)
-        except Exception:
-            sources = {}
-
-        # env_overrides (same rule as :meth:`_config_services_view`): the
-        # env var names *currently set* that shadow a source knob.  The
-        # per-source knob vars come from the KNOBS registry
-        # (KB_SOURCES__<NAME>__ENABLED/__MAX_ITEMS/__TIMEOUT_S …); the
-        # per-source *credential* vars (YMAIL_APP_PASSWORD, GMAIL_APP_PASSWORD,
-        # …) are env vars, not KNOBS env bindings, so they are declared via
-        # schema.env_var_for(knob) — the same helper the services view uses
-        # for its credential paths.  Values are never returned (FR-004).
-        env_overrides = []
-        for knob, meta in KNOBS.items():
-            if not knob.startswith("sources."):
-                continue
-            var = meta.get("env")
-            if var and var in env:
-                env_overrides.append(var)
-        for service, view in sources.items():
-            for field in ("credential", "email"):
-                var = _schema.env_var_for(f"sources.{service}.{field}")
-                if var in env:
-                    env_overrides.append(var)
-        env_overrides = sorted(set(env_overrides))
-        return {"sources": sources, "env_overrides": env_overrides}
-
-    def _handle_config_channels_get(self, caller_email: str) -> None:
-        """GET /api/config/channels → 200 masked channel view (admin only)."""
-        if not self._require_admin(caller_email):
-            return
-        view = self._config_channels_view(
-            _cfg_get(self.server.config, "config_dir"),
-            dict(os.environ))
-        self._send_json(200, view)
 
     # --- /api/config/channels handlers (channels-config T3) ----------------
     #
@@ -1352,7 +1290,6 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         Credential values are never returned (FR-004).
         """
         from digital_twins.config.channels import channel_view
-        from digital_twins.config import schema as _schema
         from digital_twins.config.knobs import KNOBS
         try:
             sources = channel_view(config_dir=config_dir, env=env)
@@ -1373,6 +1310,12 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         env_overrides = []
         for knob, meta in KNOBS.items():
             if not knob.startswith("sources."):
+                continue
+            # Only knobs for sources present in the view (built-ins +
+            # registered customs): the KNOBS registry also carries the
+            # documented `mytool` example, which is not a live source and
+            # must not surface in env_overrides.
+            if knob.split(".", 2)[1] not in sources:
                 continue
             var = meta.get("env")
             if var and var in env:
@@ -1471,8 +1414,12 @@ class _WebAppHandler(BaseHTTPRequestHandler):
                                 f"sources.{name}.{key}: must be >= 0, "
                                 f"got {value!r}")
                     except SchemaError as exc:
-                        # Bad value type / out-of-range → 422 naming the
-                        # offending knob.
+                        # Bad value type / negative int value → 422
+                        # naming the offending knob (the range check
+                        # is local to the web surface: schema.coerce
+                        # does not enforce >= 0 on the source int
+                        # knobs, and channel_write would otherwise
+                        # persist the negative value).
                         self._send_json(
                             422, {"error": f"schema violation: {exc}"})
                         return
