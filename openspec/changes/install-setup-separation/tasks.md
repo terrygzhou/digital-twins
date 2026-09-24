@@ -35,14 +35,14 @@
       `--backends` are not re-prompted.
 
 ## 3. Installers: install-only default (scripts/install.sh, install-local.sh)
-- [ ] 3.1 Make the wizard step opt-in behind a new `--with-setup`; default
+- [x] 3.1 Make the wizard step opt-in behind a new `--with-setup`; default
       path stops after the package install and prints "run
       `digital-twins setup`" (the user's install entry point stays the
       one-line `curl … | bash` / `bash install-local.sh`, not pip).
-- [ ] 3.2 Keep `--no-setup` as an accepted no-op alias (prints a one-line
+- [x] 3.2 Keep `--no-setup` as an accepted no-op alias (prints a one-line
       note that it is now the default) for one release.
-- [ ] 3.3 Update exit-code docs: 3/5/6 apply only under `--with-setup`.
-- [ ] 3.4 **Installer doc-contract test delta (REQUIRED):** update
+- [x] 3.3 Update exit-code docs: 3/5/6 apply only under `--with-setup`.
+- [x] 3.4 **Installer doc-contract test delta (REQUIRED):** update
       `tests/unit/test_install_sh_script.py` + `test_install_script.py` from
       "wizard runs by default" to "install-only by default; `--with-setup`
       triggers the wizard; `--no-setup` is a no-op alias". Sync any
