@@ -428,12 +428,16 @@ def run_local_stack(prompt_text: Callable = click.prompt,
         # names mirror the service keys; "embedding" is
         # "embedding-model" in docker-compose.yml).
         _COMPOSE_NAME = {"embedding": "embedding-model"}
+        _SERVICE_NAMES = {"embedding-model": "embedding"}
         up_services = [
             _COMPOSE_NAME.get(svc, svc)
             for svc in resolved
             if resolved[svc].get("mode") == "local"
         ]
-        gpu = any(svc in ("llm", "embedding")
+        # gpu gates the LLM health poll below; compare against the
+        # *compose* names (embedding-model, not embedding) or the gate
+        # is silently dead on this path.
+        gpu = any(_SERVICE_NAMES.get(svc, svc) in ("llm", "embedding")
                   for svc in up_services)
     else:
         # Legacy path: hardcoded up_services list + GPU probe.
@@ -970,12 +974,25 @@ def run_setup(prompt: Callable = click.prompt,
                 if not run_local_stack(prompt, echo, resolved=resolved):
                     return 3
             else:
-                # All four services external: the cloud path writes the
-                # endpoints (no docker, no local stack).
-                echo("all backends are external — running the cloud path "
-                     "(no Docker, no local stack).")
-                if not run_cloud_stack(prompt, echo):
-                    return 5
+                # All four services external: write the endpoints straight
+                # from the resolved map (no docker, no local stack, no
+                # re-prompt — the flag already supplied every required URL,
+                # or the gate above returned 5 naming the missing var).
+                echo("all backends are external — writing the "
+                     "supplied endpoints (no Docker, no local stack).")
+                _EXTERNAL_KEY = {"qdrant": "url", "neo4j": "url",
+                                  "llm": "endpoint",
+                                  "embedding": "endpoint"}
+                content = {svc: {_EXTERNAL_KEY[svc]: resolved[svc]["url"]}
+                           for svc in ("qdrant", "neo4j", "llm",
+                                      "embedding")
+                           if resolved[svc].get("url")}
+                if resolved["neo4j"].get("user"):
+                    content.setdefault("neo4j", {})["user"] = \
+                        resolved["neo4j"]["user"]
+                    content["neo4j"]["password"] = \
+                        resolved["neo4j"]["password"]
+                write_kb_local(content)
         elif has_valid_local_config():
             echo("kb.local.yml already has valid endpoints — skipping "
                  "service startup. Config: "

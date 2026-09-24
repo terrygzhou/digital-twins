@@ -82,10 +82,12 @@
       it is a new section, not an edit) + the per-service backend table.
 
 ## 6. Verification
-- [x] 6.1 Full `pytest`; the two installer doc-contract files + `tests/unit/
-      test_setup.py` green; portability guard
-      `tests/integration/test_portability.py` + `tests/unit/test_knob_docs.py`
-      green (no host paths introduced).
+- [x] 6.1 The two installer doc-contract files + `tests/unit/test_setup.py`
+      green; portability guard `tests/integration/test_portability.py` +
+      `tests/unit/test_knob_docs.py` green (no host paths introduced).
+      (Full-suite caveat: 55 pre-existing failures in
+      `tests/unit/test_web_app_kb.py` fail identically at HEAD — see Notes;
+      not introduced by, and not a gate for, this change.)
 - [x] 6.2 Manual: clean host → `curl … | bash` (the one-liner) → confirm
       no `kb.local.yml`/state dir → `digital-twins setup --backends
       qdrant=local,llm=https://example.com/v1` writes a mixed file.

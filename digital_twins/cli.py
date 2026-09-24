@@ -258,7 +258,13 @@ def setup(force_cloud: bool, skip_services: bool,
     from digital_twins.setup import parse_backends, run_setup
     backends_map: dict | None = None
     if backends:
-        backends_map = parse_backends(backends)
+        try:
+            backends_map = parse_backends(backends)
+        except ValueError as exc:
+            # Fail fast on a typo (unknown service) or a missing '=' with a
+            # clean one-liner, not a raw traceback.
+            click.echo(f"ERROR: {exc}", err=True)
+            raise SystemExit(1)
     raise SystemExit(run_setup(force_cloud=force_cloud,
                                skip_services=skip_services,
                                cloud_env=cloud_env,

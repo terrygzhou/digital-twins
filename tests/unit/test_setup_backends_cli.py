@@ -94,6 +94,12 @@ def _run_setup_cli(monkeypatch, *args, gpu=False, docker=False,
         captured["cloud_env"].append(True)
         return True
 
+    def _fake_write_kb_local(data):
+        captured["kb_local"] = data
+        import digital_twins.setup as sm
+        return sm.local_config_path()
+
+    monkeypatch.setattr(setup_mod, "write_kb_local", _fake_write_kb_local)
     monkeypatch.setattr(setup_mod, "run_local_stack",
                         lambda p, e, resolved=None: _fake_local(p, e, resolved))
     monkeypatch.setattr(setup_mod, "run_cloud_stack",
@@ -137,16 +143,30 @@ def test_backends_mixed_starts_local_stack(_isolate, monkeypatch):
     assert resolved["llm"]["url"] == "https://llm.example/v1"
 
 
-def test_backends_all_external_goes_cloud(_isolate, monkeypatch):
+def test_backends_all_external_writes_supplied_urls(_isolate, monkeypatch):
+    """All-external --backends writes the supplied URLs straight into
+    kb.local.yml — it does NOT fall into the cloud prompt path
+    (the flag already supplied every required URL, so re-prompting for
+    them would be wrong)."""
+    import digital_twins.setup as setup_mod
     config_dir, state_dir = _isolate
     res, cap = _run_setup_cli(
         monkeypatch, "--backends",
         "qdrant=https://q,neo4j=bolt://n,llm=https://l/v1,embedding=https://e/v1",
         gpu=False, docker=False, config_dir=config_dir, state_dir=state_dir)
     assert res.exit_code == 0, res.output
-    # No local stack, no docker; the cloud path handled it.
+    # No local stack, and no cloud-prompt path either: the URLs came
+    # from the flag.
     assert cap["local"] == []
-    assert cap["cloud"] != []
+    assert cap["cloud"] == []
+    # kb.local.yml was written from the resolved map with exactly the
+    # supplied external URLs.
+    assert cap["kb_local"] is not None
+    content = cap["kb_local"]
+    assert content["qdrant"]["url"] == "https://q"
+    assert content["neo4j"]["url"] == "bolt://n"
+    assert content["llm"]["endpoint"] == "https://l/v1"
+    assert content["embedding"]["endpoint"] == "https://e/v1"
 
 
 def test_backends_parsing(_isolate, monkeypatch):
