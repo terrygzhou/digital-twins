@@ -18,14 +18,23 @@ PINNED_MODELS = {
 DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
 
 
-def model_dimension(model: str = DEFAULT_MODEL) -> int:
-    """Vector dimension for a pinned model; SchemaError for unpinned ones."""
-    if model not in PINNED_MODELS:
-        raise SchemaError(
-            f"embedding.model {model!r} is not pinned by this package; "
-            f"pinned models: {', '.join(sorted(PINNED_MODELS))}"
-        )
-    return PINNED_MODELS[model]
+def model_dimension(model: str = DEFAULT_MODEL,
+                    optional: bool = False) -> int:
+    """Vector dimension for a pinned model; SchemaError for unpinned ones.
+
+    ``optional=True`` (external-endpoint use): an unpinned model name is
+    accepted — the remote endpoint owns its model and its vectors, so the
+    package cannot validate the name.  Dimension validation degrades to
+    "known dims enforce, unknown dims pass through".
+    """
+    if model in PINNED_MODELS:
+        return PINNED_MODELS[model]
+    if optional:
+        return 0
+    raise SchemaError(
+        f"embedding.model {model!r} is not pinned by this package; "
+        f"pinned models: {', '.join(sorted(PINNED_MODELS))}"
+    )
 
 
 def resolve_device(device: str) -> str:
@@ -89,8 +98,11 @@ def build_endpoint_embedder(cfg):
     returns a callable ``(texts: list[str]) -> list[list[float]]`` that
     POSTs to ``{endpoint}/v1/embeddings`` via stdlib urllib (mirrors
     ``health.py``'s house style).  Includes the Bearer ``embedding.api_key``
-    auth header and the pinned ``embedding.model`` in the JSON payload.
-    Returns the ``data[].embedding`` vectors from the response.
+    auth header and the ``embedding.model`` name in the JSON payload.  A
+    custom (non-pinned) model name is accepted — the endpoint owns its
+    model; the dimension guard only enforces when the pinned model is a
+    *known* dimension.  Returns the ``data[].embedding`` vectors from the
+    response.
 
     Raises :class:`EndpointEmbedderError` on 401/403/5xx.  Raises
     :class:`SchemaError` when a response vector does not match the pinned
@@ -103,7 +115,12 @@ def build_endpoint_embedder(cfg):
     endpoint = (get(cfg, "embedding.endpoint") or "").rstrip("/")
     api_key = get(cfg, "embedding.api_key") or ""
     model = get(cfg, "embedding.model") or DEFAULT_MODEL
-    expected_dim = model_dimension(model)
+    # The endpoint owns its model: a custom (non-pinned) model name is
+    # legal here — the dimension guard below only enforces when the
+    # pinned model is a *known* dimension (a remote endpoint returning
+    # vectors of another model's shape still fails the Qdrant upsert
+    # backstop).
+    expected_dim = model_dimension(model, optional=True)
     url = endpoint + "/v1/embeddings"
 
     def _post(payload: dict, timeout: int = 30):
@@ -139,10 +156,10 @@ def build_endpoint_embedder(cfg):
         # any mismatch fails fast here, not later at the Qdrant upsert.
         for i, v in enumerate(vectors):
             dim = len(v)
-            if dim != expected_dim:
+            if expected_dim and dim != expected_dim:
                 raise SchemaError(
                     f"embedding endpoint returned a {dim}-dim vector at "
-                    f"index {i} but the pinned model produces "
+                    f"index {i} but {model!r} produces "
                     f"{expected_dim}-dim vectors — "
                     f"dimension mismatch between the endpoint and "
                     f"{model!r} (FR-010)"

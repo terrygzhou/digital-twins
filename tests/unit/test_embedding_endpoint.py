@@ -166,6 +166,61 @@ def test_endpoint_embedder_posts_to_v1_embeddings(monkeypatch):
     )
 
 
+def test_endpoint_embedder_custom_model_name_accepted(monkeypatch):
+    """An unpinned (cloud) model name must NOT fail at embedder build —
+    the endpoint owns its model, so the dimension guard degrades to a
+    pass-through while the model name still rides in the payload."""
+    cfg = _make_cfg()
+    cfg["embedding"]["model"] = "openai/text-embedding-3-small"
+
+    captured = []
+    vectors = [[0.1] * 1536, [0.2] * 1536]
+
+    def fake_open(req, timeout=None):
+        captured.append(req)
+        return _resp(json.dumps({"data": [
+            {"embedding": v, "index": i} for i, v in enumerate(vectors)
+        ]}).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_open)
+
+    embedder = _find_endpoint_embedder(cfg)
+    assert embedder is not None, (
+        "a custom (unpinned) model name must not break the endpoint "
+        "embedder (external/cloud endpoints are supported)")
+    out = embedder(["text"])
+    assert out == vectors
+    payload = json.loads(captured[0].data.decode("utf-8"))
+    assert payload["model"] == "openai/text-embedding-3-small"
+
+
+def test_endpoint_embedder_unpinned_model_omits_dimension_guard(
+        monkeypatch):
+    """When the model is unpinned (unknown dim), a vector of any size
+    passes; with the pinned model a wrong dim still raises."""
+    from digital_twins.ingest.embedding import build_endpoint_embedder
+
+    cfg = _make_cfg()
+
+    def fake_open(req, timeout=None):
+        return _resp(json.dumps({"data": [
+            {"embedding": [0.1] * 256, "index": 0}]}).encode())
+
+    # unpinned model + 256-dim vectors: no guard, accepted
+    cfg["embedding"]["model"] = "openai/text-embedding-3-small"
+    monkeypatch.setattr("urllib.request.urlopen", fake_open)
+    out = build_endpoint_embedder(cfg)(["text"])
+    assert len(out[0]) == 256
+
+    # pinned model + 256-dim vectors: guard still fires
+    cfg["embedding"]["model"] = PINNED_MODEL
+    monkeypatch.setattr("urllib.request.urlopen", fake_open)
+    with pytest.raises(Exception) as exc_info:
+        build_endpoint_embedder(cfg)(["text"])
+    assert "dimension" in str(exc_info.value).lower() or \
+        "mismatch" in str(exc_info.value).lower()
+
+
 def test_endpoint_embedder_401_raises(monkeypatch):
     """When the endpoint returns 401, the embedder must raise (not
     silently return empty vectors).

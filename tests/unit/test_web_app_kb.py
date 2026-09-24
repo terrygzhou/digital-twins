@@ -1045,6 +1045,43 @@ def test_kb_search_query_response_shape(web_app):
         f"results must be descending by score: {scores!r}")
 
 
+def test_kb_search_embedding_unavailable_endpoint_503(web_app):
+    """POST /api/kb/search with ``embedding.endpoint`` configured and the
+    endpoint embedder failing → clean 503 whose hint names the endpoint
+    knobs (embedding.endpoint / embedding.api_key) — not the in-process
+    model/device remediation.  The endpoint hint only fires when the
+    endpoint is configured; the in-process path keeps the model/device
+    hint (see test_kb_search_embedding_unavailable_503)."""
+    _app, _db, host, port, session_token = web_app
+    _seed_points(_app)
+    # Endpoint configured: the pooled embedder delegates to the endpoint
+    # embedder — make it raise (e.g. 401 / connection refused).
+    _app.config["embedding"] = {
+        "endpoint": "http://embed.example:8080",
+        "api_key": "sk-test-fake",
+        "model": "BAAI/bge-small-en-v1.5",
+    }
+    def _embed(texts):
+        raise RuntimeError("401 from http://embed.example:8080/v1/embeddings")
+    _app._embed_pool = {"embed": _embed}
+    code, parsed, raw = _http_post(
+        host, port, "/api/kb/search",
+        {"query": "valid query", "limit": 5},
+        headers={"Authorization": f"Bearer {session_token}"})
+    assert code in (502, 503), (
+        f"endpoint-embedding-failure POST /api/kb/search expected "
+        f"502/503, got {code}: {raw[:300]!r}")
+    err = str(parsed["error"]).lower()
+    assert "embedding endpoint" in err or "endpoint" in err, (
+        f"the 503 must point at the endpoint knobs, got {parsed['error']!r}")
+    assert "kb_embedding__endpoint" in err, (
+        f"the endpoint hint must name KB_EMBEDDING__ENDPOINT, "
+        f"got {parsed['error']!r}")
+    assert "embedding.model" not in err, (
+        f"the endpoint hint must not point at the in-process model, "
+        f"got {parsed['error']!r}")
+
+
 def test_kb_search_embedding_unavailable_503(web_app):
     """POST /api/kb/search with the embedder failing → clean 503 embedding.
 

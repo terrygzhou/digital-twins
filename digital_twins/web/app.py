@@ -485,6 +485,13 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         "embedding unavailable: check embedding.model / embedding.device "
         "(env: KB_EMBEDDING__MODEL / KB_EMBEDDING__DEVICE) point at a "
         "loadable model; the query could not be embedded")
+    # External-endpoint variant: the endpoint is configured, so the
+    # remediation names the endpoint knobs — not the in-process model.
+    _ENDPOINT_EMBEDDING_UNAVAILABLE = (
+        "embedding endpoint unavailable: check embedding.endpoint / "
+        "embedding.api_key (env: KB_EMBEDDING__ENDPOINT / "
+        "KB_EMBEDDING__API_KEY) — the endpoint did not return vectors "
+        "for the query")
 
     def _qdrant_client(self):
         """Resolve the app's Qdrant client (T008/T010 shared surface).
@@ -704,7 +711,11 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             return
         # 2. Embed the query via the pooled embedder (model loads once per
         #    server).  Any embedding failure → clean 503 with the
-        #    embedding-specific hint (distinct from the qdrant hint).
+        #    embedding-specific hint (distinct from the qdrant hint);
+        #    the external-endpoint hint fires only when the endpoint is
+        #    configured, so in-process failures keep the model/device
+        #    remediation.
+        use_endpoint = bool(_cfg_get(self.server.config, "embedding.endpoint"))
         try:
             vectors = self._pooled_embedder()([query])
             if hasattr(vectors, "tolist"):
@@ -713,7 +724,9 @@ class _WebAppHandler(BaseHTTPRequestHandler):
                 raise ValueError("no embedding produced for the query")
             query_vector = vectors[0]
         except Exception:
-            self._send_json(503, {"error": self._EMBEDDING_UNAVAILABLE})
+            hint = (self._ENDPOINT_EMBEDDING_UNAVAILABLE if use_endpoint
+                    else self._EMBEDDING_UNAVAILABLE)
+            self._send_json(503, {"error": hint})
             return
         # 3. Vector search (owner-scoped).
         try:

@@ -147,7 +147,7 @@ server URL to run the full stack against that external endpoint.
 
 | knob | type | default | env var | notes |
 |---|---|---|---|---|
-| embedding.model | str | BAAI/bge-small-en-v1.5 | KB_EMBEDDING__MODEL | Text-embedding model; the default is pinned by the package. |
+| embedding.model | str | BAAI/bge-small-en-v1.5 | KB_EMBEDDING__MODEL | Text-embedding model; the default is pinned by the package. In-process (no `embedding.endpoint`) the model must be a pinned name; with an external `embedding.endpoint` a custom name is accepted (the endpoint owns its model; the dimension guard degrades to pass-through). |
 | embedding.device | str | auto | KB_EMBEDDING__DEVICE | One of `auto`, `cpu`, `cuda`. `auto` probes the host. |
 | embedding.endpoint | str | ~ | KB_EMBEDDING__ENDPOINT | Optional hosted-embedding OpenAI-compatible endpoint (the reference compose ships one). |
 | embedding.api_key | str | ~ | KB_EMBEDDING__API_KEY | Bearer token for `embedding.endpoint`, when it requires one. |
