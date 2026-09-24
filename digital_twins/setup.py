@@ -73,11 +73,6 @@ _HEALTH_TIMEOUT_S = 300  # per-service poll cap (5 min; the compose
 
 _POLLEVERY_S = 2
 
-_HEALTH_TIMEOUT_S = 300  # per-service poll cap (5 min; the compose
-# healthchecks do the real gating, this is just a host-side sanity poll)
-
-_POLLEVERY_S = 2
-
 # The four backend services that the user may point at a *local* bundled
 # Docker service or at an *external* endpoint, independently of each other
 # (install-setup-separation D2).  Each maps to a bundled URL constant and to
