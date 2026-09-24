@@ -124,7 +124,7 @@ def test_docker_available_confirm_yes_runs_local_stack(_isolate_config,
 
     called = {"local": 0, "cloud": 0}
 
-    def fake_local_stack(prompt, echo):
+    def fake_local_stack(prompt, echo, resolved=None):
         called["local"] += 1
         return True
     monkeypatch.setattr(setup_mod, "run_local_stack", fake_local_stack)
@@ -293,7 +293,8 @@ def test_local_stack_failure_returns_exit_code_3(_isolate_config, monkeypatch):
     db.close()
     monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
     monkeypatch.setattr(setup_mod, "docker_available", lambda: True)
-    monkeypatch.setattr(setup_mod, "run_local_stack", lambda p, e: False)
+    monkeypatch.setattr(setup_mod, "run_local_stack",
+                        lambda p, e, resolved=None: False)
 
     rc = setup_mod.run_setup(
         prompt=lambda q: "unused",
@@ -375,7 +376,8 @@ def test_existing_admin_account_creates_no_credentials_file(
                         lambda cfg: [_ok_check(n) for n in
                                      ("qdrant", "neo4j", "llm", "embedding")])
     monkeypatch.setattr(setup_mod, "docker_available", lambda: True)
-    monkeypatch.setattr(setup_mod, "run_local_stack", lambda p, e: True)
+    monkeypatch.setattr(setup_mod, "run_local_stack",
+                        lambda p, e, resolved=None: True)
 
     rc = setup_mod.run_setup(
         prompt=lambda q: "unused",
@@ -395,7 +397,8 @@ def test_health_check_failure_returns_exit_code_1(_isolate_config,
     db.close()
     monkeypatch.setattr(setup_mod, "connect", lambda d: _fake_connect(d))
     monkeypatch.setattr(setup_mod, "docker_available", lambda: True)
-    monkeypatch.setattr(setup_mod, "run_local_stack", lambda p, e: True)
+    monkeypatch.setattr(setup_mod, "run_local_stack",
+                        lambda p, e, resolved=None: True)
     monkeypatch.setattr(setup_mod, "run_health_checks", lambda cfg: [
         _ok_check("qdrant"), _fail_check("neo4j"),
         _ok_check("llm"), _ok_check("embedding")])

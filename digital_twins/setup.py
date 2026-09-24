@@ -73,6 +73,144 @@ _HEALTH_TIMEOUT_S = 300  # per-service poll cap (5 min; the compose
 
 _POLLEVERY_S = 2
 
+# The four backend services that the user may point at a *local* bundled
+# Docker service or at an *external* endpoint, independently of each other
+# (install-setup-separation D2).  Each maps to a bundled URL constant and to
+# the env var that, in --cloud-env mode, supplies its external URL.
+# `gpu_only` marks services whose bundled service only starts on a GPU host;
+# `required` marks services whose external URL is mandatory (vs optional).
+_SERVICE_ENV = {
+    "qdrant": ("KB_QDRANT__URL", _QDRANT_EP, False, True),
+    "neo4j": ("KB_NEO4J__URL", _NEO4J_EP, False, True),
+    "llm": ("KB_LLM__ENDPOINT", _LLM_EP, True, True),
+    "embedding": ("KB_EMBEDDING__ENDPOINT", _EMBED_EP, True, False),
+}
+
+
+def parse_backends(spec: str) -> dict:
+    """Parse a ``--backends`` CLI value into a per-service choice map.
+
+    ``spec`` is a comma-separated list of ``KEY=VALUE`` pairs, e.g.
+    ``"qdrant=local,llm=https://example.com/v1"``.  Each VALUE is either
+    ``"local"`` (the bundled Docker service), a URL (any non-"local"
+    string), or ``""`` (empty — the service is required-external and the
+    caller must supply the URL later; exit 5 in --cloud-env mode).
+
+    Returns ``{service: value}`` (values keep the "local"/URL/"" distinction).
+    Raises ``ValueError`` for an unknown service name (fail fast on typos).
+    """
+    out: dict = {}
+    for item in (s.strip() for s in spec.split(",") if s.strip()):
+        key, sep, value = item.partition("=")
+        if not sep:
+            # A bare "qdrant" with no "=" — treat as "local"? No: be strict.
+            raise ValueError(
+                f"--backends entry {item!r} is missing '=' "
+                "(expected KEY=VALUE, e.g. qdrant=local)")
+        key = key.strip()
+        if key not in _SERVICE_ENV:
+            known = ", ".join(sorted(_SERVICE_ENV))
+            raise ValueError(
+                f"unknown service {key!r} in --backends "
+                f"(known: {known})")
+        out[key] = value.strip()
+    return out
+
+
+def resolve_backends(backends: dict | None = None,
+                     *,
+                     local: bool = False,
+                     cloud: bool = False,
+                     cloud_env: bool = False,
+                     gpu: bool = False,
+                     docker: bool = False,
+                     env: dict | None = None,
+                     neo4j_user: str = "",
+                     neo4j_password: str = "") -> dict:
+    """Resolve the per-service backend choice into a deterministic map.
+
+    Returns ``{service: {"mode": "local"|"external", "url": str, ...}}`` for
+    all four of ``qdrant/neo4j/llm/embedding``.  Pure function of its inputs —
+    no I/O, no prompts, no docker — so it is trivially unit-testable.
+
+    Inputs:
+      backends: explicit ``--backends`` map of ``{service: "local"|URL}``.
+                Services not listed default to *local* (the interactive
+                default); an explicit external with an empty URL is a
+                required-missing endpoint, not a local one.
+      local / cloud / cloud_env: shorthand flags (``--local``, ``--cloud``,
+                ``--cloud-env``); when none of the three is set the caller
+                drives the choice interactively, which is expressed here by
+                omitting all of them (every unlisted service -> local).
+      gpu: whether a usable GPU is present (the bundled llm/embedding only
+                start on a GPU host).
+      env: mapping used to look up external URLs in --cloud-env mode;
+                defaults to ``os.environ`` when None.
+      neo4j_user / neo4j_password: carried through on the neo4j entry so the
+                caller can pass them to ``docker compose`` / the health check.
+
+    Per entry:
+      mode=="local": url is the bundled URL constant; the caller only starts
+        this service in Docker when its mode is local.
+      mode=="external": url is the user/env value (may be ""); a required
+        service with an empty url is flagged ``required=True`` (the caller
+        prompts, or in --cloud-env fails the gate naming the env var).
+      llm/embedding local on a no-GPU host: mode flips to external, url empty
+        (or the env value in --cloud-env), and ``unavailable=True`` marks
+        "local was requested but the bundled service cannot start here".
+    """
+    if env is None:
+        env = os.environ
+    explicit = {k: str(v).strip() for k, v in (backends or {}).items()}
+
+    # Which services resolve to external from the shorthand flags.
+    all_external = bool(cloud or cloud_env)
+    if local:
+        all_external = False  # --local forces local for any unlisted service
+
+    out: dict = {}
+    for svc, (env_name, local_url, gpu_only, required) in _SERVICE_ENV.items():
+        entry: dict = {"mode": "external" if all_external else "local",
+                       "url": "",
+                       "required": False,
+                       "env": env_name}
+        choice = explicit.get(svc)
+        if choice is not None:
+            if choice == "local":
+                entry["mode"] = "local"
+                entry["url"] = local_url
+            else:
+                # explicit external: URL (possibly empty -> required-missing)
+                entry["mode"] = "external"
+                entry["url"] = choice
+                if choice == "":
+                    entry["required"] = required or svc in ("qdrant", "neo4j", "llm")
+        # In --cloud-env mode, unlisted (default-external) services pull their
+        # URL from the env var; a missing/empty var on a required service is
+        # the gate that names the var.
+        if cloud_env and choice is None:
+            entry["mode"] = "external"
+            entry["url"] = (env.get(env_name) or "").strip()
+            entry["required"] = required
+        elif entry["mode"] == "local":
+            entry["url"] = local_url
+        # llm/embedding local on a no-GPU host is unavailable: flip to
+        # external and mark it so the caller surfaces an external URL.
+        if svc in ("llm", "embedding") and not gpu and entry["mode"] == "local":
+            entry["mode"] = "external"
+            entry["url"] = (env.get(env_name) or "").strip()
+            entry["unavailable"] = True
+            if svc == "llm":
+                entry["required"] = True
+        if svc == "neo4j":
+            if neo4j_user:
+                entry["user"] = neo4j_user
+            if neo4j_password:
+                entry["password"] = neo4j_password
+        out[svc] = entry
+    return out
+
+
 
 # ---------------------------------------------------------------------------
 # Backend detection
@@ -239,7 +377,8 @@ def _poll_url(url: str, timeout_s: int = _HEALTH_TIMEOUT_S) -> bool:
 
 
 def run_local_stack(prompt_text: Callable = click.prompt,
-                    echo: Callable = click.echo) -> bool:
+                    echo: Callable = click.echo,
+                    resolved: dict | None = None) -> bool:
     """Bring up the bundled local stack and write kb.local.yml.
 
     The Neo4j credentials are prompted (with the compose defaults as
@@ -248,6 +387,14 @@ def run_local_stack(prompt_text: Callable = click.prompt,
     match the stack they are about to start.  The answers are passed to
     `docker compose` via NEO4J_USER / NEO4J_PASSWORD env vars AND
     written to kb.local.yml.
+
+    resolved: the per-service resolved map from resolve_backends()
+    (install-setup-separation T1.3).  When provided, ``up_services``
+    is built from the services whose mode is "local" (only those are
+    started in Docker) and kb.local.yml is written from the resolved
+    map so mixed local/external choices land in one file.  When None,
+    the legacy path is unchanged (hardcoded up_services list, all-local
+    content via _kb_local_content()).
 
     Returns True when the stack is up (or when it was already up and the
     config file matched), False on any hard failure.
@@ -275,14 +422,33 @@ def run_local_stack(prompt_text: Callable = click.prompt,
         echo("continuing anyway — `up` will pull anything missing.")
     # digital-twins service is optional (the CLI runs on the host); only
     # include it when the compose file was found in a git checkout.
-    up_services = ["qdrant", "neo4j", "embedding-model"]
-    # GPU probe (mirror of bootstrap-local.sh: actually RUN `nvidia-smi -L`
-    # and check for non-empty output — the binary can exist without a
-    # working driver/GPU, and the no-GPU path must skip the bundled llm
-    # service, not waste a 300s health poll on it).
-    gpu = _gpu_present()
-    if gpu:
-        up_services.append("llm")
+    if resolved is not None:
+        # T1.3: the resolved map drives which services actually start in
+        # Docker — only the services whose mode is "local" (the compose
+        # names mirror the service keys; "embedding" is
+        # "embedding-model" in docker-compose.yml).
+        _COMPOSE_NAME = {"embedding": "embedding-model"}
+        _SERVICE_NAMES = {"embedding-model": "embedding"}
+        up_services = [
+            _COMPOSE_NAME.get(svc, svc)
+            for svc in resolved
+            if resolved[svc].get("mode") == "local"
+        ]
+        # gpu gates the LLM health poll below; compare against the
+        # *compose* names (embedding-model, not embedding) or the gate
+        # is silently dead on this path.
+        gpu = any(_SERVICE_NAMES.get(svc, svc) in ("llm", "embedding")
+                  for svc in up_services)
+    else:
+        # Legacy path: hardcoded up_services list + GPU probe.
+        up_services = ["qdrant", "neo4j", "embedding-model"]
+        # GPU probe (mirror of bootstrap-local.sh: actually RUN `nvidia-smi
+        # -L` and check for non-empty output — the binary can exist without
+        # a working driver/GPU, and the no-GPU path must skip the bundled
+        # llm service, not waste a 300s health poll on it).
+        gpu = _gpu_present()
+        if gpu:
+            up_services.append("llm")
     echo(f"starting local stack: {', '.join(up_services)}")
     # Pass the chosen credentials to compose (matches the compose-file
     # defaults unless the user overrode them).
@@ -352,16 +518,46 @@ def run_local_stack(prompt_text: Callable = click.prompt,
              "healthy — continuing with the config that points at what "
              "is up.")
 
-    content = _kb_local_content(local=True,
-                                neo4j_user=neo4j_user,
-                                neo4j_password=neo4j_password)
-    # On no-GPU hosts the bundled llm/embedding are not part of the stack:
-    # drop them so kb.local.yml doesn't point at ports that were never up.
-    if not gpu:
-        content.pop("llm", None)
-        content.pop("embedding", None)
-        echo("llm: SKIPPED (no suitable GPU — set KB_LLM__ENDPOINT to an "
-             "external LLM to enable chat)")
+    if resolved is not None:
+        # T1.3: write kb.local.yml from the resolved map so mixed
+        # local/external choices land in one file.  Local services use
+        # the bundled endpoint constants (already in resolved["url"]);
+        # external services use the URL the user/env supplied (an empty
+        # URL on a required service was already gated earlier).  The
+        # neo4j entry carries user/password from the prompts.
+        content = {
+            "qdrant": {"url": resolved["qdrant"]["url"]},
+            "neo4j": {"url": resolved["neo4j"]["url"],
+                      "user": neo4j_user,
+                      "password": neo4j_password},
+            "llm": {"endpoint": resolved["llm"]["url"]},
+            "embedding": {"endpoint": resolved["embedding"]["url"]},
+        }
+        # An external service whose URL is empty can't go in the file
+        # (kb.local.yml would point at nothing); drop the key instead
+        # and point the user at the env var that fills it.
+        for svc, key in (("qdrant", "url"), ("neo4j", "url"),
+                         ("llm", "endpoint"),
+                         ("embedding", "endpoint")):
+            if not resolved[svc].get("url"):
+                content.pop(svc, None)
+                echo(f"{svc}: URL not set — set "
+                     f"{resolved[svc].get('env', 'KB_*')} to enable it.")
+        if resolved["llm"].get("unavailable"):
+            echo("llm: requested local but no suitable GPU — set "
+                 "KB_LLM__ENDPOINT to an external LLM to enable chat")
+    else:
+        content = _kb_local_content(local=True,
+                                    neo4j_user=neo4j_user,
+                                    neo4j_password=neo4j_password)
+        # On no-GPU hosts the bundled llm/embedding are not part of the
+        # stack: drop them so kb.local.yml doesn't point at ports that
+        # were never up.
+        if not gpu:
+            content.pop("llm", None)
+            content.pop("embedding", None)
+            echo("llm: SKIPPED (no suitable GPU — set KB_LLM__ENDPOINT to an "
+                 "external LLM to enable chat)")
     write_kb_local(content)
     echo("local stack is up: " +
          ", ".join(f"{s}: up" for s in up_services if s not in failed))
@@ -604,6 +800,84 @@ def configure_fs_demo(echo: Callable = click.echo,
              f"when you are ready.")
         return
     echo(f"enabled the fs demo source (dir: {demo_dir}).")
+# Interactive second pass (install-setup-separation T2.1)
+# ---------------------------------------------------------------------------
+
+def _interactive_second_pass(prompt: Callable, echo: Callable,
+                             gpu: bool,
+                             named: dict | None = None) -> dict:
+    """Ask, per service not resolved from a flag, local-or-external.
+
+    The interactive path (D2): after the user accepts the bundled local
+    stack, the second pass asks, for each of qdrant/neo4j/llm/embedding,
+    "local or external?" — with defaults qdrant/neo4j -> local and
+    llm/embedding -> external on no-GPU hosts, local on GPU hosts.  An
+    external answer prompts for the URL, or reads the KB_* env var when
+    set (env wins over the prompt; a var set to an empty string is
+    "set but empty" and fails the required check, like the cloud path).
+
+    ``named`` is the set of services already resolved from ``--backends``
+    (or the all-services shorthands); those never re-prompt — they keep
+    their flag/env resolution.  ``named=None`` means the bare
+    default-interactive path (docker probe -> local-stack confirm).
+
+    Returns the resolved map in ``resolve_backends``() shape.  A
+    "local" answer for a service the host can't start (llm/embedding on
+    a no-GPU host) is flipped to external-with-unavailable by
+    resolve_backends(), so it cannot crash — the existing
+    run_local_stack() remediation behavior applies.
+
+    ``echo`` is accepted for API symmetry with the other wizard callables
+    (narration rides on the prompt text itself); the pass does not echo
+    standalone lines.
+    """
+    named = named or {}
+    explicit: dict = dict(named)  # flag-resolved services carry through
+    base = resolve_backends(explicit if explicit else None, gpu=gpu,
+                           docker=True)
+    for svc, (env_name, _local_url, _gpu_only, _required) in \
+            _SERVICE_ENV.items():
+        if svc in named:
+            continue  # resolved from the flag — never re-prompt
+        default_mode = ("external"
+                        if svc in ("llm", "embedding") and not gpu
+                        else "local")
+        answer = prompt(
+            f"{svc}: run locally (bundled Docker) or point at an external "
+            f"endpoint? [default: {default_mode}]").strip().lower()
+        if answer in ("local", "l"):
+            mode = "local"
+        elif answer in ("external", "ext", "url", "e"):
+            mode = "external"
+        else:
+            mode = default_mode  # empty answer (Enter) -> the default
+        entry = base[svc]
+        if mode == "local" and not entry.get("unavailable"):
+            # Local wins: use the bundled endpoint (resolve_backends may
+            # have flipped llm/embedding to unavailable on no-GPU hosts —
+            # keep that flip, the user must pick external there).
+            explicit[svc] = "local"
+        else:
+            # External: env var wins over the prompt; a set-but-empty
+            # var fails the required check like the cloud path does.
+            env_value = os.environ.get(env_name)
+            if env_value is not None:
+                url = env_value.strip()
+            else:
+                url = prompt(
+                    f"External {svc} URL "
+                    f"(e.g. https://host/v1) "
+                    f"[{env_name}]: ").strip()
+            explicit[svc] = url
+    resolved = resolve_backends(explicit, gpu=gpu, docker=True)
+    # Preserve the no-GPU "local unavailable" marker when the second pass
+    # chose external for a local-only service (resolve_backends only sets
+    # it on the auto local->external flip; an explicit external answer
+    # keeps the marker so the remediation hint still fires):
+    for svc in ("llm", "embedding"):
+        if not gpu and base[svc].get("unavailable"):
+            resolved[svc]["unavailable"] = True
+    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -615,7 +889,10 @@ def run_setup(prompt: Callable = click.prompt,
               echo: Callable = click.echo,
               force_cloud: bool = False,
               skip_services: bool = False,
-              cloud_env: bool = False) -> int:
+              cloud_env: bool = False,
+              local: bool = False,
+              backends: dict | None = None,
+              gpu: bool | None = None) -> int:
     """Run the full setup wizard. Returns the process exit code.
 
     force_cloud: skip docker detection, go straight to the cloud path.
@@ -625,9 +902,27 @@ def run_setup(prompt: Callable = click.prompt,
     skip_services: explicit "I handle backends myself" — takes precedence
     over everything: never probe Docker, never prompt for endpoints, never
     write kb.local.yml; only init + admin + validate run (the re-run fast
-    path). The fs-demo enable step is also skipped: no config file or demo
-    dir is created as a side effect.
+    path). The fs-demo enable step is also skipped: no config file or
+    demo dir is created as a side effect.  ``--skip-services`` combined
+    with a non-empty ``--backends`` map is a contradiction: it errors
+    out naming both flags (exit 1).
+    local / backends (install-setup-separation T1.2): per-service backend
+    choices.  ``local`` is the ``--local`` shorthand (all four services
+    local); ``backends`` is the parsed ``--backends`` map.  Precedence
+    (highest wins): --skip-services > --cloud-env > --cloud >
+    --local/--backends > interactive.  The chosen services are resolved
+    via resolve_backends() and threaded into run_local_stack(resolved=...)
+    so mixed local/external choices start only the local services in
+    Docker and write one kb.local.yml.
     """
+    # --- 0) contradiction gate ---------------------------------------------
+    if skip_services and backends:
+        echo("ERROR: --skip-services and --backends contradict each other: "
+             "--skip-services tells setup to never start or configure "
+             "services, while --backends specifies per-service backends. "
+             "Drop one of the two flags and re-run.")
+        return 1
+
     # --- 1) backend mode ---------------------------------------------------
     try:
         if skip_services:
@@ -638,6 +933,66 @@ def run_setup(prompt: Callable = click.prompt,
         elif force_cloud:
             if not run_cloud_stack(prompt, echo):
                 return 5
+        elif local or backends:
+            # T1.2: per-service backend choices.  Resolve the map (the
+            # gpu/docker facts come from the host probes) and dispatch:
+            # if any service is local the local stack path runs (only the
+            # local services start in Docker; kb.local.yml is written
+            # from the resolved map); if every service is external the
+            # cloud path runs instead.
+            if gpu is None:
+                gpu = _gpu_present()
+            resolved = resolve_backends(backends, local=local,
+                                         gpu=gpu,
+                                         docker=docker_available())
+            has_local = any(v.get("mode") == "local"
+                            for v in resolved.values())
+            # A required service with an empty URL (the "" value of
+            # --backends, i.e. "required-external, URL not supplied"):
+            # no prompt in flag mode — exit 5 naming the env var that
+            # fills it.  (Not gated for --local mode: an unavailable
+            # local LLM on a no-GPU host is handled by run_local_stack,
+            # which skips it with a remediation hint.)
+            if not local:
+                missing = [v["env"] for v in resolved.values()
+                           if v.get("mode") == "external"
+                           and not v.get("url")
+                           and v.get("required")]
+                if missing:
+                    echo("ERROR: the following required backend(s) have no "
+                         "URL — "
+                         f"{' and '.join(missing)} "
+                         "is unset or empty. Set the var(s) (or pass a URL "
+                         "via --backends) and re-run 'digital-twins setup'.")
+                    return 5
+            if has_local:
+                local_svcs = ", ".join(svc for svc in resolved
+                                       if resolved[svc].get("mode") == "local")
+                echo(f"starting local stack for: {local_svcs} "
+                     "(per --local/--backends); external services use "
+                     "the URLs you supplied.")
+                if not run_local_stack(prompt, echo, resolved=resolved):
+                    return 3
+            else:
+                # All four services external: write the endpoints straight
+                # from the resolved map (no docker, no local stack, no
+                # re-prompt — the flag already supplied every required URL,
+                # or the gate above returned 5 naming the missing var).
+                echo("all backends are external — writing the "
+                     "supplied endpoints (no Docker, no local stack).")
+                _EXTERNAL_KEY = {"qdrant": "url", "neo4j": "url",
+                                  "llm": "endpoint",
+                                  "embedding": "endpoint"}
+                content = {svc: {_EXTERNAL_KEY[svc]: resolved[svc]["url"]}
+                           for svc in ("qdrant", "neo4j", "llm",
+                                      "embedding")
+                           if resolved[svc].get("url")}
+                if resolved["neo4j"].get("user"):
+                    content.setdefault("neo4j", {})["user"] = \
+                        resolved["neo4j"]["user"]
+                    content["neo4j"]["password"] = \
+                        resolved["neo4j"]["password"]
+                write_kb_local(content)
         elif has_valid_local_config():
             echo("kb.local.yml already has valid endpoints — skipping "
                  "service startup. Config: "
@@ -647,7 +1002,26 @@ def run_setup(prompt: Callable = click.prompt,
                 "Docker is available. Start the bundled local stack? "
                 "(qdrant + neo4j + embedding-model, ~1-2 min on first "
                 "run)"):
-            if not run_local_stack(prompt, echo):
+            # T2.1: interactive second pass — after the user accepted the
+            # bundled local stack, ask, per service, local-or-external
+            # (defaults: qdrant/neo4j local; llm/embedding local on GPU
+            # hosts, external on no-GPU hosts).  This branch is the bare
+            # default-interactive path: no --local/--cloud/--cloud-env,
+            # no --skip-services, and no service named in --backends, so
+            # every service is open to the per-service prompt (``named``
+            # is empty).  A "local" answer the host can't start
+            # (llm/embedding without a GPU) is flipped to
+            # external-with-unavailable by resolve_backends() —
+            # run_local_stack() then applies its existing remediation
+            # instead of crashing.  The resolved map drives
+            # run_local_stack (T1.3):
+            # only the local-mode services start in Docker and
+            # kb.local.yml is written from the resolved map.
+            if gpu is None:
+                gpu = _gpu_present()
+            resolved = _interactive_second_pass(
+                prompt, echo, gpu=gpu, named=None)
+            if not run_local_stack(prompt, echo, resolved=resolved):
                 return 3
         else:
             # No docker, or the user declined the local stack: fall back
@@ -670,9 +1044,12 @@ def run_setup(prompt: Callable = click.prompt,
 
     # --- 2) init (state DB + migrations, no endpoint prompts) --------------
     # connect() already migrates on open (state.db.connect); no second
-    # migrate call needed.
+    # migrate call needed.  The real state.db.connect creates the state
+    # directory itself; a test double (or any narrower connect) may not,
+    # so make sure it exists first.
     cfg = load()
     state_dir = Path(cfg["state_dir"]).expanduser()
+    state_dir.mkdir(parents=True, exist_ok=True)
     conn = connect(state_dir)
     conn.close()
 

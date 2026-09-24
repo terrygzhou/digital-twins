@@ -29,7 +29,7 @@ def test_validate_failure_exits_1_with_remediation(env_dirs, monkeypatch):
     monkeypatch.setattr(health, "run_health_checks", lambda cfg: [
         health.HealthResult("qdrant", False, "qdrant.url is not configured",
                             "set qdrant.url in kb.local.yml (env: KB_QDRANT__URL), "
-                            "then re-run init/validate"),
+                            "then re-run setup/validate"),
         health.HealthResult("neo4j", True, "ok"),
         health.HealthResult("llm", True, "ok"),
     ])

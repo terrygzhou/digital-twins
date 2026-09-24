@@ -71,7 +71,7 @@ def check_qdrant(cfg) -> HealthResult:
     if not url:
         return HealthResult(
             "qdrant", False, "qdrant.url is not configured",
-            "set qdrant.url in kb.local.yml (env: KB_QDRANT__URL), then re-run init/validate",
+            "set qdrant.url in kb.local.yml (env: KB_QDRANT__URL), then re-run setup/validate",
             status="unconfigured")
     try:
         from qdrant_client import QdrantClient
@@ -121,7 +121,7 @@ def check_neo4j(cfg) -> HealthResult:
     if not url:
         return HealthResult(
             "neo4j", False, "neo4j.url is not configured",
-            "set neo4j.url in kb.local.yml (env: KB_NEO4J__URL), then re-run init/validate",
+            "set neo4j.url in kb.local.yml (env: KB_NEO4J__URL), then re-run setup/validate",
             status="unconfigured")
     user = get(cfg, "neo4j.user")
     password = get(cfg, "neo4j.password")

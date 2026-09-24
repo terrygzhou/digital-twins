@@ -207,7 +207,7 @@ def _qdrant_factory(config) -> callable:
         if not url:
             from digital_twins.config.loader import ConfigError
             raise ConfigError(
-                "qdrant.url is not set — run init or set KB_QDRANT__URL")
+                "qdrant.url is not set — run setup or set KB_QDRANT__URL")
         from qdrant_client import QdrantClient
         return QdrantClient(
             url=url, api_key=get(config, "qdrant.api_key") or None)
@@ -233,7 +233,7 @@ def _neo4j_driver_factory(config):
             from digital_twins.config.loader import ConfigError
             raise ConfigError(
                 "neo4j.url/neo4j.user/neo4j.password are not set — "
-                "run init or set KB_NEO4J__URL / KB_NEO4J__USER / "
+                "run setup or set KB_NEO4J__URL / KB_NEO4J__USER / "
                 "KB_NEO4J__PASSWORD")
         from neo4j import GraphDatabase
         return GraphDatabase.driver(url, auth=(user, password))

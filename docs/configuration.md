@@ -42,6 +42,75 @@ default.
   (the knob is unset until you provide a value, and a missing required
   endpoint fails fast at validate time).
 
+## Setup is separate and idempotent
+
+Installing and configuring are two separate steps. The installer
+(`scripts/install.sh` / `scripts/install-local.sh`) is **install-only by
+default**: it stops after `pip install` and prints `install-only … run
+digital-twins setup`. It does **not** run the setup wizard unless you opt
+in. `digital-twins setup` is the first-run wizard — backend detection,
+init, first admin account, and health checks in one command — and is
+**idempotent**: re-running it on a host that is already installed and
+configured is a safe no-op.
+
+- **Install-only default.** The installer stops after the `pip install`
+  and prints the install-only note. Re-running the installer on an
+  already-installed host is a safe no-op.
+- **`--with-setup` (opt-in).** Chains the installer + setup wizard in one
+  command (the install finishes, then the wizard runs).
+- **`--no-setup` (no-op alias, one release).** The installer is
+  install-only by default, so there is nothing to opt out of; the flag is
+  accepted but does nothing.
+- **`digital-twins setup` (idempotent).** Re-running on an already
+  configured host is a no-op; it does not reset your config.
+- **`digital-twins init` (deprecated alias).** Runs the *narrower* subset
+  of `setup` (state DB + migrations + first admin + health report, not the
+  backend decision). `--yes` is preserved. Prefer `digital-twins setup`.
+
+### Per-service backend choice
+
+Each of the four services — qdrant, neo4j, llm, embedding — can be served
+by the bundled local Docker stack (`local`) or by an external cloud
+endpoint (a URL you point at via env var). Services not named in
+`--backends` default to `local`; if every service ends up external the
+local stack is not started:
+
+| Service   | Local (Docker)                           | External (cloud URL) via env var |
+|-----------|------------------------------------------|----------------------------------|
+| qdrant    | `local` (qdrant/qdrant:1.9.7)           | `KB_QDRANT__URL`               |
+| neo4j     | `local` (neo4j/neo4j:5.18-community)    | `KB_NEO4J__URL` / `KB_NEO4J__USER` / `KB_NEO4J__PASSWORD` |
+| llm       | `local` (bundled, GPU required)         | `KB_LLM__ENDPOINT` / `KB_LLM__MODEL` |
+| embedding | `local` (BAAI/bge-small-en-v1.5, 384-dim) | `KB_EMBEDDING__ENDPOINT`     |
+
+Pick the whole local stack at once with `--local` (starts all four
+services; skips Docker detection and the cloud prompts):
+
+```bash
+digital-twins setup --local
+```
+
+Pick per-service backends with `--backends KEY=VAL,...`, where each `VAL`
+is `local` (the bundled Docker service) or an external URL (placeholders
+below — use your own endpoints):
+
+```bash
+# qdrant from Docker, llm + embedding from a cloud endpoint,
+# neo4j not named → defaults to local.
+digital-twins setup --backends \
+    qdrant=local,llm=https://example.com/v1,embedding=https://example.com/v1
+```
+
+`--local` and `--backends` are **`digital-twins setup` flags, not
+installer flags.** Flag precedence (highest wins): `--skip-services` >
+`--cloud-env` > `--cloud` > `--local` / `--backends` > interactive.
+
+### Exit codes (with `--with-setup`)
+
+With `--with-setup`, the installer's exit code mirrors the setup wizard's
+exit code: `0` all checks pass · `3` the local stack's mandatory services
+did not become healthy · `5` a cloud endpoint could not be resolved · `6`
+the wizard was interrupted before the backend was configured.
+
 ## Global
 
 | knob | type | default | env var | notes |

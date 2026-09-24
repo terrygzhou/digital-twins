@@ -3,11 +3,12 @@
 ## ADDED Requirements
 
 ### Requirement: Installation writes no user configuration or state
-The *install step* — `pip install digital-twins-kb[<extras>]` (or the
-installer scripts' Python/venv/pip steps) — shall not create or modify
-`kb.local.yml`, the state directory, the state DB, or an admin account. An
-installation is complete when the console script `digital-twins --version`
-exits 0. (Later commands — `run`, `setup` — *may* create the state dir;
+The install step — the `curl … | bash` one-liner, `bash
+scripts/install-local.sh`, or `pip install digital-twins-kb[<extras>]`
+(pip/venv/uv are implementation details the user never has to type) —
+shall not create or modify `kb.local.yml`, the state directory, the state
+DB, or an admin account. An installation is complete when the console
+script `digital-twins --version` exits 0. (Later commands — `run`, `setup` — *may* create the state dir;
 this requirement is scoped to the install step only.)
 
 #### Scenario: Fresh install step is inert

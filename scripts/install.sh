@@ -15,7 +15,9 @@
 #   3. pip install "digital-twins-kb[<extras>]" from PyPI
 #      (`uv pip install` when the venv was created by uv, else the
 #      venv's own pip)
-#   4. run `digital-twins setup` (the first-run wizard)
+#   4. run `digital-twins setup` (the first-run wizard) — only with
+#      --with-setup; by default the installer stops after the pip install
+#      and prints "run `digital-twins setup`"
 #   5. optionally run the first ingest
 #
 # This is the *remote* flavour of scripts/install-local.sh (which is what a
@@ -30,12 +32,12 @@
 # The script performs no network access except `pip install` (PyPI).
 #
 # Exit codes:
-#   0  success (install + setup completed)
+#   0  success (install completed; with --with-setup: install + setup completed)
 #   1  a step failed (remediation printed)
 #   2  no usable Python >=3.11 was found
-#   3  `digital-twins setup` reported a failing health check
-#   5  `digital-twins setup` could not resolve cloud endpoints
-#   6  `digital-twins setup` was interrupted (Ctrl-C / EOF at a prompt)
+#   3  `digital-twins setup` reported a failing health check (with --with-setup)
+#   5  `digital-twins setup` could not resolve cloud endpoints (with --with-setup)
+#   6  `digital-twins setup` was interrupted (Ctrl-C / EOF at a prompt) (with --with-setup)
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/terrygzhou/digital-twins/main/scripts/install.sh | bash
@@ -44,13 +46,20 @@
 #
 #   Options:
 #     --extras LIST       Comma-separated extras (default: mcp). "" for base.
+#     --with-setup        Run the first-run wizard (digital-twins setup) after
+#                         the pip install; by default the installer stops after
+#                         installing.
 #     --cloud             Pass --cloud to `setup` (force cloud backend mode)
+#                         (with --with-setup)
 #     --cloud-env         Pass --cloud-env to `setup` (non-interactive cloud
 #                         mode: endpoints come from the KB_* env vars, never
 #                         a prompt; exit 5 names the missing var(s))
-#     --skip-services     Pass --skip-services to `setup`
-#     --run-ingest        After setup, run `digital-twins run --source fs`
-#     --no-setup          Stop after the pip install; do not run the wizard
+#                         (with --with-setup)
+#     --skip-services     Pass --skip-services to `setup` (with --with-setup)
+#     --run-ingest        After install (and after setup when --with-setup),
+#                         run `digital-twins run --source fs`
+#     --no-setup          No-op alias (the installer is install-only by default
+#                         now); accepted for one release, prints a note.
 #     --python PATH       Use this specific python interpreter
 #     --dist PATH|NAME    Install this wheel/directory instead of the PyPI
 #                         dist (a local checkout or a local .whl).
@@ -89,6 +98,7 @@ CLOUD_ENV=0
 SKIP_SERVICES=0
 RUN_INGEST=0
 NO_SETUP=0
+WITH_SETUP=0
 PYTHON_OVERRIDE=""
 
 usage() {
@@ -188,6 +198,7 @@ main() {
       --skip-services) SKIP_SERVICES=1 ;;
       --run-ingest)    RUN_INGEST=1 ;;
       --no-setup)      NO_SETUP=1 ;;
+      --with-setup)    WITH_SETUP=1 ;;
       --python)        i=$((i+1)); PYTHON_OVERRIDE="${args[$i]:-}" ;;
       --dist)          i=$((i+1)); DIST_OVERRIDE="${args[$i]:-}" ;;
       --help|-h)       usage; return 0 ;;
@@ -195,6 +206,22 @@ main() {
     esac
     i=$((i+1))
   done
+
+  # The --cloud / --cloud-env / --skip-services flags only mean anything
+  # when the wizard runs.  Under the install-only default they are silently
+  # ignored with a note (not an error — the user may have copy-pasted an
+  # old command line).
+  if [ "$WITH_SETUP" -eq 0 ]; then
+    if [ "$CLOUD" -eq 1 ]; then
+      note "--cloud is ignored without --with-setup (install-only default)."
+    fi
+    if [ "$CLOUD_ENV" -eq 1 ]; then
+      note "--cloud-env is ignored without --with-setup (install-only default)."
+    fi
+    if [ "$SKIP_SERVICES" -eq 1 ]; then
+      note "--skip-services is ignored without --with-setup (install-only default)."
+    fi
+  fi
 
   # --- 1) find python -------------------------------------------------------
   local py
@@ -313,9 +340,9 @@ main() {
       ;;
   esac
 
-  # --- 4) run the setup wizard ---------------------------------------------
+  # --- 4) run the setup wizard (only with --with-setup) ----------------------
   local setup_rc=0
-  if [ "$NO_SETUP" -eq 0 ]; then
+  if [ "$WITH_SETUP" -eq 1 ]; then
     # The wizard prompts for endpoints when the backend is cloud; a
     # non-interactive stdin (this script piped in, or run in a pipeline)
     # cannot answer the prompts and the wizard exits 6.  Detect that up
@@ -354,7 +381,12 @@ main() {
       exit "$setup_rc"
     fi
   else
-    note "skipping setup (--no-setup)."
+    if [ "$NO_SETUP" -eq 1 ]; then
+      note "--no-setup is a no-op: the installer is install-only by default now; run '$venv_bin setup' when you are ready."
+    else
+      note "install-only: the first-run wizard was skipped."
+      note "run '$venv_bin setup' to configure backends, init the store, and create the admin account."
+    fi
   fi
 
   # --- 5) optional first ingest --------------------------------------------
@@ -368,10 +400,19 @@ main() {
   echo
   echo "  1. Activate the environment (any terminal):"
   echo "       source $venv_dir/bin/activate"
-  echo "  2. Run your first ingest:"
-  echo "       digital-twins run --source fs"
-  echo "  3. Open the web UI:"
-  echo "       digital-twins web"
+  if [ "$WITH_SETUP" -eq 1 ]; then
+    echo "  2. Run your first ingest:"
+    echo "       digital-twins run --source fs"
+    echo "  3. Open the web UI:"
+    echo "       digital-twins web"
+  else
+    echo "  2. Configure (backends, store, admin account):"
+    echo "       digital-twins setup"
+    echo "  3. Run your first ingest:"
+    echo "       digital-twins run --source fs"
+    echo "  4. Open the web UI:"
+    echo "       digital-twins web"
+  fi
   echo
   echo "  Your admin credentials are in: $HOME/.digital-twins/admin-credentials.txt"
   echo "  (delete that file after your first login)"

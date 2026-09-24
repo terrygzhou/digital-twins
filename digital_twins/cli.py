@@ -213,8 +213,22 @@ def s4(dry_run: bool) -> None:
 @click.option("--skip-services", is_flag=True,
               help="Assume the backend is already up; skip service startup "
                    "and do init + admin account + health checks only.")
+@click.option("--local", is_flag=True,
+              help="Start the bundled local stack for all four services "
+                   "(qdrant + neo4j + llm + embedding); skip Docker "
+                   "detection and the cloud prompts. Suppressed by "
+                   "--skip-services / --cloud-env / --cloud.")
+@click.option("--backends", default=None,
+              help="Per-service backend choice as KEY=VAL,... e.g. "
+                   "qdrant=local,llm=https://example.com/v1. Each VAL is "
+                   "'local' (bundled Docker service) or a URL (external "
+                   "endpoint); an empty VAL marks the service required-"
+                   "external (the URL must come from the KB_* env var). "
+                   "Unknown service names are rejected. Suppressed by "
+                   "--skip-services / --cloud-env / --cloud; combining "
+                   "with --skip-services exits 1.")
 def setup(force_cloud: bool, skip_services: bool,
-          cloud_env: bool) -> None:
+          cloud_env: bool, local: bool, backends: str | None) -> None:
     """First-run wizard: backend (local Docker or cloud) + init + first
     admin account + health report in one command.
 
@@ -229,15 +243,33 @@ def setup(force_cloud: bool, skip_services: bool,
     --skip-services skips this too), and the health checks run with a
     remediation line for any failing endpoint.
 
+    --local starts the bundled local stack for all four services;
+    --backends qdrant=local,llm=https://host/v1 picks per-service
+    backends (services not named default to local; if every service ends
+    up external the cloud path runs instead of Docker). Flag precedence
+    (highest wins): --skip-services > --cloud-env > --cloud >
+    --local/--backends > interactive.
+
     Exits 0 when all health checks pass; 1 on a failing check; 3 when the
     local stack failed to start; 5 when cloud endpoints could not be
     resolved; 6 when the wizard was interrupted (Ctrl-C / EOF at a
     prompt) before the backend was configured.
     """
-    from digital_twins.setup import run_setup
+    from digital_twins.setup import parse_backends, run_setup
+    backends_map: dict | None = None
+    if backends:
+        try:
+            backends_map = parse_backends(backends)
+        except ValueError as exc:
+            # Fail fast on a typo (unknown service) or a missing '=' with a
+            # clean one-liner, not a raw traceback.
+            click.echo(f"ERROR: {exc}", err=True)
+            raise SystemExit(1)
     raise SystemExit(run_setup(force_cloud=force_cloud,
                                skip_services=skip_services,
-                               cloud_env=cloud_env))
+                               cloud_env=cloud_env,
+                               local=local,
+                               backends=backends_map))
 
 
 @cli.command()
@@ -290,12 +322,12 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
         if not state_dir.is_dir():
             # "no state db" is a setup condition, not a credential failure:
             # the accounts store is missing, so authentication could not be
-            # attempted. Naming the fix ("run init") keeps this distinct from
+            # attempted. Naming the fix ("run setup") keeps this distinct from
             # a bad-password "authentication failed" below (T020 deferred-minor
             # from the T011 review).
             click.echo(
                 f"cannot authenticate as '{as_user}': no state db at "
-                f"{state_dir} — run 'digital-twins init' first", err=True)
+                f"{state_dir} — run 'digital-twins setup' first", err=True)
             raise SystemExit(2)
         db = connect(state_dir)
         try:
@@ -391,7 +423,7 @@ def run(source_names: tuple, max_items: int, dry_run: bool,
         def qdrant_factory():
             if not qdrant_url:
                 raise ConfigError(
-                    "qdrant.url is not set — run init or set KB_QDRANT__URL")
+                    "qdrant.url is not set — run setup or set KB_QDRANT__URL")
             from qdrant_client import QdrantClient
             return QdrantClient(
                 url=qdrant_url,
@@ -483,11 +515,19 @@ def _make_embedder(cfg):
     "--yes", is_flag=True,
     help="Do not prompt: keep existing values, leave missing endpoints unset.")
 def init(yes: bool) -> None:
-    """First-run setup: endpoints, starter kb.local.yml, state DB, health report.
+    """Deprecated alias of the ``setup`` subset: state DB, migrations,
+    first admin, health report.
 
-    Idempotent: existing values are kept, only missing pieces are prompted
-    or added; an interrupted init can be re-run safely.
+    Deprecated in favor of ``digital-twins setup``. Kept as a fully
+    functional alias of the narrower setup subset (endpoints, starter
+    kb.local.yml, state DB, migrations, first admin, health report).
+    Idempotent: existing values are kept, only missing pieces are
+    prompted or added; an interrupted init can be re-run safely.
     """
+    click.echo(
+        "NOTE: 'digital-twins init' is deprecated — run 'digital-twins "
+        "setup' instead (init remains available as an alias of the setup "
+        "subset).")
     cfg = load()
     overrides: dict = {}
     for path, label, hide in _ENDPOINT_PROMPTS:
@@ -1073,7 +1113,7 @@ def token_create(as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
@@ -1133,7 +1173,7 @@ def token_list(as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
@@ -1211,7 +1251,7 @@ def token_revoke(token_id: int, as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
@@ -1374,7 +1414,7 @@ def account_list(as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
@@ -1426,7 +1466,7 @@ def account_set_role(email: str, role: str, as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
@@ -1485,7 +1525,7 @@ def account_delete(email: str, as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:
@@ -1533,7 +1573,7 @@ def account_whoami(as_user: str) -> None:
     state_dir = Path(cfg["state_dir"])
     if not state_dir.is_dir():
         click.echo(
-            "no state db — run 'digital-twins init' first", err=True)
+            "no state db — run 'digital-twins setup' first", err=True)
         raise SystemExit(2)
     db = connect(state_dir)
     try:

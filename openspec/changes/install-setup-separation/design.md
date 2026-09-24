@@ -2,9 +2,10 @@
 
 ## Context
 Today (v0.11.0 line):
-- `scripts/install.sh` / `install-local.sh` run 4 steps: find Python, venv,
-  `pip install`, **then `digital-twins setup` (the wizard)** — auto, unless
-  `--no-setup`.
+- `scripts/install.sh` (the `curl … | bash` one-liner) / `install-local.sh`
+  run 4 steps: find Python, venv, `pip install`, **then `digital-twins
+  setup` (the wizard)** — auto, unless `--no-setup`. The user's install is
+  the one-liner; pip/venv/uv are details the user never types.
 - `digital_twins/setup.py::run_setup()` decides the backend **once, as a
   binary**: `has_valid_local_config()` → `docker_available()` → confirm
   "start the bundled local stack?" → `run_local_stack()` (starts *all*

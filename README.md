@@ -6,9 +6,19 @@ deterministic dedup-safe ingest into user-supplied Qdrant + Neo4j. Built per
 
 ## Fast path (new machine to first ingest)
 
+The fast path is two separate steps: **Step 1 — Install** (the
+installer) and **Step 2 — Setup** (the `digital-twins setup` wizard).
+The installer is install-only by default: it stops after the
+`pip install` and prints "install-only … run `digital-twins setup`" —
+it does **not** end with the wizard. Step 2 is a follow-up command you
+run when you are ready to configure backends, init the store, and
+create the admin account.
+
+### Step 1 (Install)
+
 **No clone / no manual steps — the remote one-liner** (the
 `curl | bash` entry point; it self-bootstraps Python ≥ 3.11, creates an
-isolated venv, installs from PyPI, and runs the first-run wizard):
+isolated venv, and installs from PyPI):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/terrygzhou/digital-twins/main/scripts/install.sh | bash
@@ -25,36 +35,41 @@ curl -fsSL https://raw.githubusercontent.com/terrygzhou/digital-twins/main/scrip
 
 **Already have a checkout?** Run the same installer locally instead of
 piping (finds Python ≥ 3.11, creates an isolated venv — via `uv` when
-the `uv` binary is already on PATH, else the stdlib `venv` module —
-installs the package, and runs the first-run wizard):
+the `uv` binary is already on PATH, else the stdlib `venv` module — and
+installs the package):
 
 ```bash
 bash scripts/install-local.sh
 ```
 
-It ends with the `digital-twins setup` wizard (backend detection + init +
-admin account + health checks) and tells you the next step. Re-running is a
-safe no-op on a host that is already installed. Useful options:
-`--extras "mcp,local-embedding"` (pick the extras), `--cloud` (no Docker;
-cloud backends), `--cloud-env` (non-interactive cloud mode: endpoints
-come from the `KB_*` env vars, never a prompt — use under a pipe or in
-CI), `--run-ingest` (ingest a demo source right away),
-`--no-setup` (stop after the pip install).
-When stdin is not a terminal and no cloud mode was given, the installer
-prints the two non-interactive paths (`--cloud-env`, or `--no-setup`
-now + a later `digital-twins setup` in a real terminal) before
-launching the wizard. See
-`bash scripts/install-local.sh --help`.
+It stops after the `pip install` and prints an install-only note ("run
+`digital-twins setup` when you are ready to configure backends, init the
+store, and create the admin account"). Re-running is a safe no-op on a
+host that is already installed. Useful options:
+`--extras "mcp,local-embedding"` (pick the extras), `--with-setup` (run
+the `digital-twins setup` wizard right after the install — the opt-in
+that chains install + setup), `--run-ingest` (ingest a demo source right
+away). (`--cloud`, `--cloud-env`, and `--skip-services` only take effect
+together with `--with-setup`; `--no-setup` is a no-op alias kept for one
+release — the installer is install-only by default, so there is nothing
+to opt out of.)
+When stdin is not a terminal, the installer just installs: under a pipe
+without `--with-setup` there is no wizard to run, so it prints
+`install-only … run digital-twins setup` and exits 0. In CI or under a
+pipe where you *do* want the wizard in one shot, use `--with-setup`
+together with `--cloud-env` (endpoints come from the `KB_*` env vars,
+never a prompt). See `bash scripts/install-local.sh --help`.
 
-**Prefer to do it by hand?** The minimal steps the installer runs:
+**Prefer to do it by hand?** Two separate steps — install, then setup
+(the installer only does the first one):
 
 ```bash
 uv venv .venv && source .venv/bin/activate       # uv (if installed); see note below
-uv pip install "digital-twins-kb[mcp]"            # base + MCP; drop [mcp] if not needed
+uv pip install "digital-twins-kb[mcp]"            # step 1: base + MCP; drop [mcp] if not needed
 # — or, without uv:
 #   python3 -m venv .venv && source .venv/bin/activate
 #   pip install "digital-twins-kb[mcp]"
-digital-twins setup            # wizard: backend detection + init + admin + health
+digital-twins setup            # step 2: wizard — backend detection + init + admin + health
 digital-twins run --source fs  # your first ingest
 ```
 
@@ -105,6 +120,18 @@ digital-twins run --source fs  # your first ingest
 > - `digital_twins` — the **Python import** name (`python -m digital_twins`
 >   works too)
 
+### Step 2 (Setup)
+
+`digital-twins setup` is the first-run wizard: backend detection (local
+Docker stack or cloud endpoints) + init + first admin account + health
+checks, all in one command. This is the step the installer does
+**not** run by default (install-only default); run it when you are
+ready:
+
+```bash
+digital-twins setup
+```
+
 The `setup` wizard detects the backend: when Docker is available it offers
 to start the bundled local stack (qdrant + neo4j + embedding-model, plus
 the bundled LLM when a GPU is present — a host with `nvidia-smi`
@@ -124,15 +151,54 @@ checks, and prints the next step.
 > file is not there. Both are overridable via `KB_CONFIG_DIR` /
 > `KB_STATE_DIR`.
 
-Flags:
+#### Choosing backends: local Docker or per-service cloud endpoints
+
+Each of the four services — qdrant, neo4j, llm, embedding — can be
+served by the bundled local Docker stack (`local`) or by an external
+cloud endpoint (a URL you point at via env var). Services not named in
+`--backends` default to `local`; if every service ends up external the
+local stack is not started:
+
+| Service   | Local (Docker)                           | External (cloud URL) via env var |
+|-----------|------------------------------------------|----------------------------------|
+| qdrant    | `local` (qdrant/qdrant:1.9.7)           | `KB_QDRANT__URL`               |
+| neo4j     | `local` (neo4j/neo4j:5.18-community)    | `KB_NEO4J__URL` / `KB_NEO4J__USER` / `KB_NEO4J__PASSWORD` |
+| llm       | `local` (bundled, GPU required)         | `KB_LLM__ENDPOINT` / `KB_LLM__MODEL` |
+| embedding | `local` (BAAI/bge-small-en-v1.5, 384-dim) | `KB_EMBEDDING__ENDPOINT`     |
+
+Pick the whole local stack at once with `--local` (starts all four
+services; skips Docker detection and the cloud prompts):
+
+```bash
+digital-twins setup --local
+```
+
+Pick per-service backends with `--backends KEY=VAL,...`, where each
+`VAL` is `local` (the bundled Docker service) or an external URL
+(placeholders below — use your own endpoints):
+
+```bash
+# qdrant from Docker, llm + embedding from a cloud endpoint,
+# neo4j not named → defaults to local.
+digital-twins setup --backends \
+    qdrant=local,llm=https://example.com/v1,embedding=https://example.com/v1
+```
+
+Flag precedence (highest wins): `--skip-services` > `--cloud-env` >
+`--cloud` > `--local` / `--backends` > interactive.
+
+#### Flags
 
 | Flag | Effect |
 |------|--------|
 | `--skip-services` | "I handle backends myself": never probe Docker, never prompt, never write `kb.local.yml`; only init + admin + health checks. **Takes precedence over `--cloud` and over a valid `kb.local.yml`** (a re-run where the backend is already up). |
 | `--cloud` | Skip Docker detection, go straight to cloud mode (prompts for the three required endpoints). Set via env (`KB_QDRANT__URL`, `KB_NEO4J__URL`, `KB_LLM__ENDPOINT`) or answer the prompts; optional `KB_EMBEDDING__ENDPOINT`, `KB_NEO4J__USER`, `KB_NEO4J__PASSWORD`. |
 | `--cloud-env` | Non-interactive cloud mode: the three required endpoints must come from `KB_QDRANT__URL` / `KB_NEO4J__URL` / `KB_LLM__ENDPOINT` env vars; never a prompt. Exits 5 naming the missing var(s) when any required var is unset or empty. Safe under a pipe or in CI. |
+| `--local` | Start the bundled local stack for all four services (qdrant + neo4j + llm + embedding); skip Docker detection and the cloud prompts. Suppressed by `--skip-services` / `--cloud-env` / `--cloud`. |
+| `--backends KEY=VAL,...` | Per-service backend choice (see the table above). Each `VAL` is `local` or a URL; an empty `VAL` marks the service required-external (the URL must come from the `KB_*` env var). Unknown service names are rejected. Suppressed by `--skip-services` / `--cloud-env` / `--cloud`. |
 
-Exit codes: `0` all checks pass · `1` a check failed (remediation names
+Exit codes (the installer's `--with-setup` pass-through mirrors these):
+`0` all checks pass · `1` a check failed (remediation names
 the endpoint) · `3` local stack's mandatory services did not become
 healthy (a half-up stack where the survivors answer the health poll still
 writes `kb.local.yml` and continues — you only get 3 when the survivors
@@ -289,7 +355,8 @@ the tool where they live in the init step below.
 
 ### Initialise
 
-> **If you ran the `setup` wizard above, `init` and `validate` have already
+> **If you ran `digital-twins setup` (Step 2 of the fast path above), `init`
+> and `validate` have already
 > been done for you** — this section is only needed when you skipped `setup`
 > (e.g. you installed the package by hand and want to configure endpoints
 > manually). `setup` runs `init` + the first-admin step + the health checks
