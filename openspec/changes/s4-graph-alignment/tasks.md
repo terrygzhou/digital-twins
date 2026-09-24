@@ -72,6 +72,17 @@
 ## 7. Verification
 - [x] 7.1 Full pytest run; NFR-1 acceptance check (same content via schedule /
       run / mcp / ui = one point) re-asserted against new point-ID scheme.
-- [ ] 7.2 Manual interop check: point personal-kb's `kb_health`/hybrid query
+- [x] 7.2 Manual interop check: point personal-kb's `kb_health`/hybrid query
       at a digital-twins-populated DB and confirm `_point_hits` finds
       digital-twins items by `item_id`.
+      (Verified 2026-09-25 on the production host: live Qdrant
+      `localhost:6333` shows no separate digital-twins collection — both
+      systems share the `personal_kb` collection by design
+      (`digital_twins/health.py` pins `QDRANT_COLLECTION = "personal_kb"`;
+      personal-kb `kb/config.py` matches). Personal-kb's real query path
+      (`kb/query/hybrid.py::_point_hits`, Qdrant `FieldCondition(item_id,
+      MatchAny)`) was called against the live DB: a 2-item probe
+      (`hermes:…` + `paperclip:run:…`) returned 100 hits with digital-twins
+      items found by `item_id` and titles resolved. Caveats are
+      personal-kb-side, not digital-twins defects — see
+      `.superpowers/sdd/deferred-minors/s4-interop-followups.md`.)

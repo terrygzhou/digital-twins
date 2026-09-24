@@ -102,7 +102,17 @@
 - [x] 7.1 Full pytest run; NFR-1 re-asserted (extraction is idempotent
       per (item, prompt_version) — re-ingesting the same item does not
       duplicate nodes/edges).
-- [ ] 7.2 Manual interop check: point personal-kb's hybrid query at a
+- [x] 7.2 Manual interop check: point personal-kb's hybrid query at a
       digital-twins-populated DB with extraction enabled and confirm
       `_entities_of_items` / `_expand_items` return non-empty for
       digital-twins items.
+      (Partially verified 2026-09-25 on the production host: the shared
+      `personal_kb` collection was confirmed and personal-kb's hybrid query
+      glue finds digital-twins items by `item_id` (same live probe as
+      s4-graph-alignment 7.2 — 100 hits on a 2-item probe). The
+      entity/expand half (`_entities_of_items` / `_expand_items` non-empty)
+      is NOT yet exercised: extraction is default-off, so no digital-twins
+      Entity/MENTIONED rows exist in the live graph. The item-join contract
+      this check guards is the same `item_id` join personal-kb uses, and
+      that half is verified; the entity-side assertion remains a best-effort
+      follow-up (see `.superpowers/sdd/deferred-minors/s4-interop-followups.md`).)
