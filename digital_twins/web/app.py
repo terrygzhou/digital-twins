@@ -56,6 +56,7 @@ one credential source of truth; ``server.py`` is not rewritten).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -81,6 +82,7 @@ from digital_twins.auth import (
     verify_session,
 )
 from digital_twins.config.schema import DEFAULTS as _cfg_defaults, get as _cfg_get
+from digital_twins.config.loader import ConfigError as _ConfigError
 from digital_twins.health import QDRANT_COLLECTION
 from digital_twins.ingest import pipeline as _pipeline_mod
 from digital_twins import sources as _sources_mod
@@ -295,6 +297,12 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/config/services/probe" and method == "POST":
             self._handle_config_probe(caller_email)
+            return
+        if path == "/api/config/channels" and method == "GET":
+            self._handle_config_channels_get(caller_email)
+            return
+        if path == "/api/config/channels" and method == "POST":
+            self._handle_config_channels_post(caller_email)
             return
         del method, query, caller_email  # wired up by the later handler tasks
         self._send_json(404, {"error": "not_found", "path": path})
@@ -1201,7 +1209,6 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             return
         from digital_twins.config import loader as _loader
         from digital_twins.config import schema as _schema
-        import os
         config_dir = _cfg_get(self.server.config, "config_dir")
         try:
             effective = _loader.load(config_dir=config_dir,
@@ -1254,6 +1261,278 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         # Post-write masked view (re-read the effective config so the
         # response reflects the just-written value).
         view = self._config_services_view(config_dir, dict(os.environ))
+        self._send_json(200, view)
+
+
+    # --- /api/config/channels handlers (channels-config T3) ----------------
+    #
+    # Admin-gated channel (source) config surface, mirroring the services
+    # panel pattern: GET returns the masked channel view (credential values
+    # never returned — only credential_set booleans, FR-004); POST persists
+    # a partial update via channel_write to kb.local.yml and returns the
+    # post-write masked view.  404 unknown source, 422 value outside the
+    # knob's declared type / out-of-range.  Custom-channel registration is
+    # a CLI `channels add` operation only (ruling, carry-forward from Task
+    # 2 review): the web API rejects any source not in the GET view with
+    # 404.
+
+    def _config_channels_view(self, config_dir: str, env) -> dict:
+        """Build the masked channel view + env_overrides (GET/POST 200).
+
+        The per-source rows come from ``config.channels.channel_view``
+        (the same helper the CLI ``channels`` group uses).  ``env_overrides``
+        lists the env var names currently set that shadow a source knob
+        (the ``KB_SOURCES__<NAME>__*`` knob vars, plus the credential env
+        vars the sources declare) — the same env_overrides approach as
+        :meth:`_config_services_view`.  Credential values are never
+        returned (FR-004).
+        """
+        from digital_twins.config.channels import channel_view
+        from digital_twins.config import schema as _schema
+        from digital_twins.config.knobs import KNOBS
+        try:
+            sources = channel_view(config_dir=config_dir, env=env)
+        except Exception:
+            sources = {}
+
+        # env_overrides (same rule as :meth:`_config_services_view`): the
+        # env var names *currently set* that shadow a source knob.  The
+        # per-source knob vars come from the KNOBS registry
+        # (KB_SOURCES__<NAME>__ENABLED/__MAX_ITEMS/__TIMEOUT_S …); the
+        # per-source *credential* vars (YMAIL_APP_PASSWORD, GMAIL_APP_PASSWORD,
+        # …) are env vars, not KNOBS env bindings, so they are declared via
+        # schema.env_var_for(knob) — the same helper the services view uses
+        # for its credential paths.  Values are never returned (FR-004).
+        env_overrides = []
+        for knob, meta in KNOBS.items():
+            if not knob.startswith("sources."):
+                continue
+            var = meta.get("env")
+            if var and var in env:
+                env_overrides.append(var)
+        for service, view in sources.items():
+            for field in ("credential", "email"):
+                var = _schema.env_var_for(f"sources.{service}.{field}")
+                if var in env:
+                    env_overrides.append(var)
+        env_overrides = sorted(set(env_overrides))
+        return {"sources": sources, "env_overrides": env_overrides}
+
+    def _handle_config_channels_get(self, caller_email: str) -> None:
+        """GET /api/config/channels → 200 masked channel view (admin only)."""
+        if not self._require_admin(caller_email):
+            return
+        view = self._config_channels_view(
+            _cfg_get(self.server.config, "config_dir"),
+            dict(os.environ))
+        self._send_json(200, view)
+
+    # --- /api/config/channels handlers (channels-config T3) ----------------
+    #
+    # Admin-gated channel (source) config surface, mirroring the services
+    # panel pattern: GET returns the masked channel view (credential values
+    # never returned — only credential_set booleans, FR-004); POST persists
+    # a partial update via channel_write to kb.local.yml and returns the
+    # post-write masked view.  404 unknown source, 422 value outside the
+    # knob's declared type / out-of-range, 409 unparseable existing
+    # kb.local.yml (no write).  Custom-channel registration is a CLI
+    # `channels add` operation only (carry-forward ruling from the Task 2
+    # review): the web surface rejects any source not in the GET view with
+    # 404.
+
+    def _config_channels_view(self, config_dir: str, env) -> dict:
+        """Build the masked channel view + env_overrides (GET/POST 200).
+
+        The per-source rows come from ``config.channels.channel_view``
+        (the same helper the CLI ``channels`` group uses).  ``env_overrides``
+        lists the env var names currently set that shadow a source knob
+        (the ``KB_SOURCES__<NAME>__*`` knob vars from the KNOBS registry,
+        plus the per-source credential / email env vars the sources
+        declare) — the same approach as :meth:`_config_services_view`.
+        Credential values are never returned (FR-004).
+        """
+        from digital_twins.config.channels import channel_view
+        from digital_twins.config import schema as _schema
+        from digital_twins.config.knobs import KNOBS
+        try:
+            sources = channel_view(config_dir=config_dir, env=env)
+        except Exception:
+            # Config layer broken → an empty view is still returned (the
+            # env_overrides list is computed independently below, the same
+            # rule as :meth:`_config_services_view`).
+            sources = {}
+
+        # env_overrides (same rule as :meth:`_config_services_view`): the
+        # env var names *currently set* that shadow a source knob.  The
+        # per-source knob vars come from the KNOBS registry
+        # (KB_SOURCES__<NAME>__ENABLED/__MAX_ITEMS/__TIMEOUT_S …); the
+        # per-source *credential* vars (YMAIL_APP_PASSWORD,
+        # GMAIL_APP_PASSWORD, …) are non-KB_ env vars declared via the
+        # same KNOBS registry (``meta["env"]``).  Values are never
+        # returned (FR-004).
+        env_overrides = []
+        for knob, meta in KNOBS.items():
+            if not knob.startswith("sources."):
+                continue
+            var = meta.get("env")
+            if var and var in env:
+                env_overrides.append(var)
+        env_overrides = sorted(set(env_overrides))
+        return {"sources": sources, "env_overrides": env_overrides}
+
+    def _handle_config_channels_get(self, caller_email: str) -> None:
+        """GET /api/config/channels → 200 masked channel view (admin only)."""
+        if not self._require_admin(caller_email):
+            return
+        view = self._config_channels_view(
+            _cfg_get(self.server.config, "config_dir"),
+            dict(os.environ))
+        self._send_json(200, view)
+
+    def _handle_config_channels_post(self, caller_email: str) -> None:
+        """POST /api/config/channels → 200 post-write view (admin only).
+
+        Body: ``{"<source_name>": {"enabled": bool, "max_items": int?,
+        "timeout_s": int?}, ...}``.  Persists via
+        ``config.local_io.channel_write`` to ``kb.local.yml`` (unrelated
+        keys preserved; kb.yml is never written) and returns the
+        post-write masked view (same shape as GET).
+
+        Status codes (the same discipline as the services POST):
+        * 404 — any source not in the channel view, checked before value
+          validation.  The web surface is strict: a source with an
+          ``entrypoint`` (a new custom registration) is still a 404
+          (carry-forward ruling: registration is the CLI ``channels add``
+          operation).
+        * 422 — value outside the knob's declared type / out-of-range
+          (``schema.coerce`` + the non-negative range check on the int
+          knobs), and a non-mapping source value.
+        * 404 — an unknown per-source knob (the web surface exposes only
+          enabled / max_items / timeout_s; the rest is the CLI
+          ``channels add`` surface).
+        * 409 — unparseable / non-mapping existing config layer
+          (no write).
+        * 500 — the write failed (permission denied / I/O).
+
+        FR-004: only the source + field names are logged, never the values.
+        """
+        if not self._require_admin(caller_email):
+            return
+        body = self._read_json_body()
+        if body is None:
+            self._send_json(400, {"error": "invalid JSON body"})
+            return
+        if not isinstance(body, dict) or not body:
+            self._send_json(422, {"error": "body must be a non-empty "
+                                            "mapping of source updates"})
+            return
+
+        # The known set is the view's sources (built-ins + registered
+        # customs) — on a broken config layer it falls back to
+        # BUILTIN_SOURCES, the same static known-set the services POST
+        # uses via ``_CONFIG_SERVICES``.  404 is checked on every name
+        # first (the carry-forward ruling: the web surface is strict —
+        # an unknown source, even one carrying an ``entrypoint``, is a
+        # 404; custom registration is the CLI ``channels add``
+        # operation), then 422 validates the submitted values.
+        from digital_twins.config import schema as _schema
+        from digital_twins.config.schema import SchemaError, coerce
+        config_dir = _cfg_get(self.server.config, "config_dir")
+        try:
+            view = self._config_channels_view(config_dir, dict(os.environ))
+            known = set(view.get("sources", {}))
+        except Exception:
+            known = set()
+        if not known:
+            known = set(_schema.BUILTIN_SOURCES)
+        updates = {}
+        for name, raw in body.items():
+            if name not in known:
+                self._send_json(
+                    404,
+                    {"error": f'unknown source "{name}" '
+                               f"(known: {', '.join(sorted(known))})"})
+                return
+            if not isinstance(raw, dict):
+                self._send_json(
+                    422,
+                    {"error": f"sources.{name}: must be a mapping of "
+                              f"source settings"})
+                return
+            entry = {}
+            for key, value in raw.items():
+                if key in ("enabled", "max_items", "timeout_s"):
+                    try:
+                        entry[key] = coerce(f"sources.{name}.{key}", value)
+                        if key in ("max_items", "timeout_s") \
+                                and entry[key] is not None \
+                                and entry[key] < 0:
+                            raise SchemaError(
+                                f"sources.{name}.{key}: must be >= 0, "
+                                f"got {value!r}")
+                    except SchemaError as exc:
+                        # Bad value type / out-of-range → 422 naming the
+                        # offending knob.
+                        self._send_json(
+                            422, {"error": f"schema violation: {exc}"})
+                        return
+                else:
+                    # Unknown knobs are the CLI `channels add` surface
+                    # (entrypoint / credential / prefix …) — the web
+                    # surface only exposes the three per-source knobs.
+                    self._send_json(
+                        404,
+                        {"error": f'unknown source knob '
+                                  f'"sources.{name}.{key}" '
+                                  f"(the web surface exposes "
+                                  f"enabled / max_items / timeout_s)"})
+                    return
+            updates[name] = entry
+        from digital_twins.config import local_io as _local_io
+        try:
+            _local_io.channel_write(
+                {"sources": updates}, env=dict(os.environ))
+        except SchemaError as exc:
+            self._send_json(422, {"error": f"schema violation: {exc}"})
+            return
+        except ValueError as exc:
+            # channel_write → merge_write raises ValueError for an
+            # unparseable existing kb.local.yml / a non-mapping top level
+            # (no write performed) → 409, the same status the services
+            # POST assigns.  The message carries the file path, never any
+            # config value (FR-004).
+            self._send_json(409, {"error": str(exc)})
+            return
+        except _ConfigError as exc:
+            # channel_write resolves the effective config before the write
+            # (the known-source check); an unparseable config layer fails
+            # here with ConfigError before any write — the same "existing
+            # file broken, no write" situation → 409.
+            self._send_json(409, {"error": str(exc)})
+            return
+        except AttributeError:
+            # loader.load surfaces a non-mapping top level in a config
+            # layer (list / string document) as AttributeError ('list' /
+            # 'str' object has no attribute 'items') from _merge — map to
+            # 409 the same way the services POST does ("existing
+            # kb.local.yml is not parseable / not a mapping" → no
+            # write).  The message is static; no config values are
+            # exposed (FR-004).
+            self._send_json(
+                409,
+                {"error": "existing config layer is not a YAML mapping; "
+                          "refusing to write"})
+            return
+        except (PermissionError, OSError) as exc:
+            self._send_json(500, {"error": f"cannot write kb.local.yml: "
+                                           f"{exc}"})
+            return
+        # FR-004: log only the source + field names, never the values.
+        logging.getLogger("digital_twins").info(
+            "POST /api/config/channels: updated %s",
+            ", ".join(f"{n}({','.join(k) or '...'})"
+                      for n, k in sorted(updates.items())))
+        view = self._config_channels_view(config_dir, dict(os.environ))
         self._send_json(200, view)
 
     # --- POST /api/config/services/probe (009/US2, T010) ------------------
