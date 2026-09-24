@@ -234,6 +234,184 @@ adds `enabled`, `entrypoint` (a `module:factory` import path),
 `credential` (the env-var name it needs), and `prefix` under its own name
 in `kb.yml`; see the *Add a new source* section of `README.md`.
 
+### Managing channels (CLI)
+
+The `digital-twins channels` command group manages ingestion channels
+(sources) — list / status / enable / disable / add. Read-only views
+(`list`, `status`) require no authentication (mirrors the `validate` and
+`run` pattern); writes (`enable`, `disable`, `add`) merge into
+`kb.local.yml` only — `kb.yml` is never written.
+
+> **Note on env overrides:** The `KB_SOURCES__<NAME>__*` environment
+> variables shadow any values saved in `kb.local.yml` (env wins per
+> the four-layer precedence). Use `channels list` to see the effective
+> values after env resolution.
+
+#### `channels list`
+
+Table of every registered channel (built-ins + custom sources registered
+in config), one row per channel:
+
+| column | meaning |
+|---|---|
+| name | source name |
+| enabled | `yes` / `no` (effective) |
+| max_items | effective per-run cap |
+| timeout_s | effective per-run timeout (seconds) |
+| credential | `set` / `not-set` (booleans only — never the value) |
+| prerequisites | comma-joined missing prerequisites, or `-` when ready |
+
+```
+$ digital-twins channels list
+name          enabled  max_items  timeout_s  credential  prerequisites
+dsh           no       200        1500       set         -
+fs            no       200        1500       set         -
+gmail         no       200        1500       not-set     GMAIL_APP_PASSWORD
+hermes        yes      50         300        set         -
+pi            no       200        1500       set         -
+paperclip     no       200        1500       set         -
+yahoo         no       200        1500       not-set     YMAIL_APP_PASSWORD
+```
+
+#### `channels status <name>`
+
+Shows the detail row for one channel, including prerequisites. Exits 1
+with a named reason if the source is not registered (fail-fast,
+BR-11.2.2):
+
+```
+$ digital-twins channels status gmail
+name     enabled  max_items  timeout_s  credential  prerequisites
+gmail    no       200        1500       not-set     GMAIL_APP_PASSWORD
+```
+
+#### `channels enable <name> [--max-items N] [--timeout-s N]`
+
+Writes `{"enabled": true}` (and optional `max_items` / `timeout_s`) into
+`kb.local.yml` via `local_io.channel_write`. Exits 1 with a schema
+error if the source is unknown.
+
+```
+$ digital-twins channels enable fs --max-items 100 --timeout-s 60
+enabled channel `fs` -> $CONFIG_DIR/kb.local.yml
+```
+
+#### `channels disable <name>`
+
+Writes `{"enabled": false}` into `kb.local.yml`. No flags.
+
+```
+$ digital-twins channels disable hermes
+disabled channel `hermes` -> $CONFIG_DIR/kb.local.yml
+```
+
+#### `channels add <name> --entrypoint module:factory [--credential ENV_NAME] [--prefix P]`
+
+Registers a custom channel (disabled by default). The entrypoint is
+import-checked before writing: if the module does not import, the factory
+attribute is missing, or the factory is not callable, the command exits
+1 with a named `CustomSourceError` and **nothing is written**.
+
+```
+$ digital-twins channels add mytool --entrypoint mypackage.factory:build_mytool \
+    --credential MYTOOL_TOKEN --prefix mytool:
+added channel `mytool` (disabled) -> $CONFIG_DIR/kb.local.yml
+```
+
+---
+
+### Web admin API: /api/config/channels
+
+Both endpoints are admin-gated (same gate as `/api/config/services`).
+Non-admin requests receive 403.
+
+#### GET /api/config/channels
+
+Returns 200 with the masked channel view:
+
+```json
+{
+  "sources": {
+    "fs": {
+      "enabled": false,
+      "max_items": 200,
+      "timeout_s": 1500,
+      "credential_set": true,
+      "prerequisites": []
+    }
+  },
+  "env_overrides": ["KB_SOURCES__FS__MAX_ITEMS"]
+}
+```
+
+- `sources` — one entry per registered channel (built-ins + custom
+  sources registered in config).
+- `credential_set` — boolean only; **credential values are never
+  returned** (FR-004 / BR-12.2.2).
+- `prerequisites` — empty list when the channel is ready; one or more
+  strings naming missing prerequisites or a broken entrypoint.
+- `env_overrides` — sorted list of `KB_SOURCES__<NAME>__*` (and
+  per-source credential) env var names currently set that shadow a
+  channel knob in the resolved config.
+
+#### POST /api/config/channels
+
+Body (non-empty mapping of source name → partial update):
+
+```json
+{
+  "gmail": {"enabled": true, "max_items": 50},
+  "hermes": {"timeout_s": 600}
+}
+```
+
+On success (200), the response is the post-write masked view (same shape
+as GET). The write goes to `kb.local.yml` via
+`local_io.channel_write` (kb.yml is never written; unrelated keys are
+preserved).
+
+| status | condition |
+|---|---|
+| 200 | write succeeded; post-write masked view returned |
+| 400 | body is not valid JSON |
+| 403 | caller is not an admin |
+| 404 | source name not in the channel view (including custom sources carrying an `entrypoint` — the web surface does not register custom channels; use `channels add` CLI) |
+| 404 | unknown per-source knob (the web surface exposes only `enabled` / `max_items` / `timeout_s`) |
+| 422 | value outside the knob's declared type or range (e.g. negative int); or a source value is not a mapping |
+| 409 | existing `kb.local.yml` is unparseable or not a YAML mapping (no write performed) |
+| 500 | write failed (permission denied / I/O error) |
+
+> **Web admin UI:** The Channels panel in the web admin UI
+> (`digital_twins/web/static/index.html`) is admin-only and mirrors the
+> Services panel. It loads from GET and submits via POST; there is
+> deliberately no add/registration UI — custom channel registration is a
+> CLI `channels add` operation only.
+
+---
+
+### Per-user channel overrides
+
+Each user account can hold per-channel overrides in the `user_config`
+table. The scheduler (`run --as <user>`) resolves channel config in
+this order, highest wins:
+
+1. **User override** (`user_config` row for that user + source + key)
+2. **Environment variables** (`KB_SOURCES__<NAME>__*`)
+3. **`kb.local.yml`**
+4. **`kb.yml`**
+5. **Built-in defaults**
+
+A user's `<name>.enabled: false` override suppresses that channel for
+that user's scheduled runs only (SC-003 isolation — the global config
+and other users' runs are unaffected).
+
+**Read API:** `user_config.get_user_channel_overrides(db, user_id)`
+returns `{<source_name>: {<key>: <value_text>}}` where the key is
+limited to the overridable set: `enabled`, `max_items`, `timeout_s`.
+Values are stored in TEXT form and type-coerced at merge time
+(`merge_user_config`). A user with no overrides gets an empty dict.
+
+
 ## Deprecation mechanism
 
 005 documents the mechanism; no real knob is deprecated as of this release.
