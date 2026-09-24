@@ -531,7 +531,12 @@ def run_setup(prompt: Callable = click.prompt,
     # side effect. Otherwise (normal / re-run / valid-config paths), the
     # machine config layer exists (or is about to be created below by the
     # cloud/local path that just ran) and the fs-demo source is enabled so
-    # the fast path's last command works out of the box.
+    # the fast path's last command works out of the box.  Note: this runs
+    # even when a health check above failed (exit code 1) — enabling the
+    # demo source is best-effort and independent of backend health: the
+    # config merge itself either succeeds or prints a remediation line,
+    # and any re-run of setup skips this step (the sources.fs block is
+    # already present, so configure_fs_demo is a no-op).
     if not skip_services:
         echo("")
         echo("enabling the fs demo source so "

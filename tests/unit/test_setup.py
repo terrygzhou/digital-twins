@@ -678,8 +678,9 @@ def test_setup_creates_fs_demo_dir_and_sample_files(_isolate_config,
 
 def test_setup_fs_demo_does_not_override_user_source_config(
         _isolate_config, monkeypatch):
-    """A pre-existing sources.fs block in kb.local.yml is preserved (the
-    user's dir wins; only enabled is forced true)."""
+    """A pre-existing sources.fs block in kb.local.yml is left completely
+    untouched — setup never overrides the user's source config, including
+    an explicit enabled: false (the demo merge is skipped)."""
     import digital_twins.setup as setup_mod
     config_dir, state_dir = _isolate_config
 
