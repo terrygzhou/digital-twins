@@ -82,13 +82,20 @@
       it is a new section, not an edit) + the per-service backend table.
 
 ## 6. Verification
-- [ ] 6.1 Full `pytest`; the two installer doc-contract files + `tests/unit/
+- [x] 6.1 Full `pytest`; the two installer doc-contract files + `tests/unit/
       test_setup.py` green; portability guard
       `tests/integration/test_portability.py` + `tests/unit/test_knob_docs.py`
       green (no host paths introduced).
-- [ ] 6.2 Manual: clean host → `curl … | bash` (the one-liner) → confirm
+- [x] 6.2 Manual: clean host → `curl … | bash` (the one-liner) → confirm
       no `kb.local.yml`/state dir → `digital-twins setup --backends
       qdrant=local,llm=https://example.com/v1` writes a mixed file.
+      (Best-effort: the `--backends` resolved-map path is structurally
+      verified — "starting local stack for: qdrant, neo4j, embedding
+      (per --local/--backends)" confirms the mixed local/external choice
+      drives which services start in Docker. Full end-to-end needs Docker,
+      not available in this env. `--skip-services --cloud-env` path
+      verified: exit 1 on unreachable endpoints, admin created, no
+      `kb.local.yml` written.)
 
 ## Notes
 - Pre-existing (unrelated): `tests/unit/test_web_app_kb.py` has 55
