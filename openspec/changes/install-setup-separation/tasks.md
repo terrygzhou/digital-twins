@@ -77,7 +77,7 @@
       setup` wizard" sentence (README L35-37) to the install-only default
       + "run `digital-twins setup`" follow-up, and update the option list
       (drop `--no-setup` as the opt-out, add `--with-setup` as the opt-in).
-- [ ] 5.2 `docs/configuration.md`: add a **new** "Setup is separate and
+- [x] 5.2 `docs/configuration.md`: add a **new** "Setup is separate and
       idempotent" section (this file has no `setup`/`init` mention today —
       it is a new section, not an edit) + the per-service backend table.
 
