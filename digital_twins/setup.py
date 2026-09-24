@@ -530,6 +530,83 @@ def create_admin_account(state_dir: Path,
 
 
 # ---------------------------------------------------------------------------
+# fs demo source (the README fast-path's final step)
+# ---------------------------------------------------------------------------
+
+# The two sample files the README demo ("run 1 reports fs: 2 item(s)")
+# relies on. Created in <config_dir>/kb-demo/ so the demo is self-contained
+# and never writes outside the config dir.
+_DEMO_DIR_NAME = "kb-demo"
+_DEMO_FILES = {
+    "welcome.md":
+        "# welcome\n"
+        "This is a sample file so `digital-twins run --source fs` has "
+        "something to ingest on a fresh install. Replace these files with "
+        "your own, or point sources.fs.extra.dir at a real directory.\n",
+    "getting-started.md":
+        "# getting started\n"
+        "Second sample file. A second run of `digital-twins run --source "
+        "fs` reports 0 new items — dedup-safe.\n",
+}
+
+
+def _ensure_demo_files(demo_dir: Path) -> None:
+    demo_dir.mkdir(parents=True, exist_ok=True)
+    for name, content in _DEMO_FILES.items():
+        path = demo_dir / name
+        if not path.exists():
+            path.write_text(content, encoding="utf-8")
+
+
+def configure_fs_demo(echo: Callable = click.echo,
+                      _local_config_path=local_config_path,
+                      _merge_write=None) -> None:
+    """Make `digital-twins run --source fs` work out of the box.
+
+    - Creates a demo dir (<config dir>/kb-demo/) with two sample .md files.
+    - Adds a `sources.fs` block (enabled=true, extra.dir pointing at the
+      demo dir) to kb.local.yml — writing the file if it does not exist
+      yet, and merging into it when it does (existing keys preserved).
+    - If the user already configured a `sources.fs` block (their own dir),
+      it is left untouched — setup never overrides a user's source config.
+
+    Idempotent: a re-run of setup never clobbers an existing sources.fs.
+    """
+    if _merge_write is None:
+        from .config.local_io import merge_write
+        _merge_write = merge_write
+
+    path = Path(_local_config_path()).expanduser()
+    data = {}
+    if path.is_file():
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    fs = (data.get("sources") or {}).get("fs") or {}
+    if fs:
+        # User already configured the fs source — honour their config.
+        # Only override the demo-dir default when the user has not
+        # explicitly enabled a dir of their own: an enabled block with a
+        # different dir is the user's choice; a disabled block is the user
+        # declining the demo. Either way, honour their config.
+        echo("kb.local.yml already has a sources.fs block — leaving it "
+             "untouched.")
+        return
+    config_dir = path.parent
+    demo_dir = config_dir / _DEMO_DIR_NAME
+    _ensure_demo_files(demo_dir)
+    try:
+        _merge_write(
+            {"sources": {"fs": {"enabled": True,
+                                 "extra": {"dir": str(demo_dir)}}}},
+            target=path)
+    except (ValueError, PermissionError, OSError) as exc:
+        echo(f"warning: could not enable the fs demo source "
+             f"({exc}) — enable it manually in kb.local.yml "
+             f"when you are ready.")
+        return
+    echo(f"enabled the fs demo source (dir: {demo_dir}).")
+
+
+# ---------------------------------------------------------------------------
 # Top-level wizard
 # ---------------------------------------------------------------------------
 
@@ -548,7 +625,8 @@ def run_setup(prompt: Callable = click.prompt,
     skip_services: explicit "I handle backends myself" — takes precedence
     over everything: never probe Docker, never prompt for endpoints, never
     write kb.local.yml; only init + admin + validate run (the re-run fast
-    path).
+    path). The fs-demo enable step is also skipped: no config file or demo
+    dir is created as a side effect.
     """
     # --- 1) backend mode ---------------------------------------------------
     try:
@@ -629,8 +707,28 @@ def run_setup(prompt: Callable = click.prompt,
         echo(line)
     exit_code = 0 if all(r.ok for r in results) else 1
 
-    # --- 5) next steps ------------------------------------------------------
+    # --- 5) enable the fs demo source (the README fast path's last step) ----
+    # --skip-services means "I handle backends and sources myself": the
+    # wizard must not create or modify a config file or a demo dir as a
+    # side effect. Otherwise (normal / re-run / valid-config paths), the
+    # machine config layer exists (or is about to be created below by the
+    # cloud/local path that just ran) and the fs-demo source is enabled so
+    # the fast path's last command works out of the box.  Note: this runs
+    # even when a health check above failed (exit code 1) — enabling the
+    # demo source is best-effort and independent of backend health: the
+    # config merge itself either succeeds or prints a remediation line,
+    # and any re-run of setup skips this step (the sources.fs block is
+    # already present, so configure_fs_demo is a no-op).
+    if not skip_services:
+        echo("")
+        echo("enabling the fs demo source so "
+             "'digital-twins run --source fs' works out of the box")
+        configure_fs_demo(echo=echo)
+
+    # --- 6) next steps ------------------------------------------------------
     echo("")
-    echo("Next: enable a source in kb.local.yml, then run:")
+    echo("Next: run your first ingest:")
     echo("  digital-twins run --source fs")
+    echo("  (put your own .md files in the demo dir to replace the "
+         "samples, or point sources.fs.extra.dir elsewhere.)")
     return exit_code

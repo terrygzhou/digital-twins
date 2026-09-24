@@ -223,8 +223,11 @@ def setup(force_cloud: bool, skip_services: bool,
     + embedding-model); otherwise it falls back to cloud mode with prompts
     for the three required endpoints. The state DB is created and migrated,
     the first admin account is created with a generated password (shown
-    once, also written to <state_dir>/admin-credentials.txt), and the
-    health checks run with a remediation line for any failing endpoint.
+    once, also written to <state_dir>/admin-credentials.txt), the fs demo
+    source is enabled (a demo dir with sample .md files, merged into
+    kb.local.yml unless you already have a sources.fs block of your own —
+    --skip-services skips this too), and the health checks run with a
+    remediation line for any failing endpoint.
 
     Exits 0 when all health checks pass; 1 on a failing check; 3 when the
     local stack failed to start; 5 when cloud endpoints could not be
