@@ -22,7 +22,7 @@
       configs land in one file.
 
 ## 2. Interactive per-service prompts (digital_twins/setup.py)
-- [ ] 2.1 When the user accepts the bundled local stack, add a second pass
+- [x] 2.1 When the user accepts the bundled local stack, add a second pass
       that asks, per service, local-or-external (defaults: qdrant/neo4j →
       local; llm/embedding → "external" on no-GPU hosts, local on GPU
       hosts). An external answer prompts for the URL (or reads `KB_*` env).
@@ -30,7 +30,7 @@
       path; `--local`/`--cloud`/`--cloud-env` (which name all four
       services) and any service named in `--backends` are resolved from the
       flag/env and do not re-prompt.
-- [ ] 2.2 Unit tests: prompt path for a mixed choice produces the right
+- [x] 2.2 Unit tests: prompt path for a mixed choice produces the right
       resolved map; no-GPU llm default is external; services named in
       `--backends` are not re-prompted.
 
