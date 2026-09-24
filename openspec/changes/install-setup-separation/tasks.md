@@ -47,7 +47,7 @@
       `.superpowers/sdd/` ledger for these test files.
 
 ## 4. `init` deprecation (digital_twins/cli.py)
-- [ ] 4.1 Turn `init` into a deprecated alias of the *narrower* `setup`
+- [x] 4.1 Turn `init` into a deprecated alias of the *narrower* `setup`
       subset (state DB + migrations + first admin + health report — not the
       backend decision) with a one-line deprecation notice naming
       `digital-twins setup`. **Preserve `init`'s merge-on-existing behavior**
@@ -56,7 +56,7 @@
       `tests/integration/test_cli_init.py` asserts); migrate that merge
       behavior into `setup`'s `kb.local.yml` write path so both commands
       agree. `--yes` is preserved.
-- [ ] 4.2 Reword **all** user-facing "run `digital-twins init`" /
+- [x] 4.2 Reword **all** user-facing "run `digital-twins init`" /
       "re-run init/validate" remediation strings to "run
       `digital-twins setup`" — sweep all four files: `digital_twins/cli.py`
       (incl. the "no state db" branch at L290-295 and L1073/L1133/L1211/
