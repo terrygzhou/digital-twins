@@ -1,6 +1,7 @@
 """digital-twins command-line interface."""
 
 import hmac
+import importlib
 import os
 from pathlib import Path
 import uuid
@@ -1812,6 +1813,184 @@ def run_history(as_user: str, all_users: bool) -> None:
         raise SystemExit(2)
     finally:
         db.close()
+
+
+# --- channels group (channels-config T2 — read-only views + channel writes)
+#
+# Read-only config surface: mirrors the unauthenticated ``validate``/``run``
+# pattern (no DB, no auth) — Ruling recorded in the task report. Writes go
+# through ``channel_write`` (task 1): validated, kb.local.yml only.
+
+
+def _print_channel_table(view: dict, names=None) -> None:
+    """Print channel rows: name, enabled, max_items, timeout_s, credential,
+    prerequisites (comma-joined, '-' when ready). Alphabetical."""
+    names = sorted(names or view.keys())
+    rows = []
+    for name in names:
+        r = view[name]
+        rows.append((name,
+                     "yes" if r["enabled"] else "no",
+                     str(r["max_items"]),
+                     str(r["timeout_s"]),
+                     "set" if r["credential_set"] else "not-set",
+                     ", ".join(r["prerequisites"]) or "-"))
+    header = ("name", "enabled", "max_items", "timeout_s",
+              "credential", "prerequisites")
+    widths = [max(len(h), *(len(r[i]) for r in rows))
+              for i, h in enumerate(header)]
+    click.echo("  ".join(h.ljust(w) for h, w in zip(header, widths)))
+    for r in rows:
+        click.echo("  ".join(c.ljust(w) for c, w in zip(r, widths)))
+
+
+@cli.group()
+def channels() -> None:
+    """Manage ingestion channels (sources): list / status / enable /
+    disable / add.
+
+    Read-only views need no authentication (mirrors ``validate``/``run``);
+    writes merge into kb.local.yml via the validated ``channel_write``.
+    """
+
+
+@channels.command("list")
+def channels_list() -> None:
+    """List every registered channel with its effective settings."""
+    from digital_twins.config.channels import channel_view
+    view = channel_view(env=os.environ)
+    if not view:
+        click.echo("no channels")
+        return
+    _print_channel_table(view)
+
+
+@channels.command("status")
+@click.argument("name")
+def channels_status(name: str) -> None:
+    """Show the effective settings of one channel.
+
+    Exit 1 with a named reason when the source is not registered
+    (fail-fast, BR-11.2.2).
+    """
+    from digital_twins.config.channels import channel_view
+    view = channel_view(env=os.environ)
+    if name not in view:
+        click.echo(f"unknown source: {name}", err=True)
+        raise SystemExit(1)
+    _print_channel_table(view, [name])
+
+
+@channels.command("enable")
+@click.argument("name")
+@click.option("--max-items", type=int, default=None,
+              help="Cap on items read per run (optional).")
+@click.option("--timeout-s", type=int, default=None,
+              help="Per-source timeout in seconds (optional).")
+def channels_enable(name: str, max_items: int, timeout_s: int) -> None:
+    """Enable a channel, optionally with caps (merged into kb.local.yml)."""
+    from digital_twins.config import local_io
+    from digital_twins.config.schema import SchemaError
+
+    entry = {"enabled": True}
+    if max_items is not None:
+        entry["max_items"] = max_items
+    if timeout_s is not None:
+        entry["timeout_s"] = timeout_s
+    try:
+        path = local_io.channel_write({"sources": {name: entry}},
+                                      env=os.environ)
+    except SchemaError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(1)
+    click.echo(f"enabled channel `{name}` -> {path}")
+
+
+@channels.command("disable")
+@click.argument("name")
+def channels_disable(name: str) -> None:
+    """Disable a channel (merged into kb.local.yml)."""
+    from digital_twins.config import local_io
+    from digital_twins.config.schema import SchemaError
+
+    try:
+        path = local_io.channel_write({"sources": {name: {"enabled": False}}},
+                                      env=os.environ)
+    except SchemaError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(1)
+    click.echo(f"disabled channel `{name}` -> {path}")
+
+
+def _check_entrypoint(name: str, entrypoint: str) -> None:
+    """Import-check ``module:factory`` before writing (fail-fast).
+
+    Mirrors ``digital_twins.sources.custom.build_custom``'s import +
+    factory resolution without needing the source to be registered in
+    config yet (the write itself does that).
+    """
+    from digital_twins.sources.custom import CustomSourceError
+
+    if ":" not in entrypoint:
+        raise CustomSourceError(
+            f"sources.{name}: 'entrypoint' must be 'module:factory', "
+            f"got {entrypoint!r}")
+    module_path, factory_name = entrypoint.rsplit(":", 1)
+    try:
+        importlib.import_module(module_path)
+    except Exception as exc:
+        raise CustomSourceError(
+            f"sources.{name}: cannot import module '{module_path}' "
+            f"(entrypoint {entrypoint!r}): {exc}") from exc
+    module = importlib.import_module(module_path)
+    if not hasattr(module, factory_name):
+        raise CustomSourceError(
+            f"sources.{name}: module '{module_path}' has no attribute "
+            f"'{factory_name}' (entrypoint {entrypoint!r})")
+    factory = getattr(module, factory_name)
+    if not callable(factory):
+        raise CustomSourceError(
+            f"sources.{name}: '{factory_name}' in '{module_path}' is not "
+            f"callable (entrypoint {entrypoint!r})")
+
+
+@channels.command("add")
+@click.argument("name")
+@click.option("--entrypoint", required=True,
+              help="Custom source factory: 'module:factory' (must import).")
+@click.option("--credential", default=None,
+              help="Env var name holding the source's credential (optional).")
+@click.option("--prefix", default=None,
+              help="Item id prefix (optional).")
+def channels_add(name: str, entrypoint: str, credential: str,
+                 prefix: str) -> None:
+    """Register a custom channel (disabled by default).
+
+    The entrypoint is import-checked first; on failure exit 1 with the
+    named failure and nothing is written.
+    """
+    from digital_twins.config import local_io
+    from digital_twins.config.schema import SchemaError
+    from digital_twins.sources.custom import CustomSourceError
+
+    try:
+        _check_entrypoint(name, entrypoint)
+    except CustomSourceError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(1)
+
+    entry = {"enabled": False, "entrypoint": entrypoint}
+    if credential is not None:
+        entry["credential"] = credential
+    if prefix is not None:
+        entry["prefix"] = prefix
+    try:
+        path = local_io.channel_write({"sources": {name: entry}},
+                                      env=os.environ)
+    except SchemaError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(1)
+    click.echo(f"added channel `{name}` (disabled) -> {path}")
 
 
 def main() -> None:

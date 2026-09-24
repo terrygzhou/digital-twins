@@ -97,10 +97,16 @@ def channel_write(updates, target=None, env=None) -> Path:
         if not isinstance(raw, dict):
             raise SchemaError(
                 f"sources.{name}: must be a mapping of source settings")
-        if name not in BUILTIN_SOURCES and name not in known:
+        # fail-fast (BR-11.2.2): an unknown name may be registered only as
+        # a new custom channel (the 'channels add' path) — its entry must
+        # carry an entrypoint. Anything else is a typo or a deleted custom
+        # source and is rejected.
+        if name not in BUILTIN_SOURCES and name not in known \
+                and "entrypoint" not in raw:
             raise SchemaError(
                 f"sources.{name}: unknown source "
-                f"(known: {', '.join(sorted(known))})")
+                f"(known: {', '.join(sorted(known))}; "
+                f"register a new custom source via 'channels add')")
         # mirrors schema._validate_source: allowed_keys =
         # SOURCE_DEFAULTS | {"extra", "prefix", "email", "credential"},
         # plus CUSTOM_SOURCE_DEFAULTS keys for registered custom sources
