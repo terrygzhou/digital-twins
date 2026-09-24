@@ -796,6 +796,84 @@ def configure_fs_demo(echo: Callable = click.echo,
              f"when you are ready.")
         return
     echo(f"enabled the fs demo source (dir: {demo_dir}).")
+# Interactive second pass (install-setup-separation T2.1)
+# ---------------------------------------------------------------------------
+
+def _interactive_second_pass(prompt: Callable, echo: Callable,
+                             gpu: bool,
+                             named: dict | None = None) -> dict:
+    """Ask, per service not resolved from a flag, local-or-external.
+
+    The interactive path (D2): after the user accepts the bundled local
+    stack, the second pass asks, for each of qdrant/neo4j/llm/embedding,
+    "local or external?" — with defaults qdrant/neo4j -> local and
+    llm/embedding -> external on no-GPU hosts, local on GPU hosts.  An
+    external answer prompts for the URL, or reads the KB_* env var when
+    set (env wins over the prompt; a var set to an empty string is
+    "set but empty" and fails the required check, like the cloud path).
+
+    ``named`` is the set of services already resolved from ``--backends``
+    (or the all-services shorthands); those never re-prompt — they keep
+    their flag/env resolution.  ``named=None`` means the bare
+    default-interactive path (docker probe -> local-stack confirm).
+
+    Returns the resolved map in ``resolve_backends``() shape.  A
+    "local" answer for a service the host can't start (llm/embedding on
+    a no-GPU host) is flipped to external-with-unavailable by
+    resolve_backends(), so it cannot crash — the existing
+    run_local_stack() remediation behavior applies.
+
+    ``echo`` is accepted for API symmetry with the other wizard callables
+    (narration rides on the prompt text itself); the pass does not echo
+    standalone lines.
+    """
+    named = named or {}
+    explicit: dict = dict(named)  # flag-resolved services carry through
+    base = resolve_backends(explicit if explicit else None, gpu=gpu,
+                           docker=True)
+    for svc, (env_name, _local_url, _gpu_only, _required) in \
+            _SERVICE_ENV.items():
+        if svc in named:
+            continue  # resolved from the flag — never re-prompt
+        default_mode = ("external"
+                        if svc in ("llm", "embedding") and not gpu
+                        else "local")
+        answer = prompt(
+            f"{svc}: run locally (bundled Docker) or point at an external "
+            f"endpoint? [default: {default_mode}]").strip().lower()
+        if answer in ("local", "l"):
+            mode = "local"
+        elif answer in ("external", "ext", "url", "e"):
+            mode = "external"
+        else:
+            mode = default_mode  # empty answer (Enter) -> the default
+        entry = base[svc]
+        if mode == "local" and not entry.get("unavailable"):
+            # Local wins: use the bundled endpoint (resolve_backends may
+            # have flipped llm/embedding to unavailable on no-GPU hosts —
+            # keep that flip, the user must pick external there).
+            explicit[svc] = "local"
+        else:
+            # External: env var wins over the prompt; a set-but-empty
+            # var fails the required check like the cloud path does.
+            env_value = os.environ.get(env_name)
+            if env_value is not None:
+                url = env_value.strip()
+            else:
+                url = prompt(
+                    f"External {svc} URL "
+                    f"(e.g. https://host/v1) "
+                    f"[{env_name}]: ").strip()
+            explicit[svc] = url
+    resolved = resolve_backends(explicit, gpu=gpu, docker=True)
+    # Preserve the no-GPU "local unavailable" marker when the second pass
+    # chose external for a local-only service (resolve_backends only sets
+    # it on the auto local->external flip; an explicit external answer
+    # keeps the marker so the remediation hint still fires):
+    for svc in ("llm", "embedding"):
+        if not gpu and base[svc].get("unavailable"):
+            resolved[svc]["unavailable"] = True
+    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -907,7 +985,26 @@ def run_setup(prompt: Callable = click.prompt,
                 "Docker is available. Start the bundled local stack? "
                 "(qdrant + neo4j + embedding-model, ~1-2 min on first "
                 "run)"):
-            if not run_local_stack(prompt, echo):
+            # T2.1: interactive second pass — after the user accepted the
+            # bundled local stack, ask, per service, local-or-external
+            # (defaults: qdrant/neo4j local; llm/embedding local on GPU
+            # hosts, external on no-GPU hosts).  This branch is the bare
+            # default-interactive path: no --local/--cloud/--cloud-env,
+            # no --skip-services, and no service named in --backends, so
+            # every service is open to the per-service prompt (``named``
+            # is empty).  A "local" answer the host can't start
+            # (llm/embedding without a GPU) is flipped to
+            # external-with-unavailable by resolve_backends() —
+            # run_local_stack() then applies its existing remediation
+            # instead of crashing.  The resolved map drives
+            # run_local_stack (T1.3):
+            # only the local-mode services start in Docker and
+            # kb.local.yml is written from the resolved map.
+            if gpu is None:
+                gpu = _gpu_present()
+            resolved = _interactive_second_pass(
+                prompt, echo, gpu=gpu, named=None)
+            if not run_local_stack(prompt, echo, resolved=resolved):
                 return 3
         else:
             # No docker, or the user declined the local stack: fall back
