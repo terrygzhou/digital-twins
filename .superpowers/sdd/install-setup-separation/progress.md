@@ -79,3 +79,21 @@ Checked:
 - Gate: 74/74 (46 T1 baseline + 3 new second-pass + portability/knob_docs).
 - Review file: `.superpowers/sdd/install-setup-separation/task-2-review.md`.
 - Next: T3.1–T3.4 (installer no-op `--no-setup` + `--with-setup` + doc-contract delta).
+
+## T3 complete — 2026-08-24
+
+- Commit on `wtm/install-setup-separation`: `d8f1ea2` (T3.1-3.4 in one commit:
+  installers install-only by default, `--with-setup` opt-in, `--no-setup` no-op
+  alias, exit-code docs, both test files delta), + `42c2b60` tasks.md mark.
+- Patch-handoff defect found + fixed: subagent's T3.patch lacked the scripts/*
+  hunks (tests-only); regenerated from `git diff 584ef25 c665894` in the
+  t3-impl worktree; wtm worktree redone as single commit `d8f1ea2`.
+- Reviewer: PASS (2 nits: pre-existing `&&` lines in wizard body; pre-existing
+  non-TTY warning text still says "--no-setup" which is now a no-op alias —
+  wording-sweep candidate).
+- Gate: 78/78 (test_install_sh_script + test_install_script + test_setup +
+  test_setup_interactive_second_pass); bash -n clean both scripts.
+- Review file: `.superpowers/sdd/install-setup-separation/task-3-review.md`.
+- Note: sandbox switched to danger-full-access + approvals disabled → subagents
+  can now write the wtm worktree directly; patch-handoff model retired.
+- Next: T4.1 (init deprecation), T4.2 (remediation sweep), T5.1/T5.2 docs, T6.
