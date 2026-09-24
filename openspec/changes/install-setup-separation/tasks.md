@@ -71,7 +71,7 @@
       green (they exercise `init`'s merge-on-existing contract).
 
 ## 5. Docs
-- [ ] 5.1 README "Fast path": split into Step 1 (Install) and Step 2 (Setup);
+- [x] 5.1 README "Fast path": split into Step 1 (Install) and Step 2 (Setup);
       add the per-service backend table + `--backends` / `--local` examples.
       **Explicitly rewrite** the current "It ends with the `digital-twins
       setup` wizard" sentence (README L35-37) to the install-only default
