@@ -131,3 +131,43 @@ Checked:
 - **Wtm tasks.md:** `af5a6f8` (T4.1/T4.2 marked `[x]`).
 - **Main checkout:** `f003f08` (tasks.md T4 marks synced).
 - **Next:** T5.1 (README split), T5.2 (docs/configuration.md), T6 (6.1 full pytest + guards; 6.2 best-effort manual).
+
+## T5 execution log
+
+### T5.1 (README Fast path split)
+- **Implementer:** subagent on branch `t4-impl`, base `dca5179` → `6c9060b` (README.md, 90+/23-).
+- **Wtm apply:** `f5e16e1` (single commit, README.md only).
+- **Gate:** portability guard 5 passed.
+- **Reviewer:** PASS (all 7 checklist items). Nits: run-on sentence L58-61; mixed backticks L12. Both non-blocking.
+- **Wtm tasks.md:** `156e56f` (T5.1 marked `[x]`).
+
+### T5.2 (docs/configuration.md new section)
+- **Implementer:** subagent on branch `t4-impl`, base `6c9060b` → `727fac8` (docs/configuration.md, 69+).
+- **Wtm apply:** `2048ca1` (single commit, docs/configuration.md only).
+- **Gate:** portability guard + knob docs guard 25 passed.
+- **Reviewer:** PASS (all 5 checklist items; table row-for-row identical to README T5.1). No nits.
+- **Wtm tasks.md:** `5b20b19` (T5.2 marked `[x]`).
+
+## T6 execution log
+
+### T6.1 (full pytest + guards)
+- **Full suite in wtm:** 1178 passed, 15 failed, 1 skipped (115.74s).
+- **All 15 failures reproduce on main checkout** (pre-existing S4/owner-tag red, NOT caused by install-setup-separation). Confirmed by running the same 15 test files on main's pre-worktree tree: 15 failed, 90 passed.
+- **T6.1 gate files:** `test_install_sh_script.py` + `test_install_script.py` + `test_setup.py` + `test_portability.py` + `test_knob_docs.py` → 100 passed in 1.09s.
+- **Wtm tasks.md:** `2441c53` (T6.1 marked `[x]`).
+
+### T6.2 (manual best-effort)
+- **Fresh venv + `pip install -e .`** from wtm: succeeded.
+- **`setup --backends "qdrant=local,llm=https://example.com/v1"`:**
+  - Structurally verified: "starting local stack for: qdrant, neo4j, embedding (per --local/--backends)" — the resolved map drives which services start locally; llm (external) is excluded from Docker.
+  - The Neo4j credential prompt hits `click.Abort` when stdin is not a TTY (expected behavior; exit 6 "wizard interrupted").
+  - Full end-to-end needs Docker, not available in this env.
+- **`setup --skip-services --cloud-env`** (with all `KB_*` env vars set):
+  - Exit 1 (neo4j auth-failed + llm unreachable — expected on unreachable endpoints).
+  - Admin account created, no `kb.local.yml` written (correct: `--skip-services` skips service startup).
+- **Wtm tasks.md:** `2441c53` (T6.2 marked `[x]` with best-effort note).
+
+## SDD completion
+
+All tasks 1.1–6.2 complete. Wtm worktree tip: `2441c53`.
+Next: feed completion into the `jeff_review` gates on the three openspec changes.
