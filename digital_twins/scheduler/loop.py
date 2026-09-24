@@ -128,6 +128,20 @@ def serve_once_tick(db, config) -> dict:
         # merge is a no-op (the copy equals the global).
         merged_config = merge_user_config(config, db, owner, source=source)
 
+        # channels-config 5.2 (BR-11.4.2): a per-user ``enabled: false``
+        # override suppresses this source for THIS user's runs only.
+        # Re-check the enabled gate against the *merged* config: the
+        # global-level check above (lines ~115) only sees the operator's
+        # config; the per-user layer can disable a source that the operator
+        # left enabled. Same skip semantics as the global gate: no fire,
+        # no audit row, next_fire_at stays put (still due; fires when the
+        # override is removed). Other owners' runs of the same source are
+        # unaffected (SC-003 isolation).
+        merged_entry = merged_config["sources"].get(source)
+        if merged_entry is None or not merged_entry.get("enabled"):
+            skipped.append(schedule["id"])
+            continue
+
         fired_at = now
         rows_before = _audit_count(db)
         try:

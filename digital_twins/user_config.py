@@ -92,6 +92,45 @@ def get_overrides(db, account_email: str) -> dict:
     return {(r[0], r[1]): r[2] for r in rows}
 
 
+def get_user_channel_overrides(db, user_id: str) -> dict:
+    """Return a user's ``channel_overrides`` as ``{source: {key: value}}``.
+
+    This is the per-user channel-override mapping (channels-config 5.1):
+    ``{<source_name>: {"enabled": bool, "max_items": int?, "timeout_s": int?}}``.
+
+    The underlying storage is the same ``user_config`` table used by
+    :func:`get_overrides` (one row per (account_email, source, key)); this
+    function reshapes the flat ``{(source, key): value_text}`` mapping into a
+    nested ``{source: {key: value}}`` mapping.  Values are the stored TEXT
+    form (type-coerced at merge time, exactly as
+    :func:`merge_user_config` does) — one type boundary, no divergence.
+
+    Fail-fast: each stored key is validated against :data:`OVERRIDABLE_KEYS`;
+    a key that is not one of the overridable knobs raises
+    :class:`NotUserOverridableError` naming the bad key. A user with no
+    override rows returns an empty dict.
+
+    Args:
+        db: 001 state connection (user_config table, v3).
+        user_id: the account_email / owner of the overrides.
+    """
+    flat = get_overrides(db, user_id)
+    nested: dict = {}
+    for (source, key), value_text in flat.items():
+        if key not in OVERRIDABLE_KEYS:
+            # Rows are only ever written with overridable keys (set_override
+            # enforces this), so this is a defensive fail-fast: name the bad
+            # key rather than silently dropping it.
+            raise NotUserOverridableError(
+                f"{source}.{key}: not a user-overridable knob "
+                f"(overridable: {', '.join(sorted(OVERRIDABLE_KEYS))})"
+            )
+        nested.setdefault(source, {})[key] = value_text
+    return nested
+
+
+
+
 def unset_override(db, account_email: str, source: str, key: str) -> None:
     """Remove the ``user_config`` row for (account_email, source, key).
 

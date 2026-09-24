@@ -190,6 +190,95 @@ def test_merge_returns_new_dict(db, global_cfg):
     assert out is not global_cfg
 
 
+# --- get_user_channel_overrides (channels-config 5.1) -----------------------
+
+def test_channel_overrides_round_trip(db):
+    """set_override -> get_user_channel_overrides round-trips the mapping.
+
+    Values come back as the stored TEXT form (the single type boundary is
+    the merge-time ``coerce`` in ``merge_user_config``), nested by source.
+    """
+    user_config.set_override(db, "alice@example.com", "hermes", "max_items", 50)
+    user_config.set_override(db, "alice@example.com", "hermes", "enabled", "false")
+    user_config.set_override(db, "alice@example.com", "pi", "timeout_s", 30)
+    ov = user_config.get_user_channel_overrides(db, "alice@example.com")
+    assert ov == {
+        "hermes": {"max_items": "50", "enabled": "false"},
+        "pi": {"timeout_s": "30"},
+    }
+
+
+def test_channel_overrides_values_are_stored_text(db):
+    """Values are the stored TEXT form, not coerced types (single type
+    boundary at merge time, mirroring ``get_overrides``)."""
+    user_config.set_override(db, "a@example.com", "fs", "max_items", 42)
+    user_config.set_override(db, "a@example.com", "fs", "enabled", "true")
+    ov = user_config.get_user_channel_overrides(db, "a@example.com")
+    assert ov["fs"]["max_items"] == "42"
+    assert ov["fs"]["enabled"] == "true"
+    assert isinstance(ov["fs"]["max_items"], str)
+
+
+def test_channel_overrides_round_trip_then_merge_typed(db, global_cfg):
+    """The read mapping feeds ``merge_user_config``: re-coercing the stored
+    TEXT yields the typed values the pipeline sees."""
+    user_config.set_override(db, "alice@example.com", "hermes", "max_items", 50)
+    user_config.set_override(db, "alice@example.com", "hermes", "enabled", "false")
+    ov = user_config.get_user_channel_overrides(db, "alice@example.com")
+    merged = user_config.merge_user_config(global_cfg, db, "alice@example.com")
+    assert get(merged, "sources.hermes.max_items") == 50
+    assert get(merged, "sources.hermes.enabled") is False
+
+
+def test_channel_overrides_empty_when_no_rows(db):
+    """A user with no override rows -> empty dict (not None)."""
+    assert user_config.get_user_channel_overrides(db, "nobody@example.com") == {}
+
+
+def test_channel_overrides_mixed_keys_round_trip(db):
+    """Multiple sources with a mix of key subsets round-trip exactly."""
+    user_config.set_override(db, "u@example.com", "fs", "enabled", "true")
+    user_config.set_override(db, "u@example.com", "fs", "max_items", 7)
+    user_config.set_override(db, "u@example.com", "fs", "timeout_s", 1)
+    user_config.set_override(db, "u@example.com", "gmail", "enabled", "false")
+    ov = user_config.get_user_channel_overrides(db, "u@example.com")
+    assert ov == {
+        "fs": {"enabled": "true", "max_items": "7", "timeout_s": "1"},
+        "gmail": {"enabled": "false"},
+    }
+
+
+def test_channel_overrides_fail_fast_on_unknown_key(db):
+    """A row carrying a key outside OVERRIDABLE_KEYS fails fast, naming it.
+
+    set_override already refuses such keys at write time (the normal
+    path); this pins the READ-side guard: a foreign row (e.g. written by an
+    older version with a different key set) must not be silently dropped.
+    """
+    db.execute(
+        "INSERT INTO user_config (account_email, source, key, value, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("w@x.com", "hermes", "prefix", "x:", "2026-01-01T00:00:00+00:00"),
+    )
+    db.commit()
+    with pytest.raises(SchemaError) as exc:
+        user_config.get_user_channel_overrides(db, "w@x.com")
+    assert "prefix" in str(exc.value)
+    assert "not a user-overridable knob" in str(exc.value)
+
+
+
+def test_channel_overrides_returns_fresh_dict(db):
+    """Each call returns a fresh nested dict: mutating it does not affect
+    subsequent reads (the stored rows are untouched)."""
+    user_config.set_override(db, "a@example.com", "fs", "max_items", 9)
+    ov = user_config.get_user_channel_overrides(db, "a@example.com")
+    ov["fs"]["max_items"] = "999"
+    # Re-reading yields the original stored value ("9"), not the mutated one.
+    again = user_config.get_user_channel_overrides(db, "a@example.com")
+    assert again == {"fs": {"max_items": "9"}}
+
+
 # --- SC-003 isolation: both orderings ---------------------------------------
 
 def _diff_keys(a: dict, b: dict) -> set:
