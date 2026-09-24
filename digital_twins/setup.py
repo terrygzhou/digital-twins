@@ -261,7 +261,8 @@ def _kb_local_content(local: bool,
 def _cloud_content(qdrant: str, neo4j: str, llm: str,
                    embedding: str = "",
                    neo4j_user: str = "",
-                   neo4j_password: str = "") -> dict:
+                   neo4j_password: str = "",
+                   embedding_api_key: str = "") -> dict:
     data: dict = {"qdrant": {"url": qdrant}}
     neo: dict = {"url": neo4j}
     if neo4j_user:
@@ -270,8 +271,13 @@ def _cloud_content(qdrant: str, neo4j: str, llm: str,
         neo["password"] = neo4j_password
     data["neo4j"] = neo
     data["llm"] = {"endpoint": llm}
-    if embedding:
-        data["embedding"] = {"endpoint": embedding}
+    if embedding or embedding_api_key:
+        emb: dict = {}
+        if embedding:
+            emb["endpoint"] = embedding
+        if embedding_api_key:
+            emb["api_key"] = embedding_api_key
+        data["embedding"] = emb
     return data
 
 
@@ -580,7 +586,9 @@ def embedding_ready(echo: Callable = click.echo,
     never applied.
 
     - ``embedding.endpoint`` set -> reuse check_embedding(): the /models
-      probe is exactly "can this endpoint embed".
+      probe is exactly "can this endpoint embed" (the Bearer
+      embedding.api_key, when configured, is sent with the probe — a
+      401/403 reads as an auth problem, not reachability).
     - no endpoint -> in-process: load the pinned model and embed one probe
       text.  The heavy import + model download happens at most once per
       host lifetime (first setup, or when the model cache is cold); later
@@ -633,6 +641,7 @@ def run_cloud_env_stack(echo: Callable = click.echo) -> bool:
     neo4j = os.environ.get("KB_NEO4J__URL", "").strip()
     llm = os.environ.get("KB_LLM__ENDPOINT", "").strip()
     embedding = os.environ.get("KB_EMBEDDING__ENDPOINT", "").strip()
+    embedding_api_key = os.environ.get("KB_EMBEDDING__API_KEY", "").strip()
     neo4j_user = os.environ.get("KB_NEO4J__USER", "").strip()
     neo4j_password = os.environ.get("KB_NEO4J__PASSWORD", "").strip()
     missing = [name for name, value in (
@@ -646,7 +655,8 @@ def run_cloud_env_stack(echo: Callable = click.echo) -> bool:
              "'digital-twins setup --cloud-env'; this mode never prompts.")
         return False
     write_kb_local(_cloud_content(qdrant, neo4j, llm,
-                                  embedding, neo4j_user, neo4j_password))
+                                  embedding, neo4j_user, neo4j_password,
+                                  embedding_api_key=embedding_api_key))
     echo("cloud mode (--cloud-env): no Docker required, no prompts — "
          "kb.local.yml now points at the cloud endpoints from the "
          "KB_* env vars.")
@@ -660,14 +670,23 @@ def run_cloud_stack(prompt_text: Callable = click.prompt,
     Env vars take precedence over prompts; a var set to an *empty string*
     is honored as "set but empty" (no prompt), which then fails the
     required-non-empty gate with a remediation naming exactly which vars
-    are empty. Unset vars fall through to the prompt.
+    are empty. Unset vars fall through to the prompt.  The embedding
+    endpoint is optional (in-process embedding is the fallback); when it
+    is supplied — from env or the prompt — the API-key prompt fires
+    (optional, keyless endpoints leave it empty; a key without an
+    endpoint would be dead config).
     """
-    def _env_or_prompt(var: str, label: str, required: bool) -> str:
+    def _env_or_prompt(var: str, label: str, required: bool,
+                       empty_from_prompt: bool = False) -> str:
         value = os.environ.get(var)
         if value is not None:
             return value
         if not required:
-            return ""
+            # Optional: prompt only when the caller wants a chance to
+            # supply a value interactively (a required-empty gate still
+            # catches a deliberately empty env var).
+            if not empty_from_prompt:
+                return ""
         return prompt_text(label)
     qdrant = _env_or_prompt("KB_QDRANT__URL",
                             "Cloud Qdrant URL (e.g. https://host:6333)",
@@ -680,7 +699,16 @@ def run_cloud_stack(prompt_text: Callable = click.prompt,
                          "e.g. https://host/v1)", required=True)
     embedding = _env_or_prompt("KB_EMBEDDING__ENDPOINT",
                                "Cloud embedding endpoint (optional)",
-                               required=False)
+                               required=False, empty_from_prompt=True)
+    # A hosted endpoint may require a Bearer token; prompt for the key
+    # only when an embedding endpoint was actually supplied (a keyless
+    # endpoint — e.g. the bundled embedding-model service — skips this).
+    embedding_api_key = ""
+    if embedding:
+        embedding_api_key = _env_or_prompt(
+            "KB_EMBEDDING__API_KEY",
+            "Cloud embedding API key (empty if the endpoint is "
+            "keyless)", required=False, empty_from_prompt=True)
     # neo4j.user / neo4j.password: needed only when the Neo4j instance
     # requires auth.  The prompts below stay optional; the re-prompt
     # after the endpoint prompts catches the cloud-needs-auth case.
@@ -697,6 +725,7 @@ def run_cloud_stack(prompt_text: Callable = click.prompt,
     neo4j = neo4j.strip()
     llm = llm.strip()
     embedding = embedding.strip()
+    embedding_api_key = embedding_api_key.strip()
     # The cloud path: when the user answered the Neo4j URL prompt but
     # left user/password empty, re-prompt (up to 3 times per field) —
     # a cloud Neo4j that needs auth will fail the health check
@@ -726,7 +755,9 @@ def run_cloud_stack(prompt_text: Callable = click.prompt,
              f"re-run to answer the prompt.")
         return False
     write_kb_local(_cloud_content(qdrant, neo4j, llm,
-                                  embedding, neo4j_user, neo4j_password))
+                                  embedding, neo4j_user,
+                                  neo4j_password,
+                                  embedding_api_key=embedding_api_key))
     echo("cloud mode: no Docker required — kb.local.yml now points at the "
          "cloud endpoints.")
     return True
@@ -1052,6 +1083,14 @@ def run_setup(prompt: Callable = click.prompt,
                         resolved["neo4j"]["user"]
                     content["neo4j"]["password"] = \
                         resolved["neo4j"]["password"]
+                # A hosted embedding endpoint may need a Bearer token:
+                # the --backends flag carries URLs only, so the key
+                # comes from KB_EMBEDDING__API_KEY when set (a keyless
+                # endpoint simply has no key).
+                embed_key = os.environ.get(
+                    "KB_EMBEDDING__API_KEY", "").strip()
+                if embed_key and content.get("embedding"):
+                    content["embedding"]["api_key"] = embed_key
                 write_kb_local(content)
         elif has_valid_local_config():
             echo("kb.local.yml already has valid endpoints — skipping "

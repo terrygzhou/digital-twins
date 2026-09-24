@@ -80,7 +80,7 @@ local stack is not started:
 | qdrant    | `local` (qdrant/qdrant:1.9.7)           | `KB_QDRANT__URL`               |
 | neo4j     | `local` (neo4j/neo4j:5.18-community)    | `KB_NEO4J__URL` / `KB_NEO4J__USER` / `KB_NEO4J__PASSWORD` |
 | llm       | `local` (bundled, GPU required)         | `KB_LLM__ENDPOINT` / `KB_LLM__MODEL` |
-| embedding | `local` (BAAI/bge-small-en-v1.5, 384-dim) | `KB_EMBEDDING__ENDPOINT`     |
+| embedding | `local` (BAAI/bge-small-en-v1.5, 384-dim) | `KB_EMBEDDING__ENDPOINT` / `KB_EMBEDDING__API_KEY` |
 
 Pick the whole local stack at once with `--local` (starts all four
 services; skips Docker detection and the cloud prompts):

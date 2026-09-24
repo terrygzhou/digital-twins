@@ -192,7 +192,7 @@ Flag precedence (highest wins): `--skip-services` > `--cloud-env` >
 | Flag | Effect |
 |------|--------|
 | `--skip-services` | "I handle backends myself": never probe Docker, never prompt, never write `kb.local.yml`; only init + admin + health checks. **Takes precedence over `--cloud` and over a valid `kb.local.yml`** (a re-run where the backend is already up). |
-| `--cloud` | Skip Docker detection, go straight to cloud mode (prompts for the three required endpoints). Set via env (`KB_QDRANT__URL`, `KB_NEO4J__URL`, `KB_LLM__ENDPOINT`) or answer the prompts; optional `KB_EMBEDDING__ENDPOINT`, `KB_NEO4J__USER`, `KB_NEO4J__PASSWORD`. |
+| `--cloud` | Skip Docker detection, go straight to cloud mode (prompts for the three required endpoints). Set via env (`KB_QDRANT__URL`, `KB_NEO4J__URL`, `KB_LLM__ENDPOINT`) or answer the prompts; optional `KB_EMBEDDING__ENDPOINT` (+ `KB_EMBEDDING__API_KEY` when the endpoint is hosted and key-protected), `KB_NEO4J__USER`, `KB_NEO4J__PASSWORD`. |
 | `--cloud-env` | Non-interactive cloud mode: the three required endpoints must come from `KB_QDRANT__URL` / `KB_NEO4J__URL` / `KB_LLM__ENDPOINT` env vars; never a prompt. Exits 5 naming the missing var(s) when any required var is unset or empty. Safe under a pipe or in CI. |
 | `--local` | Start the bundled local stack for all four services (qdrant + neo4j + llm + embedding); skip Docker detection and the cloud prompts. Suppressed by `--skip-services` / `--cloud-env` / `--cloud`. |
 | `--backends KEY=VAL,...` | Per-service backend choice (see the table above). Each `VAL` is `local` or a URL; an empty `VAL` marks the service required-external (the URL must come from the `KB_*` env var). Unknown service names are rejected. Suppressed by `--skip-services` / `--cloud-env` / `--cloud`. |
@@ -343,7 +343,7 @@ Set the required env vars (or answer the interactive prompts on stdin):
 - `KB_NEO4J__URL` — Neo4j URL (`bolt://` or `http(s)://`)
 - `KB_LLM__ENDPOINT` — OpenAI-compatible LLM base URL
 
-Optional: `KB_EMBEDDING__ENDPOINT`, `KB_NEO4J__USER`, `KB_NEO4J__PASSWORD`.
+Optional: `KB_EMBEDDING__ENDPOINT` (+ `KB_EMBEDDING__API_KEY` for hosted endpoints that need a Bearer token), `KB_NEO4J__USER`, `KB_NEO4J__PASSWORD`.
 
 Writes `~/.config/digital-twins/kb.local.yml` pointing at the cloud
 endpoints. No Docker required. Exit codes: `0` success · `5` a required

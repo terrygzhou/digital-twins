@@ -36,7 +36,8 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("KB_CONFIG_DIR", str(config_dir))
     monkeypatch.setenv("KB_STATE_DIR", str(state_dir))
     for v in ("KB_QDRANT__URL", "KB_NEO4J__URL", "KB_LLM__ENDPOINT",
-              "KB_EMBEDDING__ENDPOINT", "INIT_ADMIN_EMAIL"):
+              "KB_EMBEDDING__ENDPOINT", "KB_EMBEDDING__API_KEY",
+              "INIT_ADMIN_EMAIL"):
         monkeypatch.delenv(v, raising=False)
     return config_dir, state_dir
 
@@ -58,7 +59,7 @@ def _ok_checks():
 
 
 def _run_setup_cli(monkeypatch, *args, gpu=False, docker=False,
-                   config_dir=None, state_dir=None):
+                   config_dir=None, state_dir=None, env_extra=None):
     """Invoke ``digital-twins setup <args>`` with every external effect
     stubbed; return (result, captured) where captured exposes what the
     backend path called."""
@@ -110,6 +111,8 @@ def _run_setup_cli(monkeypatch, *args, gpu=False, docker=False,
     monkeypatch.setattr(setup_mod, "_gpu_present", lambda: gpu)
     monkeypatch.setattr(setup_mod, "has_valid_local_config", lambda: False)
 
+    for k, v in (env_extra or {}).items():
+        monkeypatch.setenv(k, v)
     runner = CliRunner()
     result = runner.invoke(cli, ["setup", *args])
     return result, captured
@@ -167,6 +170,34 @@ def test_backends_all_external_writes_supplied_urls(_isolate, monkeypatch):
     assert content["neo4j"]["url"] == "bolt://n"
     assert content["llm"]["endpoint"] == "https://l/v1"
     assert content["embedding"]["endpoint"] == "https://e/v1"
+
+
+def test_backends_all_external_with_api_key_writes_embed_key(
+        _isolate, monkeypatch):
+    """All-external --backends + KB_EMBEDDING__API_KEY set: the key is
+    written next to the endpoint (a hosted embedding service that needs
+    a Bearer token); with the var unset, no api_key key appears."""
+    import digital_twins.setup as setup_mod
+    config_dir, state_dir = _isolate
+    res, cap = _run_setup_cli(
+        monkeypatch, "--backends",
+        "qdrant=https://q,neo4j=bolt://n,llm=https://l/v1,embedding=https://e/v1",
+        gpu=False, docker=False, config_dir=config_dir, state_dir=state_dir,
+        env_extra={"KB_EMBEDDING__API_KEY": "sk-embed"})
+    assert res.exit_code == 0, res.output
+    content = cap["kb_local"]
+    assert content["embedding"] == {"endpoint": "https://e/v1",
+                                    "api_key": "sk-embed"}
+
+    # keyless: no api_key key in the embedding block
+    monkeypatch.delenv("KB_EMBEDDING__API_KEY", raising=False)
+    cap2 = dict(cap)
+    res2, cap2 = _run_setup_cli(
+        monkeypatch, "--backends",
+        "qdrant=https://q,neo4j=bolt://n,llm=https://l/v1,embedding=https://e/v1",
+        gpu=False, docker=False, config_dir=config_dir, state_dir=state_dir)
+    assert res2.exit_code == 0, res2.output
+    assert cap2["kb_local"]["embedding"] == {"endpoint": "https://e/v1"}
 
 
 def test_backends_parsing(_isolate, monkeypatch):

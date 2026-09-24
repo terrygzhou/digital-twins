@@ -493,6 +493,13 @@ def test_cloud_empty_env_vars_fail_with_named_vars(_isolate_config,
     monkeypatch.setenv("KB_QDRANT__URL", "http://q:6333")
     monkeypatch.setenv("KB_NEO4J__URL", "")  # explicitly empty
     monkeypatch.delenv("KB_LLM__ENDPOINT", raising=False)
+    # "set but empty" -> the optional embedding prompts are skipped too
+    # (a prompt would mean the gate had already been passed, which the
+    # empty vars guarantee it is not).
+    monkeypatch.setenv("KB_EMBEDDING__ENDPOINT", "")
+    monkeypatch.delenv("KB_EMBEDDING__API_KEY", raising=False)
+    # The gate fails on neo4j before any prompt is reached; the
+    # embedding endpoint/key prompts must not fire in this path.
 
     # Call the real run_cloud_stack: qdrant from env, neo4j empty (no
     # prompt), llm unset (prompt). The gate must fail on neo4j and name
@@ -526,11 +533,13 @@ def test_cloud_unset_env_vars_prompt_and_write(_isolate_config,
     monkeypatch.setenv("KB_EMBEDDING__ENDPOINT", "http://embed:8080/v1")
     monkeypatch.setenv("KB_NEO4J__USER", "neo4j-user")
     monkeypatch.setenv("KB_NEO4J__PASSWORD", "neo4j-pw")
+    monkeypatch.delenv("KB_EMBEDDING__API_KEY", raising=False)
 
     answers = iter([
         "http://cloud-q:6333",
         "bolt://cloud-n:7687",
         "http://cloud-llm:8000/v1",
+        "",  # embedding key prompt (endpoint set, key unset -> prompt)
     ])
     ok = setup_mod.run_cloud_stack(prompt_text=lambda label: next(answers),
                                    echo=lambda m: None)
@@ -542,6 +551,8 @@ def test_cloud_unset_env_vars_prompt_and_write(_isolate_config,
     assert data["neo4j"]["password"] == "neo4j-pw"
     assert data["llm"]["endpoint"] == "http://cloud-llm:8000/v1"
     assert data["embedding"]["endpoint"] == "http://embed:8080/v1"
+    assert "api_key" not in data["embedding"]
+
 
 
 def test_local_stack_no_gpu_omits_llm_and_embedding(_isolate_config,
@@ -801,13 +812,15 @@ def test_cloud_whitespace_in_endpoints_is_stripped(_isolate_config,
     config_dir, _state_dir = _isolate_config
     import digital_twins.setup as setup_mod
 
-    for var in ("KB_NEO4J__USER", "KB_NEO4J__PASSWORD"):
+    for var in ("KB_NEO4J__USER", "KB_NEO4J__PASSWORD",
+                "KB_EMBEDDING__ENDPOINT", "KB_EMBEDDING__API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
     prompts = iter([
         "http://cloud-q:6333 ",
         " bolt://cloud-n:7687 ",
         "http://cloud-llm:8000/v1 ",
+        "",  # optional embedding endpoint prompt (keyless -> empty)
         "neo4j-user",
         "neo4j-pw",
     ])
@@ -1207,3 +1220,123 @@ def test_setup_in_process_embedding_missing_extra(_isolate_config,
     assert "embedding: NOT ready (in-process" in joined
     assert "local-embedding" in joined
     assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# Cloud embedding endpoint + api_key
+# ---------------------------------------------------------------------------
+
+def test_cloud_embedding_endpoint_and_key_written(_isolate_config,
+                                                   monkeypatch):
+    """An optional cloud embedding endpoint (+ its Bearer key) is written
+    into kb.local.yml alongside the required endpoints."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    for v in ("KB_QDRANT__URL", "KB_NEO4J__URL", "KB_LLM__ENDPOINT",
+              "KB_EMBEDDING__ENDPOINT", "KB_EMBEDDING__API_KEY",
+              "KB_NEO4J__USER", "KB_NEO4J__PASSWORD"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("KB_EMBEDDING__ENDPOINT", "https://embed.example/v1")
+    monkeypatch.setenv("KB_EMBEDDING__API_KEY", "sk-embed-123")
+
+    answers = iter(["http://cloud-q:6333", "bolt://cloud-n:7687",
+                    "http://cloud-llm:8000/v1",
+                    "neo4j", "neo4j-pw"])
+    ok = setup_mod.run_cloud_stack(prompt_text=lambda label: next(answers),
+                                   echo=lambda m: None)
+    assert ok is True
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["embedding"] == {"endpoint": "https://embed.example/v1",
+                                 "api_key": "sk-embed-123"}
+
+
+def test_cloud_embedding_key_prompt_when_endpoint_prompted(_isolate_config,
+                                                           monkeypatch):
+    """When the endpoint itself comes from the prompt (env unset), the
+    api-key prompt fires exactly once (only because an endpoint was
+    supplied); keyless (empty answer) writes no api_key key."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    for v in ("KB_QDRANT__URL", "KB_NEO4J__URL", "KB_LLM__ENDPOINT",
+              "KB_EMBEDDING__ENDPOINT", "KB_EMBEDDING__API_KEY",
+              "KB_NEO4J__USER", "KB_NEO4J__PASSWORD"):
+        monkeypatch.delenv(v, raising=False)
+
+    prompts = []
+    # Env vars unset -> the optional embedding endpoint *and* key are
+    # answered from the prompts (required=False still prompts when the
+    # var is unset; an empty answer skips the key prompt).
+    answers = iter(["http://cloud-q:6333", "bolt://cloud-n:7687",
+                    "http://cloud-llm:8000/v1",
+                    "https://embed.example/v1", "",  # endpoint, key (empty)
+                    "neo4j", "neo4j-pw"])
+    def fake_prompt(label):
+        prompts.append(label)
+        return next(answers)
+    ok = setup_mod.run_cloud_stack(prompt_text=fake_prompt,
+                                   echo=lambda m: None)
+    assert ok is True
+    assert any("Cloud embedding endpoint" in p for p in prompts)
+    assert any("API key" in p for p in prompts)
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["embedding"] == {"endpoint": "https://embed.example/v1"}
+    assert "api_key" not in data["embedding"]
+
+
+def test_cloud_no_embedding_endpoint_no_key_prompt(_isolate_config,
+                                                   monkeypatch):
+    """No embedding endpoint answered: the key prompt must not fire
+    (a key without an endpoint would be dead config)."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    for v in ("KB_QDRANT__URL", "KB_NEO4J__URL", "KB_LLM__ENDPOINT",
+              "KB_EMBEDDING__ENDPOINT", "KB_EMBEDDING__API_KEY",
+              "KB_NEO4J__USER", "KB_NEO4J__PASSWORD"):
+        monkeypatch.delenv(v, raising=False)
+
+    prompts = []
+    answers = iter(["http://cloud-q:6333", "bolt://cloud-n:7687",
+                    "http://cloud-llm:8000/v1", "",  # endpoint: empty
+                    "neo4j", "neo4j-pw"])
+    def fake_prompt(label):
+        prompts.append(label)
+        return next(answers)
+    ok = setup_mod.run_cloud_stack(prompt_text=fake_prompt,
+                                   echo=lambda m: None)
+    assert ok is True
+    assert not any("API key" in p for p in prompts)
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert "embedding" not in data
+
+
+def test_cloud_env_embedding_key_written(_isolate_config, monkeypatch):
+    """--cloud-env: KB_EMBEDDING__API_KEY rides into kb.local.yml with the
+    endpoint when both are set; endpoint-only writes no api_key key."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+
+    for v in ("KB_EMBEDDING__ENDPOINT", "KB_EMBEDDING__API_KEY"):
+        monkeypatch.delenv(v, raising=False)
+    for v, val in (("KB_QDRANT__URL", "http://q:6333"),
+                   ("KB_NEO4J__URL", "bolt://n:7687"),
+                   ("KB_LLM__ENDPOINT", "http://l:8000/v1"),
+                   ("KB_EMBEDDING__ENDPOINT", "https://embed.example/v1"),
+                   ("KB_EMBEDDING__API_KEY", "sk-env-key")):
+        monkeypatch.setenv(v, val)
+    ok = setup_mod.run_cloud_env_stack(echo=lambda m: None)
+    assert ok is True
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["embedding"] == {"endpoint": "https://embed.example/v1",
+                                 "api_key": "sk-env-key"}
+
+    # key-only (endpoint unset from env): the key still lands, so a
+    # config-layer endpoint from kb.yml/env still authenticates.
+    (config_dir / "kb.local.yml").unlink()
+    monkeypatch.delenv("KB_EMBEDDING__ENDPOINT", raising=False)
+    ok = setup_mod.run_cloud_env_stack(echo=lambda m: None)
+    assert ok is True
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["embedding"] == {"api_key": "sk-env-key"}
