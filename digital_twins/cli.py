@@ -213,8 +213,22 @@ def s4(dry_run: bool) -> None:
 @click.option("--skip-services", is_flag=True,
               help="Assume the backend is already up; skip service startup "
                    "and do init + admin account + health checks only.")
+@click.option("--local", is_flag=True,
+              help="Start the bundled local stack for all four services "
+                   "(qdrant + neo4j + llm + embedding); skip Docker "
+                   "detection and the cloud prompts. Suppressed by "
+                   "--skip-services / --cloud-env / --cloud.")
+@click.option("--backends", default=None,
+              help="Per-service backend choice as KEY=VAL,... e.g. "
+                   "qdrant=local,llm=https://example.com/v1. Each VAL is "
+                   "'local' (bundled Docker service) or a URL (external "
+                   "endpoint); an empty VAL marks the service required-"
+                   "external (the URL must come from the KB_* env var). "
+                   "Unknown service names are rejected. Suppressed by "
+                   "--skip-services / --cloud-env / --cloud; combining "
+                   "with --skip-services exits 1.")
 def setup(force_cloud: bool, skip_services: bool,
-          cloud_env: bool) -> None:
+          cloud_env: bool, local: bool, backends: str | None) -> None:
     """First-run wizard: backend (local Docker or cloud) + init + first
     admin account + health report in one command.
 
@@ -229,15 +243,27 @@ def setup(force_cloud: bool, skip_services: bool,
     --skip-services skips this too), and the health checks run with a
     remediation line for any failing endpoint.
 
+    --local starts the bundled local stack for all four services;
+    --backends qdrant=local,llm=https://host/v1 picks per-service
+    backends (services not named default to local; if every service ends
+    up external the cloud path runs instead of Docker). Flag precedence
+    (highest wins): --skip-services > --cloud-env > --cloud >
+    --local/--backends > interactive.
+
     Exits 0 when all health checks pass; 1 on a failing check; 3 when the
     local stack failed to start; 5 when cloud endpoints could not be
     resolved; 6 when the wizard was interrupted (Ctrl-C / EOF at a
     prompt) before the backend was configured.
     """
-    from digital_twins.setup import run_setup
+    from digital_twins.setup import parse_backends, run_setup
+    backends_map: dict | None = None
+    if backends:
+        backends_map = parse_backends(backends)
     raise SystemExit(run_setup(force_cloud=force_cloud,
                                skip_services=skip_services,
-                               cloud_env=cloud_env))
+                               cloud_env=cloud_env,
+                               local=local,
+                               backends=backends_map))
 
 
 @cli.command()
