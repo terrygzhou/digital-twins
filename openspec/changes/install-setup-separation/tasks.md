@@ -7,7 +7,7 @@
       constants, `external` to the user/env value. Pure function — Test-First:
       unit tests in `tests/unit/test_setup.py` (all-local, all-external,
       mixed, llm-local-on-no-GPU error, env-var precedence in `--cloud-env`).
-- [ ] 1.2 Add `--backends KEY=VAL,...`, `--local` flags to the `setup`
+- [x] 1.2 Add `--backends KEY=VAL,...`, `--local` flags to the `setup`
       subcommand (`cli.py`), threading them through `run_setup()`; keep
       `--cloud` (prompt mode) / `--cloud-env` (env mode) / `--skip-services`
       behavior unchanged. Flag precedence is deterministic: a flag present
@@ -16,7 +16,7 @@
       `--cloud-env` name all four and suppress the second pass entirely.
       `--skip-services` + `--backends` is a contradiction → setup exits
       with a clear error naming the conflict.
-- [ ] 1.3 Change `run_local_stack` to build `up_services` from the resolved
+- [x] 1.3 Change `run_local_stack` to build `up_services` from the resolved
       map (only services with `mode == "local"`) instead of the hardcoded
       list; write `kb.local.yml` from the resolved map so mixed local/external
       configs land in one file.
