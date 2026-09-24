@@ -58,19 +58,19 @@
       ledger.
 
 ## 6. Docs + config
-- [ ] 6.1 `config.example.yml` + docs: document new payload fields and the
+- [x] 6.1 `config.example.yml` + docs: document new payload fields and the
       `embed_model` requirement; note re-ingest requirement after upgrade
       (old points orphaned by ID-scheme change).
-- [ ] 6.2 Portability guard check: `pytest tests/integration/test_portability.py
+- [x] 6.2 Portability guard check: `pytest tests/integration/test_portability.py
       tests/unit/test_knob_docs.py` must stay green (no host paths introduced).
-- [ ] 6.3 Document the two recorded decisions: (a) NFR-1 dedup is
+- [x] 6.3 Document the two recorded decisions: (a) NFR-1 dedup is
       within-system; cross-system content dedup requires a
       channel-mapping table (blocked on personal-kb channel-registry ACL);
       (b) chunk text lives in Qdrant `full_content`, not in the Neo4j graph
       (Neo4j = entity/relation graph; Qdrant = vector + payload store).
 
 ## 7. Verification
-- [ ] 7.1 Full pytest run; NFR-1 acceptance check (same content via schedule /
+- [x] 7.1 Full pytest run; NFR-1 acceptance check (same content via schedule /
       run / mcp / ui = one point) re-asserted against new point-ID scheme.
 - [ ] 7.2 Manual interop check: point personal-kb's `kb_health`/hybrid query
       at a digital-twins-populated DB and confirm `_point_hits` finds

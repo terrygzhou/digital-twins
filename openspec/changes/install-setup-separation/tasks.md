@@ -7,7 +7,7 @@
       constants, `external` to the user/env value. Pure function — Test-First:
       unit tests in `tests/unit/test_setup.py` (all-local, all-external,
       mixed, llm-local-on-no-GPU error, env-var precedence in `--cloud-env`).
-- [ ] 1.2 Add `--backends KEY=VAL,...`, `--local` flags to the `setup`
+- [x] 1.2 Add `--backends KEY=VAL,...`, `--local` flags to the `setup`
       subcommand (`cli.py`), threading them through `run_setup()`; keep
       `--cloud` (prompt mode) / `--cloud-env` (env mode) / `--skip-services`
       behavior unchanged. Flag precedence is deterministic: a flag present
@@ -16,13 +16,13 @@
       `--cloud-env` name all four and suppress the second pass entirely.
       `--skip-services` + `--backends` is a contradiction → setup exits
       with a clear error naming the conflict.
-- [ ] 1.3 Change `run_local_stack` to build `up_services` from the resolved
+- [x] 1.3 Change `run_local_stack` to build `up_services` from the resolved
       map (only services with `mode == "local"`) instead of the hardcoded
       list; write `kb.local.yml` from the resolved map so mixed local/external
       configs land in one file.
 
 ## 2. Interactive per-service prompts (digital_twins/setup.py)
-- [ ] 2.1 When the user accepts the bundled local stack, add a second pass
+- [x] 2.1 When the user accepts the bundled local stack, add a second pass
       that asks, per service, local-or-external (defaults: qdrant/neo4j →
       local; llm/embedding → "external" on no-GPU hosts, local on GPU
       hosts). An external answer prompts for the URL (or reads `KB_*` env).
@@ -30,7 +30,7 @@
       path; `--local`/`--cloud`/`--cloud-env` (which name all four
       services) and any service named in `--backends` are resolved from the
       flag/env and do not re-prompt.
-- [ ] 2.2 Unit tests: prompt path for a mixed choice produces the right
+- [x] 2.2 Unit tests: prompt path for a mixed choice produces the right
       resolved map; no-GPU llm default is external; services named in
       `--backends` are not re-prompted.
 
@@ -49,7 +49,7 @@
       `.superpowers/sdd/` ledger for these test files.
 
 ## 4. `init` deprecation (digital_twins/cli.py)
-- [ ] 4.1 Turn `init` into a deprecated alias of the *narrower* `setup`
+- [x] 4.1 Turn `init` into a deprecated alias of the *narrower* `setup`
       subset (state DB + migrations + first admin + health report — not the
       backend decision) with a one-line deprecation notice naming
       `digital-twins setup`. **Preserve `init`'s merge-on-existing behavior**
@@ -58,7 +58,7 @@
       `tests/integration/test_cli_init.py` asserts); migrate that merge
       behavior into `setup`'s `kb.local.yml` write path so both commands
       agree. `--yes` is preserved.
-- [ ] 4.2 Reword **all** user-facing "run `digital-twins init`" /
+- [x] 4.2 Reword **all** user-facing "run `digital-twins init`" /
       "re-run init/validate" remediation strings to "run
       `digital-twins setup`" — sweep all four files: `digital_twins/cli.py`
       (incl. the "no state db" branch at L290-295 and L1073/L1133/L1211/

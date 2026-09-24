@@ -74,15 +74,15 @@
 
 ## 5. Spec-013 / SDD deltas
 
-- [ ] 5.1 Update `specs/013-neo4j-query-tests/plan.md` pinned Cypher to
+- [x] 5.1 Update `specs/013-neo4j-query-tests/plan.md` pinned Cypher to
       include the Entity/MENTIONED write statements (the S4 entity half)
       when extraction is enabled; document that extraction is
       config-gated (default off) so the pinned contract cases only assert
       entity Cypher when the knob is set.
-- [ ] 5.2 Update `tests/integration/test_neo4j_query.py` (or add
+- [x] 5.2 Update `tests/integration/test_neo4j_query.py` (or add
       `tests/integration/test_s4_entities.py`) with the new Cypher pins
       and the supersede/drop recording-driver cases.
-- [ ] 5.3 Update `.superpowers/sdd/013-neo4j-query-tests/progress.md`
+- [x] 5.3 Update `.superpowers/sdd/013-neo4j-query-tests/progress.md`
       ledger.
 
 ## 6. Docs

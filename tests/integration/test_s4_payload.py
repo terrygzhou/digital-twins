@@ -164,3 +164,50 @@ def test_s4_payload_provenance_matches_audit_row(tmp_path):
         (summary.run_id,)).fetchone()
     assert p["run_id"] == row[0]
     assert p["trigger"] == row[1]
+
+
+def test_s4_point_id_is_content_independent(tmp_path):
+    """NFR-1 / NFR-14 re-assertion under the S4 point-ID scheme (task 7.1).
+
+    The same content ingested via two different trigger surfaces
+    (``schedule`` vs ``manual``) must land on the *same* point ID — the
+    ID is a function of ``(channel, item_id, chunk_index)`` only, not of
+    content bytes, run_id, or trigger.  Two consecutive pipeline runs
+    with different triggers therefore upsert (not append): the second
+    run must not produce a second point for the same item+chunk.
+    """
+    fs_dir = tmp_path / "fs"
+    fs_dir.mkdir()
+    (fs_dir / "n.txt").write_text("n", encoding="utf-8")
+
+    db = connect(tmp_path / "state")
+    migrate(db)
+    qdrant = QdrantClient(":memory:")
+    cfg = _cfg(tmp_path, fs_dir, tmp_path / "state_db")
+
+    # First run: schedule surface.
+    run_pipeline(cfg, db, qdrant, _embedder,
+                 source_names=["fs"], trigger="schedule",
+                 scheduled_by="system")
+    first = _by_item(qdrant, "n.txt")
+    assert len(first) == 1
+    first_id = first[0].id
+
+    # Second run: manual surface, same content.
+    run_pipeline(cfg, db, qdrant, _embedder,
+                 source_names=["fs"], trigger="manual",
+                 scheduled_by="system")
+    after = _by_item(qdrant, "n.txt")
+    # One point, not two (NFR-1): the second run upserted onto the
+    # content-independent S4 point ID.
+    assert len(after) == 1, (
+        f"NFR-1 violated: same content via two surfaces produced "
+        f"{len(after)} points, expected 1")
+    assert after[0].id == first_id, (
+        "point ID changed between runs — the S4 scheme must be "
+        "content/trigger-independent")
+
+    # The ID equals the pinned uuid5 form.
+    assert first_id == __import__("digital_twins.ingest.ids",
+                                  fromlist=["point_id_s4"]).point_id_s4(
+        "fs", "n.txt", 0)

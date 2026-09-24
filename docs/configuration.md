@@ -143,6 +143,51 @@ server URL to run the full stack against that external endpoint.
 | llm.model | str | ~ | KB_LLM__MODEL | LLM model identifier. |
 | llm.api_key | str | ~ | KB_LLM__API_KEY | LLM auth token, when the endpoint requires one. |
 
+
+### S4 graph and Qdrant payload (s4-graph-alignment)
+
+When `neo4j.url`, `neo4j.user`, and `neo4j.password` are all set, every
+ingest surface writes a `(:SourceItem {item_id, channel, content_hash})` node
+per ingested item (deduped on `item_id`; no-op when already present).
+Legacy `:KbItem` / `:KbChunk` / `HAS_CHUNK` writes were removed in this
+change; run `digital-twins migrate s4` on upgraded installs to clean up
+old nodes.
+
+**Qdrant payload fields (S4-aligned, s4-graph-alignment task 2):**
+
+| field | description |
+|---|---|
+| `item_id` | `item.key` — the join key into `SourceItem.item_id` |
+| `content_hash` | item-level (shared by all chunks of one item); differs from chunk-level `content_hash()` used pre-S4 |
+| `full_content` | the chunk's raw text (NOT stored in Neo4j; Qdrant is the text store) |
+| `content_snippet` | `full_content[:200]` |
+| `captured_at` | the item's `ts` (rename of pre-S4 `ts` field) |
+| `total_chunks` | number of chunks produced for this item |
+| `embed_model` | the embedding model name (from `embedding.model` config) |
+| `source_type` | the source name (e.g. `fs`, `hermes`, `pi`) |
+| `tags` | `[]` (placeholder; populated by future changes) |
+| `meta.owner` / `meta.owner_tag` | owner fields moved under `meta` (003 multi-user) |
+| `run_id` / `trigger` | optional provenance passthroughs; when written they equal the audit row's values |
+
+**Recorded decisions (s4-graph-alignment task 6.3):**
+
+(a) **NFR-1 dedup is within-system.** The same item ingested via schedule,
+`run --once`, MCP, or web UI yields one Qdrant point (content-independent
+point ID under the S4 scheme). Cross-system content dedup (the same
+underlying document reaching both digital-twins and personal-kb) is
+out of scope: it requires a channel-mapping table (digital-twins source
+name → personal-kb channel), which is blocked on personal-kb's
+channel-registry ACL. Revisit if that ACL is made available.
+
+(b) **Chunk text lives in Qdrant, not Neo4j.** The Neo4j graph stores
+`(:SourceItem)` / `(:Entity)` / `:MENTIONED` / `:REL` nodes and edges
+only; the full chunk text is in Qdrant's `full_content` payload field.
+Neo4j = entity/relation graph; Qdrant = vector + payload store.
+
+**After upgrading from a pre-S4 install:** run `digital-twins migrate s4`
+to remove legacy `:KbItem` / `:KbChunk` nodes, then re-ingest — old
+points are orphans under the new content-independent point-ID scheme.
+
 ## Embedding
 
 | knob | type | default | env var | notes |

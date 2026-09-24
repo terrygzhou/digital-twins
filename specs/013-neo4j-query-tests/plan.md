@@ -53,3 +53,59 @@ Complete — commit `00cf529`; full suite 982 passed, 1 skipped; guards green
 (see ledger). S4 delta cases passing in `tests/integration/test_neo4j_query.py`
 (9 passed, 1 skipped live, sandbox socket-perm pre-existing failures
 unrelated).
+
+## S4 entity delta (2026-09-24, openspec s4-entity-extraction §5)
+
+Entity/MENTIONED Cypher is pinned in `digital_twins/ingest/entities.py`
+(`materialize()`, `supersede()`), not in `tests/integration/test_neo4j_query.py`
+(direct-driver Cypher assertions would require a live Neo4j test container,
+which the unit-layer recording-driver tests in `tests/unit/test_entities.py`
+already cover without the live-mark gate).
+
+**Pinned write shape (extraction.enabled=true path, NFR-1 idempotent):**
+
+Step 1 — per-entity MERGE:
+```
+MERGE (e:Entity {name: $name, type: $type})
+ON CREATE SET e.created = $now, e.desc = $desc
+ON MATCH  SET e.last_seen = $now,
+             e.desc = CASE WHEN $desc <> '' THEN $desc ELSE e.desc END
+```
+
+Step 2 — SourceItem MERGE (per extraction run, deduped on item_id):
+```
+MERGE (si:SourceItem {item_id: $item_id})
+SET si.channel = $channel, si.content_hash = $content_hash,
+    si.last_run_id = $run_id, si.last_captured_at = $captured_at
+```
+
+Step 3 — per-entity MENTIONED edge:
+```
+MATCH (si:SourceItem {item_id: $item_id})
+MATCH (e:Entity {name: $name, type: $type})
+MERGE (si)-[m:MENTIONED]->(e)
+ON CREATE SET m.captured_at = $captured_at, m.run_id = $run_id,
+             m.prompt_version = $pv, m.valid_from = $now
+ON MATCH  SET m.valid_to = NULL, m.last_seen = $now, m.run_id = $run_id
+```
+
+Step 4 — REL: intentionally a no-op (design decision 1; REL production is a
+follow-up change). `materialize()` returns `{"entities": N, "mentioned": N,
+"relations": 0}`.
+
+**Supersede** (`supersede(item_id, driver)`): stamps `valid_to` on all live
+`MENTIONED` edges (where `valid_to IS NULL`) scoped to the item's
+`SourceItem`; returns the edge count. One statement (REL supersede is a
+documented no-op in `supersede()` — REL edges are not yet written, so the
+REL branch is a 0-row no-op):
+
+```
+MATCH (si:SourceItem {item_id: $item_id})-[m:MENTIONED]->()
+WHERE m.valid_to IS NULL
+SET m.valid_to = $now
+```
+
+**Config gate:** the extraction step runs only when
+`extraction.enabled=true` AND a Neo4j driver was passed to `run_pipeline`.
+Default is `false` — no LLM call, no entity/MENTIONED writes beyond the
+`:SourceItem` node from `pipeline._upsert_graph`.
