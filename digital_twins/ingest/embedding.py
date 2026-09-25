@@ -72,13 +72,18 @@ def load_embedder(model: str = DEFAULT_MODEL, device: str = "auto"):
             "OpenAI-compatible embedding endpoint"
         ) from exc
     try:
-        return SentenceTransformer(model, device=resolve_device(device))
+        return SentenceTransformer(
+            model, device=resolve_device(device), local_files_only=True
+        )
     except Exception as exc:
         raise LocalEmbedderError(
             f"could not load pinned embedding model {model!r} ({exc}); "
-            "ensure network access for the model download, or set "
-            "embedding.endpoint (env KB_EMBEDDING__ENDPOINT) to an "
-            "OpenAI-compatible embedding endpoint"
+            "the model is loaded from the local HuggingFace cache only — "
+            "if it is not cached, run with network once (unset "
+            "HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE) to populate "
+            "~/.cache/huggingface, or set embedding.endpoint "
+            "(env KB_EMBEDDING__ENDPOINT) to an OpenAI-compatible "
+            "embedding endpoint"
         ) from exc
 
 
