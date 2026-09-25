@@ -153,6 +153,26 @@ checks, and prints the next step.
 
 #### Choosing backends: local Docker or per-service cloud endpoints
 
+> **No Docker / want to use your own endpoints?** Don't run the default
+> wizard — pick the mode that fits you:
+>
+> - **`digital-twins setup --cloud`** — skip Docker entirely; you are
+>   prompted for your Qdrant / Neo4j / LLM endpoints (+ optional embedding
+>   endpoint + API key + Neo4j credentials). It writes `kb.local.yml` and
+>   never starts a container.
+> - **`digital-twins setup --cloud-env`** — the same, but non-interactive:
+>   endpoints come from the `KB_*` env vars (`KB_QDRANT__URL`,
+>   `KB_NEO4J__URL`, `KB_NEO4J__USER` / `KB_NEO4J__PASSWORD`,
+>   `KB_LLM__ENDPOINT`, optional `KB_EMBEDDING__ENDPOINT` /
+>   `KB_EMBEDDING__API_KEY`). Safe in CI / under a pipe; exits 5 naming
+>   any missing var.
+> - **`digital-twins setup --backends qdrant=…,neo4j=…,llm=…,embedding=…`** —
+>   per-service choice; supply a URL for every service and no Docker is
+>   used at all.
+>
+> Any of these writes `kb.local.yml` and then the rest of the wizard
+> (state DB, admin account, health checks) runs as usual.
+
 Each of the four services — qdrant, neo4j, llm, embedding — can be
 served by the bundled local Docker stack (`local`) or by an external
 cloud endpoint (a URL you point at via env var). Services not named in
@@ -255,8 +275,9 @@ Stdio variant (agent spawns the server as a child process):
 }
 ```
 
-All 10 tools (6 scheduler + 4 KB) are available; role-gating and
-owner-scoping apply per call. Full quickstart:
+All 10 tools (6 scheduler: `kb_schedule_list/create/update/delete/run`
++ `kb_run_history`; 4 KB: `kb_search`, `kb_chat`, `kb_ingest`, `kb_health`)
+are available; role-gating and owner-scoping apply per call. Full quickstart:
 [`specs/004-mcp-scheduler-tools/quickstart.md`](specs/004-mcp-scheduler-tools/quickstart.md).
 
 ## Manual onboarding (reference)
@@ -497,7 +518,7 @@ flowchart TD
 
     %% Phase 5: retrieval / serving (read side)
     web["web/ /api/* (search, ingest, audit)"]
-    mcp["mcp/ stdio + http (kb_search, kb_ingest, …)"]
+    mcp["mcp/ stdio + http (kb_search, kb_chat, kb_ingest, kb_health, …)"]
     search{"owner-scoped vector search"}
 
     %% Cross-cutting
@@ -594,7 +615,8 @@ Full detail + examples: [`docs/configuration.md`](docs/configuration.md).
 Accounts and credentials live in the state DB (`~/.digital-twins`):
 
 - **Admins** sign in with a password (PBKDF2, `sessions`); the first
-  `init` creates one; `digital-twins user add` adds more.
+  `init` creates one; `digital-twins account` (list / set-role / delete)
+  manages more.
 - The generated password is shown once and written to
   `admin-credentials.txt` in the state dir; **there is no
   password-reset path** — if the file is missing, removing
@@ -619,11 +641,18 @@ reader + schedule CRUD/trigger; `admin` → scheduler + user management.
 
 | `digital-twins` sub-command | Does |
 |---|---|
-| `login` | sign in → session token (8 h) |
-| `user add/list` | create a named user; list accounts (admin) |
-| `token` | mint a personal token for the signed-in account |
-| `tokens revoke` | revoke a personal token (admin) |
-| `status` | who-am-I + role + live service report |
+| `signup` | create the first account (admin) or a named reader |
+| `account` | list / set-role / delete accounts + `whoami` (admin-gated except `whoami`) |
+| `token` | create / list / revoke personal tokens |
+| `session` | revoke a web session token |
+| `channels` | manage ingestion channels: list / status / enable / disable / add |
+| `config` | list / set / unset config knobs (write to `kb.local.yml`) |
+| `schedule` | add / list / remove schedules |
+| `run` / `run-history` | one-shot ingest run; audit-run history |
+| `serve` / `serve-mcp` | long-running scheduler; MCP server (stdio/http) |
+| `setup` / `init` | first-run wizard; legacy alias (deprecated) |
+| `migrate s4` | drop legacy `:KbItem`/`:KbChunk` graph nodes on upgraded installs |
+| `validate` | config + service health checks without ingesting |
 | `web` | the web app (UI + /api/*); admin-only ops check the role |
 
 Full detail: [`docs/multi-user.md`](docs/multi-user.md).
