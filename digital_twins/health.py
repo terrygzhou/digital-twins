@@ -22,13 +22,15 @@ def qdrant_collection(cfg) -> str:
     """Resolved Qdrant collection name (014 follow-up / independence knob).
 
     Reads `qdrant.collection` from the config layer; falls back to the
-    pinned `QDRANT_COLLECTION` constant when the knob is unset or empty.
-    The pinned constant remains the default so existing installs (and
-    the baseline-parity `personal_kb` contract) are unchanged; a
-    non-default value overrides it for all Qdrant ops in this process.
+    pinned `QDRANT_COLLECTION` constant when the knob is unset or empty
+    (or whitespace-only). The pinned constant remains the default so
+    existing installs (and the baseline-parity `personal_kb` contract)
+    are unchanged; a non-default value overrides it for all Qdrant ops
+    in this process.
     """
     from digital_twins.config.schema import get
     val = get(cfg, "qdrant.collection")
+    val = val.strip() if isinstance(val, str) else val
     return val if val else QDRANT_COLLECTION
 
 HTTP_TIMEOUT_S = 10

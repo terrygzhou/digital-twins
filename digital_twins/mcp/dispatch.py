@@ -741,7 +741,7 @@ def _kb_search_body(ctx: MCPContext, args: dict) -> dict:
       6. Pooled ``_embed_query(ctx.config, text)`` (the heavy model loads
          once, not per request; load failure → ``embedding_unavailable``
          naming ``embedding.model``).
-      7. ``query_points(QDRANT_COLLECTION, query=<vec>,
+      7. ``query_points(qdrant_collection(ctx.config), query=<vec>,
          query_filter=Filter(must=[FieldCondition(key='owner_tag',
          match=MatchValue(value=owner_tag))]), limit=limit,
          with_payload=True)`` — the 006 filter verbatim.

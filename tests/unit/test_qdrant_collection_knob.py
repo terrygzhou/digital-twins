@@ -40,6 +40,11 @@ def test_resolve_empty_falls_back_to_default():
     assert qdrant_collection(cfg) == QDRANT_COLLECTION
 
 
+def test_resolve_whitespace_falls_back_to_default():
+    cfg = {"qdrant": {"collection": "   "}}
+    assert qdrant_collection(cfg) == QDRANT_COLLECTION
+
+
 def test_check_qdrant_message_uses_resolved_name(monkeypatch):
     """check_qdrant reports the configured collection, not the constant."""
     import types
