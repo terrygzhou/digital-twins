@@ -11,6 +11,7 @@
 qdrant:
   url: ""          # env: KB_QDRANT__URL
   api_key: ""      # env: KB_QDRANT__API_KEY
+  collection: "personal_kb"  # env: KB_QDRANT__COLLECTION
 neo4j:
   url: ""          # env: KB_NEO4J__URL
   user: ""         # env: KB_NEO4J__USER

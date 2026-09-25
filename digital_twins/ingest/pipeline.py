@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from qdrant_client import models as qm
 
 from digital_twins.config.schema import get
-from digital_twins.health import QDRANT_COLLECTION, preflight
+from digital_twins.health import QDRANT_COLLECTION, preflight, qdrant_collection
 from digital_twins.ingest.chunking import chunk_text
 from digital_twins.ingest.embedding import (
     DEFAULT_MODEL,
@@ -88,31 +88,35 @@ def _cursor(db, source: str):
     return row[0] if row and row[0] else None
 
 
-def _ensure_collection(client, dim: int) -> None:
+def _ensure_collection(client, dim: int, coll: str = QDRANT_COLLECTION) -> None:
     """Create the collection at `dim` if missing.
 
     The dimension guard (verify existing collection == pinned dim, raise
     DimensionMismatchError) is the caller's responsibility: see
     `assert_dimension` below. `_ensure_collection` only handles the
     not-yet-created case so callers that pre-check can stay minimal.
+    `coll` is the collection name (resolved via the `qdrant.collection`
+    knob; default keeps baseline parity).
     """
-    if not client.collection_exists(QDRANT_COLLECTION):
+    if not client.collection_exists(coll):
         client.create_collection(
-            QDRANT_COLLECTION,
+            coll,
             vectors_config=qm.VectorParams(size=dim, distance=qm.Distance.COSINE),
         )
 
 
-def assert_dimension(client, dim: int) -> None:
+def assert_dimension(client, dim: int, coll: str = QDRANT_COLLECTION) -> None:
     """Guard: existing collection dimension must equal the pinned `dim`.
 
     Raises DimensionMismatchError (naming both dimensions + remediation)
     if the collection exists at a different size. No-op when the
     collection does not exist yet (it is created at `dim` on first run).
+    `coll` is the collection name (resolved via the `qdrant.collection`
+    knob; default keeps baseline parity).
     """
-    if not client.collection_exists(QDRANT_COLLECTION):
+    if not client.collection_exists(coll):
         return
-    info = client.get_collection(QDRANT_COLLECTION)
+    info = client.get_collection(coll)
     vectors = info.config.params.vectors
     if hasattr(vectors, "size"):  # single-vector collection
         actual = vectors.size
@@ -120,7 +124,7 @@ def assert_dimension(client, dim: int) -> None:
         first = next(iter(vectors.values()), None)
         actual = first.size if first is not None else None
     if actual != dim:
-        raise DimensionMismatchError(QDRANT_COLLECTION, actual, dim)
+        raise DimensionMismatchError(coll, actual, dim)
 
 
 def run_pipeline(
@@ -189,8 +193,9 @@ def run_pipeline(
             client = qdrant() if callable(qdrant) and not hasattr(qdrant, "upsert") else qdrant
             expected_dim = model_dimension(
                 get(cfg, "embedding.model") or DEFAULT_MODEL)
-            assert_dimension(client, expected_dim)
-            _ensure_collection(client, expected_dim)
+            coll = qdrant_collection(cfg)
+            assert_dimension(client, expected_dim, coll)
+            _ensure_collection(client, expected_dim, coll)
 
         total_points = 0
         for name, source in built:
@@ -269,7 +274,7 @@ def run_pipeline(
                         vector=vector,
                         payload=payload,
                     ))
-                client.upsert(QDRANT_COLLECTION, points=points, wait=True)
+                client.upsert(coll, points=points, wait=True)
                 total_points += len(points)
                 if neo4j is not None:
                     # S4 graph write: one :SourceItem node per item, keyed

@@ -59,6 +59,15 @@ KNOBS: dict[str, dict] = {
         "env": "KB_QDRANT__API_KEY",
         "group": GROUP_ENDPOINTS,
     },
+    "qdrant.collection": {
+        "type": "str",
+        "default": "personal_kb",
+        "env": "KB_QDRANT__COLLECTION",
+        "group": GROUP_ENDPOINTS,
+        "doc": "Qdrant collection name for all vector ops. Default is the "
+               "baseline parity value; override to target a different "
+               "collection on the same Qdrant host.",
+    },
     "neo4j.url": {
         "type": "str",
         "default": None,
