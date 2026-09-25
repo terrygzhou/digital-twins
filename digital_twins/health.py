@@ -17,6 +17,20 @@ from digital_twins.ingest.embedding import DEFAULT_MODEL, model_dimension
 # parity keeps the name "personal_kb".
 QDRANT_COLLECTION = "personal_kb"
 
+
+def qdrant_collection(cfg) -> str:
+    """Resolved Qdrant collection name (014 follow-up / independence knob).
+
+    Reads `qdrant.collection` from the config layer; falls back to the
+    pinned `QDRANT_COLLECTION` constant when the knob is unset or empty.
+    The pinned constant remains the default so existing installs (and
+    the baseline-parity `personal_kb` contract) are unchanged; a
+    non-default value overrides it for all Qdrant ops in this process.
+    """
+    from digital_twins.config.schema import get
+    val = get(cfg, "qdrant.collection")
+    return val if val else QDRANT_COLLECTION
+
 HTTP_TIMEOUT_S = 10
 
 VALID_STATUSES = frozenset({"ok", "unconfigured", "unreachable", "auth-failed"})
@@ -73,26 +87,27 @@ def check_qdrant(cfg) -> HealthResult:
             "qdrant", False, "qdrant.url is not configured",
             "set qdrant.url in kb.local.yml (env: KB_QDRANT__URL), then re-run setup/validate",
             status="unconfigured")
+    coll = qdrant_collection(cfg)
     try:
         from qdrant_client import QdrantClient
         client = QdrantClient(url=url, api_key=get(cfg, "qdrant.api_key") or None)
         names = {c.name for c in client.get_collections().collections}
-        if QDRANT_COLLECTION not in names:
+        if coll not in names:
             return HealthResult(
                 "qdrant", True,
-                f"reachable; collection {QDRANT_COLLECTION!r} will be created on first run",
+                f"reachable; collection {coll!r} will be created on first run",
             )
-        dim = _collection_dim(client, QDRANT_COLLECTION)
+        dim = _collection_dim(client, coll)
         expected = model_dimension(get(cfg, "embedding.model") or DEFAULT_MODEL)
         if dim != expected:
             return HealthResult(
                 "qdrant", False,
-                f"collection {QDRANT_COLLECTION} is {dim}-dim but the pinned model "
+                f"collection {coll} is {dim}-dim but the pinned model "
                 f"produces {expected}-dim vectors",
                 "recreate the collection at the pinned dimension or re-embed (FR-010)",
             )
         return HealthResult(
-            "qdrant", True, f"reachable; {QDRANT_COLLECTION} is {dim}-dim")
+            "qdrant", True, f"reachable; {coll} is {dim}-dim")
     except Exception as exc:
         status = _classify(exc)
         if status == "auth-failed":

@@ -136,6 +136,7 @@ server URL to run the full stack against that external endpoint.
 |---|---|---|---|---|
 | qdrant.url | str | ~ | KB_QDRANT__URL | Vector store endpoint URL. |
 | qdrant.api_key | str | ~ | KB_QDRANT__API_KEY | Qdrant auth token, when the deployment requires one. |
+| qdrant.collection | str | personal_kb | KB_QDRANT__COLLECTION | Qdrant collection name for all vector ops; override to target a different collection on the same host. |
 | neo4j.url | str | ~ | KB_NEO4J__URL | Graph database endpoint URL. |
 | neo4j.user | str | ~ | KB_NEO4J__USER | Neo4j login user. |
 | neo4j.password | str | ~ | KB_NEO4J__PASSWORD | Neo4j login password. |

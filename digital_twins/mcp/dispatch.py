@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 from ..accounts import owner_tag_for, require_capability, RoleDenied
 from ..config.schema import get as _cfg_get
-from ..health import QDRANT_COLLECTION
+from ..health import QDRANT_COLLECTION, qdrant_collection
 from ..ingest.pipeline import run_pipeline  # noqa: F401 — monkeypatch seam
 from .acl import can_access_schedule
 from .registry import MCPContext
@@ -823,8 +823,9 @@ def _kb_search_body(ctx: MCPContext, args: dict) -> dict:
 
     try:
         from qdrant_client.models import FieldCondition, Filter, MatchValue
+        coll = qdrant_collection(ctx.config)
         results = client.query_points(
-            QDRANT_COLLECTION,
+            coll,
             query=query_vector,
             query_filter=Filter(must=[FieldCondition(
                 key="owner_tag", match=MatchValue(value=owner_tag))]),

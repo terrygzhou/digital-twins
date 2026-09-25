@@ -83,7 +83,7 @@ from digital_twins.auth import (
 )
 from digital_twins.config.schema import DEFAULTS as _cfg_defaults, get as _cfg_get
 from digital_twins.config.loader import ConfigError as _ConfigError
-from digital_twins.health import QDRANT_COLLECTION
+from digital_twins.health import QDRANT_COLLECTION, qdrant_collection
 from digital_twins.ingest import pipeline as _pipeline_mod
 from digital_twins import sources as _sources_mod
 
@@ -469,7 +469,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             client = QdrantClient(
                 url=url, api_key=_cfg_get(config, "qdrant.api_key") or None)
             result = client.count(
-                QDRANT_COLLECTION,
+                qdrant_collection(config),
                 count_filter=Filter(
                     must=[FieldCondition(
                         key="owner_tag", match=MatchValue(value=owner_tag))],
@@ -534,9 +534,10 @@ class _WebAppHandler(BaseHTTPRequestHandler):
 
     def _count_via_client(self, client, filter_=None) -> int:
         """A Qdrant ``count`` through the shared client (CountResult-aware)."""
+        coll = qdrant_collection(self.server.config)
         result = client.count(
-            QDRANT_COLLECTION, count_filter=filter_) if filter_ else \
-            client.count(QDRANT_COLLECTION)
+            coll, count_filter=filter_) if filter_ else \
+            client.count(coll)
         # The real Qdrant client returns a CountResult with .count;
         # test stubs may return a bare int — handle both.
         count = result.count if hasattr(result, "count") else result
@@ -628,8 +629,9 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             # sample is ranked by ``_score`` (default 0.0 for points
             # without a score).  When ``?source=<name>`` is given, the
             # source filter is also applied to the sample rows.
+            coll = qdrant_collection(self.server.config)
             points, _ = client.scroll(
-                QDRANT_COLLECTION, with_payload=True)
+                coll, with_payload=True)
             points = [
                 p for p in points
                 if p.payload.get("owner_tag") == owner_tag
@@ -660,7 +662,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             source_count = count
         else:
             all_points, _ = client.scroll(
-                QDRANT_COLLECTION, with_payload=True)
+                coll, with_payload=True)
             distinct = {p.payload.get("source") for p in all_points
                         if p.payload.get("source") is not None}
             source_count = len(distinct)
@@ -741,7 +743,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             from qdrant_client.models import (
                 FieldCondition, Filter, MatchValue)
             results = client.query_points(
-                QDRANT_COLLECTION,
+                qdrant_collection(self.server.config),
                 query=query_vector,
                 query_filter=Filter(must=[FieldCondition(
                     key="owner_tag", match=MatchValue(value=owner_tag))]),

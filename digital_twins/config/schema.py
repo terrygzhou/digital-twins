@@ -21,6 +21,7 @@ DEFAULTS: dict = {
     # endpoints (user-supplied; init prompts for these) — unset by default
     "qdrant.url": None,
     "qdrant.api_key": None,
+    "qdrant.collection": "personal_kb",
     "neo4j.url": None,
     "neo4j.user": None,
     "neo4j.password": None,
@@ -45,7 +46,7 @@ DEFAULTS: dict = {
 
 # string knobs that accept empty values (endpoints are placeholders until init)
 _ALLOW_EMPTY: frozenset = frozenset({
-    "qdrant.url", "qdrant.api_key",
+    "qdrant.url", "qdrant.api_key", "qdrant.collection",
     "neo4j.url", "neo4j.user", "neo4j.password",
     "llm.endpoint", "llm.model", "llm.api_key",
     "extraction.prompt_version",
