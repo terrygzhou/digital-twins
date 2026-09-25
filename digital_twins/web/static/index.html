@@ -247,12 +247,14 @@
 
     // ---- actions ------------------------------------------------------------
 
-    function doSignin(event) {
+    function doSignin(event, creds) {
       event.preventDefault();
       el("signin-error").textContent = "";
+      var email = creds ? creds.email : el("signin-email").value;
+      var password = creds ? creds.password : el("signin-password").value;
       var body = JSON.stringify({
-        email: el("signin-email").value,
-        password: el("signin-password").value
+        email: email,
+        password: password
       });
       fetch("/api/auth/signin", {
         method: "POST",
@@ -279,10 +281,9 @@
     function doSignup(event) {
       event.preventDefault();
       el("signup-error").textContent = "";
-      var body = JSON.stringify({
-        email: el("signup-email").value,
-        password: el("signup-password").value
-      });
+      var email = el("signup-email").value;
+      var password = el("signup-password").value;
+      var body = JSON.stringify({ email: email, password: password });
       fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -294,8 +295,11 @@
           showError("signup-error", data);
           return;
         }
-        // Auto sign-in after a successful sign-up (the first account is admin).
-        doSignin({ preventDefault: function () {} });
+        // Auto sign-in after a successful sign-up: reuse the credentials
+        // just typed in the signup form (the sign-in form fields are empty,
+        // so doSignin() would POST empty email/password and the server
+        // would answer 400 "email and password required").
+        doSignin({ preventDefault: function () {} }, { email: email, password: password });
       })
       .catch(function () {
         showError("signup-error", null);
