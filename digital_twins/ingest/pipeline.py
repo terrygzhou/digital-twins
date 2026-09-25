@@ -11,6 +11,7 @@ them. High-water marks additionally skip unchanged items.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 
@@ -33,6 +34,8 @@ from digital_twins.state.models import (
     upsert_highwater,
 )
 from digital_twins.ingest import entities  # s4-entity-extraction
+
+logger = logging.getLogger(__name__)
 
 
 class PrerequisiteError(Exception):
@@ -148,7 +151,8 @@ def run_pipeline(
     driver-shaped object exposing the Neo4j session API
     (``.session()`` returning a context-manager whose ``.run()``
     executes Cypher — the surface of a raw
-    ``neo4j.GraphDatabase.driver``) (None = skip graph writes).
+    ``neo4j.GraphDatabase.driver``) (None = skip graph writes, i.e.
+    "Qdrant-only mode" when Neo4j is unconfigured).
 
     `trigger` records how the run was started ('manual' for run --once / the
     CLI one-shot, 'schedule' for serve fires). `scheduled_by` records the
@@ -289,6 +293,13 @@ def run_pipeline(
                     # config-gated; no-op when extraction.enabled is false
                     # or the LLM endpoint is unconfigured).
                     _run_extraction(cfg, neo4j, items, item_hash, run_id, name)
+                else:
+                    # preflight-optional-deps: Qdrant-only mode — Neo4j was
+                    # unconfigured (soft dependency), so no graph writes.
+                    # Logged once per source-with-points.
+                    logger.info(
+                        "Qdrant-only mode: Neo4j not configured — "
+                        "skipping graph writes")
 
             for item in items:
                 upsert_highwater(db, name, item.key, item.ts)
