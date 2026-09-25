@@ -529,13 +529,24 @@ def run_local_stack(prompt_text: Callable = click.prompt,
         # local/external choices land in one file.  Local services use
         # the bundled endpoint constants (already in resolved["url"]);
         # external services use the URL the user/env supplied (an empty
-        # URL on a required service was already gated earlier).  The
-        # neo4j entry carries user/password from the prompts.
+        # URL on a required service was already gated earlier).  Neo4j
+        # credentials: the local prompt when the bundled neo4j runs;
+        # the external creds carried on the resolved map (prompted in
+        # the second pass or set via KB_NEO4J__USER/__PASSWORD) when
+        # neo4j is external — never the local defaults for an
+        # external instance.
+        neo4j_entry = {"url": resolved["neo4j"]["url"]}
+        if resolved["neo4j"].get("mode") == "external":
+            if resolved["neo4j"].get("user"):
+                neo4j_entry["user"] = resolved["neo4j"]["user"]
+            if resolved["neo4j"].get("password"):
+                neo4j_entry["password"] = resolved["neo4j"]["password"]
+        else:
+            neo4j_entry["user"] = neo4j_user
+            neo4j_entry["password"] = neo4j_password
         content = {
             "qdrant": {"url": resolved["qdrant"]["url"]},
-            "neo4j": {"url": resolved["neo4j"]["url"],
-                      "user": neo4j_user,
-                      "password": neo4j_password},
+            "neo4j": neo4j_entry,
             "llm": {"endpoint": resolved["llm"]["url"]},
             "embedding": {"endpoint": resolved["embedding"]["url"]},
         }
@@ -919,6 +930,9 @@ def _interactive_second_pass(prompt: Callable, echo: Callable,
     explicit: dict = dict(named)  # flag-resolved services carry through
     base = resolve_backends(explicit if explicit else None, gpu=gpu,
                            docker=True)
+    # External neo4j credentials (prompted when the user answers
+    # "external" for neo4j; env KB_NEO4J__USER / KB_NEO4J__PASSWORD win):
+    explicit_user = explicit_password = ""
     for svc, (env_name, _local_url, _gpu_only, _required) in \
             _SERVICE_ENV.items():
         if svc in named:
@@ -953,7 +967,27 @@ def _interactive_second_pass(prompt: Callable, echo: Callable,
                     f"(e.g. https://host/v1) "
                     f"[{env_name}]: ").strip()
             explicit[svc] = url
-    resolved = resolve_backends(explicit, gpu=gpu, docker=True)
+            if svc == "neo4j":
+                # An external Neo4j may require auth: prompt for the
+                # credentials (env wins, like the URL; both optional —
+                # an auth-disabled instance answers empty).
+                user_env = os.environ.get("KB_NEO4J__USER")
+                user = (user_env.strip() if user_env is not None
+                        else prompt("External Neo4j user "
+                                    "(empty for auth-disabled Neo4j): "
+                                    "[KB_NEO4J__USER]: ").strip())
+                pw_env = os.environ.get("KB_NEO4J__PASSWORD")
+                password = (pw_env.strip() if pw_env is not None
+                            else prompt("External Neo4j password "
+                                        "(empty for auth-disabled Neo4j): "
+                                        "[KB_NEO4J__PASSWORD]: ").strip())
+                if user:
+                    explicit_user = user
+                if password:
+                    explicit_password = password
+    resolved = resolve_backends(explicit, gpu=gpu, docker=True,
+                                neo4j_user=explicit_user,
+                                neo4j_password=explicit_password)
     # Preserve the no-GPU "local unavailable" marker when the second pass
     # chose external for a local-only service (resolve_backends only sets
     # it on the auto local->external flip; an explicit external answer
@@ -1033,9 +1067,19 @@ def run_setup(prompt: Callable = click.prompt,
             # cloud path runs instead.
             if gpu is None:
                 gpu = _gpu_present()
+            # An external Neo4j may need auth: the flag carries URLs
+            # only, so the credentials come from the KB_NEO4J__USER /
+            # KB_NEO4J__PASSWORD env vars (both optional — an
+            # auth-disabled instance needs neither) and are carried on
+            # the resolved map for the config writer.
+            ext_neo4j_user = os.environ.get("KB_NEO4J__USER", "").strip()
+            ext_neo4j_password = os.environ.get(
+                "KB_NEO4J__PASSWORD", "").strip()
             resolved = resolve_backends(backends, local=local,
                                          gpu=gpu,
-                                         docker=docker_available())
+                                         docker=docker_available(),
+                                         neo4j_user=ext_neo4j_user,
+                                         neo4j_password=ext_neo4j_password)
             has_local = any(v.get("mode") == "local"
                             for v in resolved.values())
             # A required service with an empty URL (the "" value of
@@ -1078,11 +1122,18 @@ def run_setup(prompt: Callable = click.prompt,
                            for svc in ("qdrant", "neo4j", "llm",
                                       "embedding")
                            if resolved[svc].get("url")}
-                if resolved["neo4j"].get("user"):
-                    content.setdefault("neo4j", {})["user"] = \
-                        resolved["neo4j"]["user"]
-                    content["neo4j"]["password"] = \
-                        resolved["neo4j"]["password"]
+                # Neo4j auth creds: the flag carries URLs only, so the
+                # user/password come from the KB_NEO4J__USER /
+                # KB_NEO4J__PASSWORD env vars when set (both optional —
+                # an auth-disabled instance needs neither).
+                ext_user = os.environ.get("KB_NEO4J__USER", "").strip()
+                ext_password = os.environ.get(
+                    "KB_NEO4J__PASSWORD", "").strip()
+                if ext_user:
+                    content.setdefault("neo4j", {})["user"] = ext_user
+                if ext_password:
+                    content.setdefault("neo4j", {})[
+                        "password"] = ext_password
                 # A hosted embedding endpoint may need a Bearer token:
                 # the --backends flag carries URLs only, so the key
                 # comes from KB_EMBEDDING__API_KEY when set (a keyless

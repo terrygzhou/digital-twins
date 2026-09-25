@@ -1223,6 +1223,175 @@ def test_setup_in_process_embedding_missing_extra(_isolate_config,
 
 
 # ---------------------------------------------------------------------------
+# External neo4j credentials (the "setup never asks neo4j user/password"
+# fix): the interactive second pass and the --backends all-external path
+# must capture neo4j.user/neo4j.password (env var or prompt) and land
+# them in kb.local.yml.
+# ---------------------------------------------------------------------------
+
+def _stub_rest_of_setup(setup_mod, state_dir):
+    """Stub the post-service steps so run_setup stays hermetic."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    db = _fake_connect(state_dir)
+    db.close()
+    monkeypatch = None
+    import digital_twins.setup as s
+    s.connect = lambda d: _fake_connect(d)
+    s.run_health_checks = lambda cfg: [_ok_check(n) for n in
+                                       ("qdrant", "neo4j", "llm",
+                                        "embedding")]
+    import digital_twins.ingest.embedding as emb
+    class _FakeEmbedder:
+        def encode(self, texts):
+            return [[0.0] * 384 for _ in texts]
+    s.load_embedder = emb.load_embedder  # keep the module reference shape
+    emb.load_embedder = lambda model, device: _FakeEmbedder()
+
+
+def test_all_external_backends_writes_neo4j_creds_from_env(
+        _isolate_config, monkeypatch):
+    """--backends with every service external: KB_NEO4J__USER /
+    KB_NEO4J__PASSWORD (when set) are written to kb.local.yml; auth-
+    disabled (unset) writes no user/password keys — never local
+    defaults."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+    _stub_rest_of_setup(setup_mod, state_dir)
+    monkeypatch.setattr(setup_mod, "docker_available", lambda: False)
+    monkeypatch.setattr(setup_mod, "_gpu_present", lambda: False)
+    backends = {"qdrant": "http://q:6333", "neo4j": "bolt://n:7687",
+                "llm": "https://llm.example/v1",
+                "embedding": "https://embed.example/v1"}
+    for v in ("KB_NEO4J__USER", "KB_NEO4J__PASSWORD"):
+        monkeypatch.delenv(v, raising=False)
+    # Auth-disabled: no creds in the file.
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                             confirm=lambda q: False,
+                             echo=lambda m: None,
+                             backends=backends)
+    assert rc == 0
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["neo4j"] == {"url": "bolt://n:7687"}
+    # Now with env-set creds: they land in the file.
+    monkeypatch.setenv("KB_NEO4J__USER", "extuser")
+    monkeypatch.setenv("KB_NEO4J__PASSWORD", "extpw")
+    (config_dir / "kb.local.yml").unlink()
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                             confirm=lambda q: False,
+                             echo=lambda m: None,
+                             backends=backends)
+    assert rc == 0
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["neo4j"]["user"] == "extuser"
+    assert data["neo4j"]["password"] == "extpw"
+
+
+def test_mixed_backends_external_neo4j_gets_external_creds(
+        _isolate_config, monkeypatch):
+    """Mixed local/external (--backends with neo4j external): the
+    written neo4j entry carries the *external* creds from
+    KB_NEO4J__USER/__PASSWORD, not the local-stack prompt defaults."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+    _stub_rest_of_setup(setup_mod, state_dir)
+    monkeypatch.setattr(setup_mod, "docker_available", lambda: True)
+    monkeypatch.setattr(setup_mod, "_gpu_present", lambda: False)
+
+    compose_calls = []
+    monkeypatch.setattr(setup_mod, "_docker_compose",
+                        lambda args, **kw: (compose_calls.append((
+                            list(args), kw.get("extra_env"))), 0)[1])
+    monkeypatch.setattr(setup_mod, "_poll_url", lambda url, **kw: True)
+    monkeypatch.setenv("KB_NEO4J__USER", "extuser")
+    monkeypatch.setenv("KB_NEO4J__PASSWORD", "extpw")
+    backends = {"qdrant": "local", "neo4j": "bolt://ext-n:7687",
+                "llm": "https://llm.example/v1"}
+    rc = setup_mod.run_setup(prompt=lambda q: "unused",
+                             confirm=lambda q: False,
+                             echo=lambda m: None,
+                             backends=backends)
+    assert rc == 0
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["neo4j"]["url"] == "bolt://ext-n:7687"
+    assert data["neo4j"]["user"] == "extuser"
+    assert data["neo4j"]["password"] == "extpw"
+
+
+def test_interactive_second_pass_external_neo4j_prompts_creds(
+        _isolate_config, monkeypatch):
+    """The interactive second pass: answering "external" for neo4j
+    prompts for its user + password (env unset) and writes them to
+    kb.local.yml; env-set vars win over the prompt."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+    _stub_rest_of_setup(setup_mod, state_dir)
+    monkeypatch.setattr(setup_mod, "docker_available", lambda: True)
+    monkeypatch.setattr(setup_mod, "_gpu_present", lambda: False)
+    monkeypatch.setattr(setup_mod, "_docker_compose",
+                        lambda args, **kw: 0)
+    monkeypatch.setattr(setup_mod, "_poll_url", lambda url, **kw: True)
+    monkeypatch.delenv("KB_NEO4J__USER", raising=False)
+    monkeypatch.delenv("KB_NEO4J__PASSWORD", raising=False)
+
+    prompts = []
+    def fake_prompt(label):
+        prompts.append(label)
+        if "locally" in label:
+            return "external" if "neo4j" in label else ""
+        if "Neo4j user" in label:
+            return "iuser"
+        if "Neo4j password" in label:
+            return "ipw"
+        if "URL" in label:
+            return "bolt://ext-n:7687"
+        return ""
+    rc = setup_mod.run_setup(prompt=fake_prompt,
+                             confirm=lambda q: True,
+                             echo=lambda m: None)
+    assert rc == 0
+    assert any("External Neo4j user" in p for p in prompts)
+    assert any("External Neo4j password" in p for p in prompts)
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["neo4j"]["url"] == "bolt://ext-n:7687"
+    assert data["neo4j"]["user"] == "iuser"
+    assert data["neo4j"]["password"] == "ipw"
+
+
+def test_interactive_second_pass_neo4j_creds_env_wins(_isolate_config,
+                                                      monkeypatch):
+    """Env-set KB_NEO4J__USER / KB_NEO4J__PASSWORD suppress the
+    credential prompts entirely (env wins, like the URL prompt)."""
+    config_dir, state_dir = _isolate_config
+    import digital_twins.setup as setup_mod
+    _stub_rest_of_setup(setup_mod, state_dir)
+    monkeypatch.setattr(setup_mod, "docker_available", lambda: True)
+    monkeypatch.setattr(setup_mod, "_gpu_present", lambda: False)
+    monkeypatch.setattr(setup_mod, "_docker_compose",
+                        lambda args, **kw: 0)
+    monkeypatch.setattr(setup_mod, "_poll_url", lambda url, **kw: True)
+    monkeypatch.setenv("KB_NEO4J__USER", "envuser")
+    monkeypatch.setenv("KB_NEO4J__PASSWORD", "envpw")
+
+    prompts = []
+    def fake_prompt(label):
+        prompts.append(label)
+        if "locally" in label and "neo4j" in label:
+            return "external"
+        if "URL" in label and "neo4j" in label.lower():
+            return "bolt://ext-n:7687"
+        return ""
+    rc = setup_mod.run_setup(prompt=fake_prompt,
+                             confirm=lambda q: True,
+                             echo=lambda m: None)
+    assert rc == 0
+    assert not any("External Neo4j user" in p for p in prompts)
+    assert not any("External Neo4j password" in p for p in prompts)
+    data = yaml.safe_load((config_dir / "kb.local.yml").read_text())
+    assert data["neo4j"]["user"] == "envuser"
+    assert data["neo4j"]["password"] == "envpw"
+
+
+# ---------------------------------------------------------------------------
 # Cloud embedding endpoint + api_key
 # ---------------------------------------------------------------------------
 
