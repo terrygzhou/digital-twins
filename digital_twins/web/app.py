@@ -971,6 +971,11 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": f"unknown source '{name}'"})
             return
         except Exception:
+            # UAT BUG follow-up (ingest-error-logging): log the full
+            # traceback before the generic 500 — a failed ingest run on
+            # the web UI must be diagnosable from the server log.  The
+            # JSON body stays generic (no raw exception text to client).
+            logging.error("web ingest run failed", exc_info=True)
             self._send_json(
                 500,
                 {"error": "ingest run failed: see server log for details"})

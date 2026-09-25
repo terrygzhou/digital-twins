@@ -1,7 +1,7 @@
 # Tasks: ingest-error-logging
 
 ## 1. Web app handler
-- [ ] 1.1 In `digital_twins/web/app.py::_handle_ingest_run`, replace the bare
+- [x] 1.1 In `digital_twins/web/app.py::_handle_ingest_run`, replace the bare
       `except Exception:` block (L973-976) with a version that calls
       `logging.exception("web ingest run failed")` (or an equivalent
       `logging.error(..., exc_info=True)`) before sending the 500.
@@ -11,9 +11,9 @@
       a traceback.
 
 ## 2. Standing guards
-- [ ] 2.1 Confirm `tests/integration/test_portability.py` (T006) and
+- [x] 2.1 Confirm `tests/integration/test_portability.py` (T006) and
       `tests/unit/test_knob_docs.py` (T027) remain green.
-- [ ] 2.2 Run `PYTHONPATH=. python3.12 -m pytest
+- [x] 2.2 Run `PYTHONPATH=. python3.12 -m pytest
       tests/unit/test_web_app_kb.py -q` and verify the new logging test
       passes.
 
