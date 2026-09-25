@@ -260,6 +260,13 @@ def build_neo4j_driver(config):
 
     Convenience alias for callers that want the driver immediately rather
     than a lazy zero-arg factory.
+
+    Returns the raw ``neo4j.GraphDatabase.driver`` object unchanged (no
+    wrapper, no adapter). Callers that execute Cypher against it must
+    use the driver's *session API* (``with driver.session() as s:
+    s.run(cypher, **params)``) — the raw driver exposes no driver-level
+    ``.run()``. That contract is what the graph-write helpers in
+    ``ingest.pipeline`` rely on (BUG-01 / graph-driver-fix).
     """
     return _neo4j_driver_factory(config)()
 
