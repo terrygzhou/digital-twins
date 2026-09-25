@@ -83,7 +83,7 @@ from digital_twins.auth import (
 )
 from digital_twins.config.schema import DEFAULTS as _cfg_defaults, get as _cfg_get
 from digital_twins.config.loader import ConfigError as _ConfigError
-from digital_twins.health import QDRANT_COLLECTION, qdrant_collection
+from digital_twins.health import qdrant_collection
 from digital_twins.ingest import pipeline as _pipeline_mod
 from digital_twins import sources as _sources_mod
 

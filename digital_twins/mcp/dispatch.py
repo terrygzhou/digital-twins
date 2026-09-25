@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 from ..accounts import owner_tag_for, require_capability, RoleDenied
 from ..config.schema import get as _cfg_get
-from ..health import QDRANT_COLLECTION, qdrant_collection
+from ..health import qdrant_collection
 from ..ingest.pipeline import run_pipeline  # noqa: F401 — monkeypatch seam
 from .acl import can_access_schedule
 from .registry import MCPContext
