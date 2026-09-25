@@ -125,6 +125,16 @@ def _content_type_for(path: str) -> str:
 #: has no probe-deadline knob and T027 guards against adding one.
 PROBE_PER_SERVICE_DEADLINE_S = 4.5
 
+#: Busy-timeout (ms) for the web server's own state-DB connection
+#: (_open_same_db).  A concurrently running CLI command (setup's
+#: docker compose up + health checks; signup; run) holds the SQLite
+#: WAL write lock for up to tens of seconds; with the stdlib default
+#: 5000 ms a signup or sign-in landing in that window dies with a
+#: 500 internal_error ('database is locked').  The web side never
+#: writes for more than a moment, so a generous 60 s timeout just
+#: queues the request behind the lock holder instead of erroring.
+DB_BUSY_TIMEOUT_MS = 60000
+
 
 class WebBindError(OSError):
     """The web app could not bind to its configured (host, port).
@@ -1783,6 +1793,10 @@ def _open_same_db(db, check_same_thread: bool = False):
 
     conn = sqlite3.connect(str(path), check_same_thread=check_same_thread)
     conn.execute("PRAGMA foreign_keys=ON")
+    # Queue behind a CLI lock holder (setup / signup / run) instead of
+    # erroring after 5 s: the web connection outlives those commands.
+    # Module constant, not a config knob (T027's knob surface is closed).
+    conn.execute(f"PRAGMA busy_timeout={DB_BUSY_TIMEOUT_MS}")
     return conn
 
 
