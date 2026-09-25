@@ -99,6 +99,11 @@
       <div id="chat-answer" class="results"></div>
     </section>
 
+    <p id="config-role-hint" class="hint" hidden>
+      Services and channel configuration are admin-only — sign in with an
+      admin account (the one created by <code>digital-twins setup</code>)
+      to change model endpoints, storage, and ingestion channels.
+    </p>
     <section class="card services-panel" id="services-panel" hidden>
       <h2>Services</h2>
       <p class="hint">
@@ -188,14 +193,17 @@
         loadServices();
       } else {
         el("services-panel").hidden = true;
+        el("config-role-hint").hidden = false;
       }
       // Channels panel: admin-only config surface (channels-config SC-004
       // discipline — same gate as the services panel, co-located).
       if (me && me.role === "admin") {
         el("channels-panel").hidden = false;
         loadChannels();
+        el("config-role-hint").hidden = true;
       } else {
         el("channels-panel").hidden = true;
+        el("config-role-hint").hidden = false;
       }
     }
 
