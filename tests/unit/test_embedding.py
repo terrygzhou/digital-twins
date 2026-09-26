@@ -46,14 +46,19 @@ def test_load_embedder_forwards_model_and_device(monkeypatch):
     fake = types.ModuleType("sentence_transformers")
 
     class FakeST:
-        def __init__(self, model, device=None):
+        def __init__(self, model, device=None, **kw):
             calls["model"] = model
             calls["device"] = device
+            calls["local_files_only"] = kw.get("local_files_only")
 
     fake.SentenceTransformer = FakeST
     monkeypatch.setitem(sys.modules, "sentence_transformers", fake)
     load_embedder(model="BAAI/bge-small-en-v1.5", device="cpu")
-    assert calls == {"model": "BAAI/bge-small-en-v1.5", "device": "cpu"}
+    assert calls["model"] == "BAAI/bge-small-en-v1.5"
+    assert calls["device"] == "cpu"
+    # offline-safe: the loader must never probe HuggingFace (reads the
+    # local cache only) — regression guard for the HF-DNS failure mode.
+    assert calls["local_files_only"] is True
 
 
 def test_device_out_of_range_rejected_by_schema(tmp_path):

@@ -24,6 +24,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 - `README.md`: document `--cloud-env`, exit code 6, and the
   non-interactive stdin warning.
 
+### Fixed
+- **Local embedder is offline-safe.** `load_embedder()` now passes
+  `local_files_only=True` to `SentenceTransformer`, so the pinned
+  embedding model is read from the local HuggingFace cache
+  (`~/.cache/huggingface`) only — the loader no longer probes
+  HuggingFace on cold start, which previously failed with a
+  DNS/egress error on air-gapped or no-HF hosts and aborted the
+  embedding step. **Behaviour contract:** the model must now be
+  pre-cached (e.g. `huggingface-cli download BAAI/bge-small-en-v1.5`,
+  or one run with egress to populate the cache); a fresh host with an
+  uncached model gets a fail-fast error pointing at the offline path
+  and the `embedding.endpoint` (`KB_EMBEDDING__ENDPOINT`) alternative,
+  instead of an implicit download. Regression guard:
+  `tests/unit/test_embedding.py::test_load_embedder_forwards_model_and_device`
+  now asserts the `local_files_only=True` flag is forwarded.
+
 ## [0.11.2] - 2026-09-22
 
 ### Added
