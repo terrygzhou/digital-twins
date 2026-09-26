@@ -52,7 +52,31 @@
 
   <!-- ===================== main KB view ===================== -->
   <main id="kb-view" hidden>
-    <section class="card kb-panel">
+    <!-- dashboard left column: read-only admin overview panels (FR-D4,
+         hidden by default; un-hidden in showKbView() for admin only). -->
+    <div id="dashboard-side" class="dashboard-side">
+      <section class="card dashboard-account-panel" id="dashboard-account-panel" hidden>
+        <h2>Account</h2>
+        <p id="dashboard-account-error" class="error" role="alert"></p>
+        <div id="dashboard-account-rows" class="dashboard-rows"></div>
+      </section>
+      <section class="card dashboard-channels-panel" id="dashboard-channels-panel" hidden>
+        <h2>Ingestion channels</h2>
+        <p id="dashboard-channels-error" class="error" role="alert"></p>
+        <div id="dashboard-channels-rows" class="dashboard-rows"></div>
+      </section>
+      <section class="card dashboard-jobs-panel" id="dashboard-jobs-panel" hidden>
+        <h2>Batch jobs</h2>
+        <p id="dashboard-jobs-error" class="error" role="alert"></p>
+        <div id="dashboard-jobs-rows" class="dashboard-rows"></div>
+      </section>
+      <section class="card dashboard-models-panel" id="dashboard-models-panel" hidden>
+        <h2>Models</h2>
+        <p id="dashboard-models-error" class="error" role="alert"></p>
+        <div id="dashboard-models-rows" class="dashboard-rows"></div>
+      </section>
+    </div>
+    <section class="card kb-panel" id="kb-panel">
       <h2>Knowledge base</h2>
       <p class="hint">
         Point count: <strong id="point-count">…</strong>
@@ -204,6 +228,24 @@
       } else {
         el("channels-panel").hidden = true;
         el("config-role-hint").hidden = false;
+      }
+      // Dashboard left column: the four read-only overview panels
+      // (FR-D4, admin-only — SC-004, the same admin gate as the
+      // services / channels panels above, co-located).
+      if (me && me.role === "admin") {
+        el("dashboard-account-panel").hidden = false;
+        el("dashboard-channels-panel").hidden = false;
+        el("dashboard-jobs-panel").hidden = false;
+        el("dashboard-models-panel").hidden = false;
+        loadDashboardAccounts();
+        loadDashboardJobs();
+        loadDashboardModels();
+        loadDashboardChannels();
+      } else {
+        el("dashboard-account-panel").hidden = true;
+        el("dashboard-channels-panel").hidden = true;
+        el("dashboard-jobs-panel").hidden = true;
+        el("dashboard-models-panel").hidden = true;
       }
     }
 
@@ -898,6 +940,164 @@
         showError("credentials-error", null);
       });
     }
+
+    // ---- dashboard left column (read-only admin overview panels) --------
+    //
+    // Four compact panels in the #dashboard-side left column.  Read-only:
+    // no mutation surface (FR-D5) — mutations stay on the services /
+    // channels panels and the CLI.  Each loader fetches its overview
+    // endpoint via the shared authHeaders() helper (FR-D1); the models
+    // panel renders *_set credential booleans only, never values (FR-D3).
+
+    function loadDashboardAccounts() {
+      fetch("/api/dashboard/accounts", { headers: authHeaders() })
+        .then(function (r) { return r.json().catch(function () { return null; }); })
+        .then(function (data) {
+          var out = el("dashboard-account-rows");
+          if (!data || data.error) {
+            showError("dashboard-account-error", data);
+            out.textContent = "Unavailable.";
+            return;
+          }
+          out.textContent = "";
+          (data.accounts || []).forEach(function (a) {
+            var row = document.createElement("div");
+            row.className = "dash-row";
+            row.textContent = [a.email, a.role,
+              a.created_at || "\u2014", a.last_active || "\u2014"]
+              .join(" \u00b7 ");
+            out.appendChild(row);
+          });
+        })
+        .catch(function () {
+          el("dashboard-account-rows").textContent = "Unavailable.";
+          showError("dashboard-account-error", { error: "network error" });
+        });
+    }
+
+    function loadDashboardJobs() {
+      fetch("/api/dashboard/jobs", { headers: authHeaders() })
+        .then(function (r) { return r.json().catch(function () { return null; }); })
+        .then(function (data) {
+          var out = el("dashboard-jobs-rows");
+          if (!data || data.error) {
+            showError("dashboard-jobs-error", data);
+            out.textContent = "Unavailable.";
+            return;
+          }
+          out.textContent = "";
+          (data.schedules || []).forEach(function (sch) {
+            var row = document.createElement("div");
+            row.className = "dash-row";
+            row.textContent = "schedule " + sch.source + " (" + sch.preset +
+              ") \u2014 " + sch.owner;
+            out.appendChild(row);
+          });
+          (data.recent_runs || []).forEach(function (run) {
+            var row = document.createElement("div");
+            row.className = "dash-row";
+            var counts = Object.keys(run.per_source_counts || {})
+              .map(function (k) {
+                return k + ": " + run.per_source_counts[k];
+              }).join(", ");
+            row.textContent = run.run_id + " " + run.status +
+              " \u00b7 " + run.trigger + " \u00b7 " + run.scheduled_by +
+              (counts ? " \u00b7 " + counts : "");
+            out.appendChild(row);
+          });
+        })
+        .catch(function () {
+          el("dashboard-jobs-rows").textContent = "Unavailable.";
+          showError("dashboard-jobs-error", { error: "network error" });
+        });
+    }
+
+    function loadDashboardModels() {
+      fetch("/api/dashboard/models", { headers: authHeaders() })
+        .then(function (r) { return r.json().catch(function () { return null; }); })
+        .then(function (data) {
+          var out = el("dashboard-models-rows");
+          if (!data || data.error) {
+            showError("dashboard-models-error", data);
+            out.textContent = "Unavailable.";
+            return;
+          }
+          out.textContent = "";
+          var overrides = data.env_overrides || [];
+          if (overrides.length) {
+            var envRow = document.createElement("div");
+            envRow.className = "dash-row dash-env";
+            envRow.textContent = "env overrides: " + overrides.join(", ");
+            out.appendChild(envRow);
+          }
+          var models = data.models || {};
+          ["llm", "embedding", "qdrant", "neo4j"].forEach(function (name) {
+            var m = models[name] || {};
+            var row = document.createElement("div");
+            row.className = "dash-row";
+            var bits = [name];
+            if (m.model) bits.push(m.model);
+            if (m.device) bits.push(m.device);
+            row.textContent = bits.join(" \u00b7 ");
+            out.appendChild(row);
+            // FR-D3: only *_set booleans are the credential surface —
+            // values never reach the UI.
+            ["api_key_set", "user_set", "password_set"].forEach(function (flag) {
+              if (m[flag]) {
+                var badge = document.createElement("span");
+                badge.className = "badge";
+                badge.textContent = flag.replace("_set", "") + " set";
+                row.appendChild(badge);
+              }
+            });
+            if (m.endpoint) {
+              var ep = document.createElement("small");
+              ep.className = "dash-endpoint";
+              ep.textContent = m.endpoint;
+              row.appendChild(ep);
+            }
+          });
+        })
+        .catch(function () {
+          el("dashboard-models-rows").textContent = "Unavailable.";
+          showError("dashboard-models-error", { error: "network error" });
+        });
+    }
+
+    // The dashboard channels panel reuses the existing channel view
+    // (GET /api/config/channels) read-only: source name + readiness.
+    function loadDashboardChannels() {
+      fetch("/api/config/channels", { headers: authHeaders() })
+        .then(function (r) { return r.json().catch(function () { return null; }); })
+        .then(function (data) {
+          var out = el("dashboard-channels-rows");
+          if (!data || data.error) {
+            showError("dashboard-channels-error", data);
+            out.textContent = "Unavailable.";
+            return;
+          }
+          out.textContent = "";
+          var names = Object.keys(data.sources || {}).sort();
+          names.forEach(function (name) {
+            var s = data.sources[name];
+            var row = document.createElement("div");
+            row.className = "dash-row";
+            var bits = [name + (s.enabled ? " (enabled)" : " (disabled)")];
+            if ((s.prerequisites || []).length) {
+              bits.push("missing: " + s.prerequisites.join(", "));
+            } else {
+              bits.push("ready");
+            }
+            row.textContent = bits.join(" \u00b7 ");
+            out.appendChild(row);
+          });
+        })
+        .catch(function () {
+          el("dashboard-channels-rows").textContent = "Unavailable.";
+          showError("dashboard-channels-error", { error: "network error" });
+        });
+    }
+
 
     // ---- boot ---------------------------------------------------------------
 

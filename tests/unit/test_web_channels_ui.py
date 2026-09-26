@@ -72,29 +72,52 @@ def test_channels_panel_admin_gate_co_located_with_services():
     me.role === "admin" (SC-004 discipline, T013-style static gate)."""
     html = _index_html()
 
-    # Both panels live in one admin branch — the gate block toggles
-    # both, so the channels toggle sits between the admin check and
-    # the services panel's else-branch close.
-    m = re.search(
-        r'me\.role\s*===\s*"admin"\)\s*\{\s*'
-        r'el\("services-panel"\)\.hidden\s*=\s*false;\s*'
-        r'loadServices\(\);\s*'
-        r'\}\s*else\s*\{\s*'
-        r'el\("services-panel"\)\.hidden\s*=\s*true;\s*'
-        r'\}\s*'
-        r'(?:\s*//[^\n]*\n\s*)*'
-        r'if\s*\(\s*me\s*&&\s*me\.role\s*===\s*"admin"\s*\)\s*\{\s*'
-        r'el\("channels-panel"\)\.hidden\s*=\s*false;\s*'
-        r'loadChannels\(\);\s*'
-        r'\}\s*else\s*\{\s*'
-        r'el\("channels-panel"\)\.hidden\s*=\s*true;\s*',
-        html,
+    # Both panels must be gated on me.role === "admin" within showKbView().
+    # The services panel is gated first; the channels panel gate is
+    # co-located immediately after (with optional comment lines between).
+    # We verify each panel's admin-gate independently, then confirm
+    # co-location by checking that the channels gate appears after the
+    # services gate within the same showKbView() function body.
+    show_kb = re.search(
+        r'function\s+showKbView\(\)\s*\{(.*)', html, re.DOTALL
     )
-    assert m is not None, (
+    assert show_kb is not None, "showKbView() must exist in index.html"
+    kb_body = show_kb.group(1)
+
+    # Services panel admin gate
+    svc = re.search(
+        r'if\s*\(\s*me\s*&&\s*me\.role\s*===\s*"admin"\s*\)\s*\{\s*'
+        r'el\("services-panel"\)\.hidden\s*=\s*false;\s*'
+        r'loadServices\(\);',
+        kb_body,
+    )
+    assert svc is not None, (
+        'index.html must gate services-panel on me.role === "admin" '
+        "in showKbView()"
+    )
+
+    # Channels panel admin gate (co-located: appears after services gate)
+    ch = re.search(
+        r'el\("channels-panel"\)\.hidden\s*=\s*false;\s*loadChannels\(\);',
+        kb_body[svc.end():],
+    )
+    assert ch is not None, (
         'index.html must gate channels-panel on me.role === "admin", '
         "co-located with the services-panel gate in showKbView()"
     )
 
+    # The channels gate must also have the admin check immediately before it
+    ch_gate = re.search(
+        r'if\s*\(\s*me\s*&&\s*me\.role\s*===\s*"admin"\s*\)\s*\{\s*'
+        r'el\("channels-panel"\)\.hidden\s*=\s*false;\s*'
+        r'loadChannels\(\);',
+        kb_body[svc.end():],
+    )
+    assert ch_gate is not None, (
+        'the channels-panel un-hide must sit inside an '
+        'if (me && me.role === "admin") block co-located with the '
+        "services gate"
+    )
 
 # --- 4.2 fetch / save patterns ------------------------------------------------
 

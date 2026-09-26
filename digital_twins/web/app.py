@@ -314,6 +314,16 @@ class _WebAppHandler(BaseHTTPRequestHandler):
         if path == "/api/config/channels" and method == "POST":
             self._handle_config_channels_post(caller_email)
             return
+        # dashboard-left-column: the read-only admin overview routes.
+        if path == "/api/dashboard/accounts" and method == "GET":
+            self._handle_dashboard_accounts(caller_email)
+            return
+        if path == "/api/dashboard/jobs" and method == "GET":
+            self._handle_dashboard_jobs(caller_email)
+            return
+        if path == "/api/dashboard/models" and method == "GET":
+            self._handle_dashboard_models(caller_email)
+            return
         del method, query, caller_email  # wired up by the later handler tasks
         self._send_json(404, {"error": "not_found", "path": path})
 
@@ -1510,6 +1520,151 @@ class _WebAppHandler(BaseHTTPRequestHandler):
     # requested service, in request order.  Error shapes match the 008
     # config surface: 400 ``invalid JSON body`` (body not a JSON object),
     # 400 ``services must be a non-empty list``, 404
+    # dashboard-left-column: the read-only admin overview routes.
+    #
+    # The dashboard's left column (account / ingestion channels / batch
+    # jobs / model updates) needs an at-a-glance surface (BR-11.1.8).
+    # These three routes are read-only overviews — no writes, no
+    # mutations (FR-D5).  All three are admin-gated (FR-D2, SC-004
+    # discipline: the dashboard is an admin overview) via the shared
+    # ``_require_admin`` gate, and each degrades to a clean empty view
+    # rather than a 500 (the overview must render even when a backend
+    # is down — the user still sees their account status, same rule as
+    # ``/api/me``).  No credential value ever reaches the payload
+    # (FR-D3, FR-004 discipline extended to the dashboard surface).
+
+    #: Number of audit_runs rows the dashboard jobs route returns
+    #: (most-recent-first).  A small, bounded tail — the dashboard is an
+    #: overview, not the full run history (that stays on the audit
+    #: panel / CLI / MCP).
+    _DASH_RECENT_RUNS = 10
+
+    def _handle_dashboard_accounts(self, caller_email: str) -> None:
+        """GET /api/dashboard/accounts → 200 account overview (admin only).
+
+        Returns ``{"accounts": [{email, role, created_at, last_active}],
+        "total": N}`` — the accounts table minus credential material
+        (no ``password_hash``, FR-D3).  Legacy accounts (001/002 rows)
+        carry ``created_at``/``last_active`` of ``''`` (the v3 additive
+        defaults); those are returned as-is (the UI renders a dash).
+        """
+        if not self._require_admin(caller_email):
+            return
+        with self.server._db_lock:
+            rows = self.server.db.execute(
+                "SELECT email, role, created_at, last_active "
+                "FROM accounts ORDER BY email ASC"
+            ).fetchall()
+        accounts = [
+            {"email": r[0], "role": r[1],
+             "created_at": r[2], "last_active": r[3]}
+            for r in rows
+        ]
+        self._send_json(200, {"accounts": accounts, "total": len(accounts)})
+
+    def _handle_dashboard_jobs(self, caller_email: str) -> None:
+        """GET /api/dashboard/jobs → 200 batch-job overview (admin only).
+
+        Returns ``{"schedules": [...], "recent_runs": [...]}`` where
+        ``schedules`` is the full batch-job registry (every owner) and
+        ``recent_runs`` is the most-recent tail of the audit table
+        (``_DASH_RECENT_RUNS`` rows, most-recent-first).  The admin
+        dashboard is an all-users overview, so both are unfiltered
+        (an admin may view all users' history — NFR-16 / R9).
+        ``per_source_counts`` on the audit rows is decoded to a dict
+        (the same decode ``/api/audit/recent`` uses).
+        """
+        if not self._require_admin(caller_email):
+            return
+        from digital_twins.scheduler.schedules import list_schedules
+        with self.server._db_lock:
+            schedules = list_schedules(self.server.db)
+            run_rows = self.server.db.execute(
+                "SELECT run_id, started_at, completed_at, status, "
+                "trigger, scheduled_by, per_source_counts "
+                "FROM audit_runs "
+                "ORDER BY started_at DESC, run_id DESC "
+                "LIMIT ?",
+                (self._DASH_RECENT_RUNS,),
+            ).fetchall()
+        recent_runs = []
+        for r in run_rows:
+            recent_runs.append({
+                "run_id": r[0],
+                "started_at": r[1],
+                "completed_at": r[2],
+                "status": r[3],
+                "trigger": r[4],
+                "scheduled_by": r[5],
+                "per_source_counts": self._decode_counts(r[6]),
+            })
+        self._send_json(200, {
+            "schedules": schedules,
+            "recent_runs": recent_runs,
+        })
+
+    def _handle_dashboard_models(self, caller_email: str) -> None:
+        """GET /api/dashboard/models → 200 effective model-knob view.
+
+        The dashboard's model-updates panel shows the *effective*
+        model-family knobs (the four-layer precedence: env > kb.local.yml
+        > kb.yml > defaults — the same view the services panel uses) with
+        credential values reduced to ``*_set`` booleans (FR-D3).  The
+        shape reuses ``_config_services_view``'s ``_CONFIG_SERVICE_FIELDS``
+        mapping: for the four services the effective endpoint/URL plus the
+        credential-set flags.  The embedding model/device (the
+        non-endpoint knobs the model panel cares about) are added as
+        plain values.  An unreachable/broken config layer degrades to
+        the built-in defaults (same rule as the services view).
+        """
+        if not self._require_admin(caller_email):
+            return
+        import os
+        services_view = self._config_services_view(
+            _cfg_get(self.server.config, "config_dir"), os.environ)
+        # The services view (``{"services": {...}, "env_overrides": [...]}``)
+        # exposes, per service, the effective endpoint/URL plus the
+        # credential-set flags (no credential values — FR-D3).  The
+        # model-updates panel additionally wants the embedding model and
+        # device (the knobs that change what the models actually are) —
+        # fold those two in from the same effective view.
+        from digital_twins.config import loader as _loader
+        from digital_twins.config.schema import get as _cfg_get_local
+        try:
+            effective = _loader.load(
+                config_dir=_cfg_get(self.server.config, "config_dir"),
+                env=os.environ)
+        except Exception:
+            effective = _merge_defaults({})
+        services = services_view["services"]
+        # Panel-facing view: the model-updates panel keys by what actually
+        # changes the models (endpoint + model + device) rather than the
+        # services view's URL-centric keying, so re-key the endpoint field
+        # per service to the knob name the user sets (``endpoint``).
+        models = {
+            "llm": dict(services["llm"]),
+            "embedding": dict(services["embedding"]),
+            "qdrant": dict(services["qdrant"]),
+            "neo4j": dict(services["neo4j"]),
+        }
+        for _svc in models.values():
+            if "url" in _svc:
+                _svc["endpoint"] = _svc.pop("url")
+        models["llm"]["model"] = _cfg_get_local(effective, "llm.model")
+        models["embedding"]["model"] = _cfg_get_local(effective, "embedding.model")
+        models["embedding"]["device"] = _cfg_get_local(effective, "embedding.device")
+        # Defensive invariant (FR-D3): no credential *value* key may ever
+        # reach the payload — the services view only carries *_set flags,
+        # but the scrub keeps the dashboard surface FR-004-clean even if
+        # the services view grows a value field later.
+        for model in models.values():
+            for key in ("api_key", "user", "password"):
+                model.pop(key, None)
+        self._send_json(200, {
+            "models": models,
+            "env_overrides": services_view["env_overrides"],
+        })
+
     # ``unknown service "<name>"``.  Credential values never enter the
     # response or the logs (the health checks already scrub, FR-004).
 

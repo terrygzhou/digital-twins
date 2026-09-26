@@ -56,6 +56,27 @@ main {
 
 main[hidden] { display: none; }
 
+/* The KB view is the two-column dashboard layout: the #dashboard-side
+   overview column on the left, the main content (kb panel / chat /
+   services / channels) on the right.  Narrow viewports collapse to a
+   single stacked column (side first, reads first). */
+#kb-view {
+  max-width: 72rem;
+  grid-template-columns: 20rem 1fr;
+  align-items: start;
+}
+
+#kb-view .dashboard-side {
+  display: grid;
+  gap: 1rem;
+}
+
+@media (max-width: 60rem) {
+  #kb-view {
+    grid-template-columns: 1fr;
+  }
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--line);
@@ -365,3 +386,71 @@ select:focus {
 
 .channel-row .status-pill.ok { color: #1a7f37; border-color: #1a7f37; }
 .channel-row .status-pill.unconfigured { color: var(--muted); }
+
+/* ---- dashboard left column (read-only admin overview panels) -------- */
+
+/* Compact card styling for the four side-column panels: tighter padding,
+   smaller headings, dense rows (they are at-a-glance overviews, not
+   full config surfaces). */
+.dashboard-side .card {
+  padding: 0.75rem 1rem;
+}
+
+.dashboard-side .card h2 {
+  margin-bottom: 0.4rem;
+  font-size: 1rem;
+}
+
+/* The compact per-panel row lists (accounts / channels / jobs / models). */
+.dashboard-rows {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.dash-row {
+  font-size: 0.8rem;
+  color: var(--ink);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+  overflow-wrap: anywhere;
+}
+
+.dash-row small.dash-endpoint {
+  display: block;
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+}
+
+.dash-row .badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  white-space: nowrap;
+  margin-right: 0.3rem;
+}
+
+.dash-row.dash-env {
+  color: #8a5b00;
+  background: #fdf3dc;
+}
+
+/* Per-panel tweaks: the jobs panel's run rows carry status colouring. */
+.dashboard-jobs-panel .dash-row {
+  font-family: ui-monospace, monospace;
+}
+
+.dashboard-models-panel .dash-row {
+  font-family: ui-monospace, monospace;
+}
+
+/* The account / channels / jobs / models panels sit in the left grid
+   track; each is a stack card in the side column. */
+.dashboard-account-panel { grid-column: 1; }
+.dashboard-channels-panel { grid-column: 1; }
+.dashboard-jobs-panel { grid-column: 1; }
+.dashboard-models-panel { grid-column: 1; }
