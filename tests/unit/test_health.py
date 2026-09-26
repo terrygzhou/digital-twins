@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from digital_twins import health
+from digital_twins.health import HealthResult, ServiceDependencyError
 
 PINNED = "BAAI/bge-small-en-v1.5"
 
@@ -374,6 +375,114 @@ def test_llm_unreachable_scrubs_url_credentials(monkeypatch):
     assert not r.ok
     assert "supersecret" not in r.detail
     assert "api_key=" not in r.detail
+
+
+# --- preflight soft-deps (preflight-optional-deps) ---------------------------
+# pytestmark: keep the real health.preflight under test (the autouse
+# _preflight_bypass fixture in tests/conftest.py replaces it for tests
+# without this marker — preflight_real keeps the genuine gate, like
+# test_preflight_gate.py does).
+pytestmark = pytest.mark.preflight_real
+
+
+def test_preflight_neo4j_unconfigured_is_skipped(caplog, monkeypatch):
+    """Soft dep: unconfigured neo4j -> INFO skip, no ServiceDependencyError."""
+    import logging
+    monkeypatch.setattr(
+        health, "run_health_checks",
+        lambda cfg: [
+            HealthResult("qdrant", True, "ok", status="ok"),
+            HealthResult("neo4j", False, "neo4j.url is not configured",
+                         "set neo4j.url in kb.local.yml",
+                         status="unconfigured"),
+            HealthResult("llm", True, "ok", status="ok"),
+            HealthResult("embedding", True, "ok", status="ok"),
+        ])
+    with caplog.at_level(logging.INFO, logger="digital_twins.health"):
+        ok = health.preflight(_cfg())
+    assert ok == ["qdrant", "llm", "embedding"]
+    msgs = [r.getMessage() for r in caplog.records
+            if r.levelno == logging.INFO]
+    assert any("neo4j" in m and "unconfigured" in m for m in msgs)
+
+
+def test_preflight_neo4j_auth_failed_still_hard_fails(monkeypatch):
+    """Soft dep but configured-and-broken: auth-failed -> hard failure."""
+    monkeypatch.setattr(
+        health, "run_health_checks",
+        lambda cfg: [
+            HealthResult("qdrant", True, "ok", status="ok"),
+            HealthResult("neo4j", False, "bad creds",
+                         "correct neo4j.user / neo4j.password",
+                         status="auth-failed"),
+        ])
+    with pytest.raises(health.ServiceDependencyError) as exc:
+        health.preflight(_cfg())
+    assert exc.value.service == "neo4j"
+    assert exc.value.status == "auth-failed"
+
+
+def test_preflight_neo4j_unreachable_still_hard_fails(monkeypatch):
+    """Soft dep but configured-and-broken: unreachable -> hard failure."""
+    monkeypatch.setattr(
+        health, "run_health_checks",
+        lambda cfg: [
+            HealthResult("qdrant", True, "ok", status="ok"),
+            HealthResult("neo4j", False, "connection refused",
+                         "check neo4j.url",
+                         status="unreachable"),
+        ])
+    with pytest.raises(health.ServiceDependencyError) as exc:
+        health.preflight(_cfg())
+    assert exc.value.service == "neo4j"
+    assert exc.value.status == "unreachable"
+
+
+def test_preflight_neo4j_ok_is_added(monkeypatch):
+    """Soft dep, status ok -> added to ok_services as before."""
+    monkeypatch.setattr(
+        health, "run_health_checks",
+        lambda cfg: [
+            HealthResult("qdrant", True, "ok", status="ok"),
+            HealthResult("neo4j", True, "reachable; auth ok",
+                         status="ok"),
+        ])
+    assert health.preflight(_cfg()) == ["qdrant", "neo4j"]
+
+
+def test_preflight_qdrant_unconfigured_still_raises(caplog, monkeypatch):
+    """Hard dep unchanged: unconfigured qdrant still raises."""
+    import logging
+    monkeypatch.setattr(
+        health, "run_health_checks",
+        lambda cfg: [
+            HealthResult("qdrant", False, "qdrant.url is not configured",
+                         "set qdrant.url in kb.local.yml",
+                         status="unconfigured"),
+        ])
+    with caplog.at_level(logging.WARNING, logger="digital_twins.health"):
+        with pytest.raises(health.ServiceDependencyError) as exc:
+            health.preflight(_cfg())
+    assert exc.value.service == "qdrant"
+    assert exc.value.status == "unconfigured"
+    msgs = [r.getMessage() for r in caplog.records
+            if r.levelno == logging.WARNING]
+    assert any("qdrant" in m and "unconfigured" in m for m in msgs)
+
+
+def test_preflight_qdrant_unreachable_still_raises(monkeypatch):
+    """Hard dep unchanged: unreachable qdrant still raises."""
+    monkeypatch.setattr(
+        health, "run_health_checks",
+        lambda cfg: [
+            HealthResult("qdrant", False, "unreachable: ConnectionError",
+                         "check qdrant.url",
+                         status="unreachable"),
+        ])
+    with pytest.raises(health.ServiceDependencyError) as exc:
+        health.preflight(_cfg())
+    assert exc.value.service == "qdrant"
+    assert exc.value.status == "unreachable"
 
 
 def test_qdrant_exception_detail_scrubs_url_credentials(monkeypatch):

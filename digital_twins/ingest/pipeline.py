@@ -11,6 +11,7 @@ them. High-water marks additionally skip unchanged items.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 
@@ -33,6 +34,8 @@ from digital_twins.state.models import (
     upsert_highwater,
 )
 from digital_twins.ingest import entities  # s4-entity-extraction
+
+logger = logging.getLogger(__name__)
 
 
 class PrerequisiteError(Exception):
@@ -144,8 +147,12 @@ def run_pipeline(
 
     `qdrant` is a client or a zero-arg factory (resolved only after the
     prerequisite check passes). `embedder` maps list[str] -> list of vectors
-    and must be lazy about its own heavy setup. `neo4j` is a driver-shaped
-    object exposing `.run(query, **params)` (None = skip graph writes).
+    and must be lazy about its own heavy setup. `neo4j` is a
+    driver-shaped object exposing the Neo4j session API
+    (``.session()`` returning a context-manager whose ``.run()``
+    executes Cypher — the surface of a raw
+    ``neo4j.GraphDatabase.driver``) (None = skip graph writes, i.e.
+    "Qdrant-only mode" when Neo4j is unconfigured).
 
     `trigger` records how the run was started ('manual' for run --once / the
     CLI one-shot, 'schedule' for serve fires). `scheduled_by` records the
@@ -286,6 +293,13 @@ def run_pipeline(
                     # config-gated; no-op when extraction.enabled is false
                     # or the LLM endpoint is unconfigured).
                     _run_extraction(cfg, neo4j, items, item_hash, run_id, name)
+                else:
+                    # preflight-optional-deps: Qdrant-only mode — Neo4j was
+                    # unconfigured (soft dependency), so no graph writes.
+                    # Logged once per source-with-points.
+                    logger.info(
+                        "Qdrant-only mode: Neo4j not configured — "
+                        "skipping graph writes")
 
             for item in items:
                 upsert_highwater(db, name, item.key, item.ts)
@@ -316,7 +330,8 @@ def _upsert_graph(neo4j, channel: str, items, item_hash: dict) -> None:
     """
     _ensure_graph_schema(neo4j)
     for item in items:
-        neo4j.run(
+        _execute_cypher(
+            neo4j,
             "MERGE (si:SourceItem {item_id: $id}) "
             "SET si.channel = $ch, si.content_hash = $hash",
             id=item.key, ch=channel,
@@ -332,10 +347,32 @@ def _ensure_graph_schema(neo4j) -> None:
     ``CREATE INDEX IF NOT EXISTS`` is a no-op on an already-created
     index, so this is safe to run on every graph-enabled pipeline pass.
     """
-    neo4j.run(
+    _execute_cypher(
+        neo4j,
         "CREATE INDEX IF NOT EXISTS FOR (si:SourceItem) ON (si.item_id)")
-    neo4j.run(
+    _execute_cypher(
+        neo4j,
         "CREATE INDEX IF NOT EXISTS FOR (si:SourceItem) ON (si.channel)")
+
+
+def _execute_cypher(neo4j, cypher: str, **params) -> None:
+    """Execute one Cypher statement against the Neo4j driver.
+
+    BUG-01 (graph-driver-fix): the graph-write helpers previously called
+    ``neo4j.run(...)`` directly on the driver, but a real
+    ``neo4j.GraphDatabase.driver`` (the object
+    ``scheduler.loop.build_neo4j_driver`` returns) has no driver-level
+    ``.run()`` — queries go through the session API::
+
+        with driver.session() as s:
+            s.run(cypher, **params)
+
+    This helper is the single session-API choke point for every S4
+    graph write; the test-only driver-level ``.run()`` surface is no
+    longer part of the pipeline hand-off contract.
+    """
+    with neo4j.session() as s:
+        s.run(cypher, **params)
 
 
 def _run_extraction(

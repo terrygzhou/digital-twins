@@ -37,6 +37,13 @@ HTTP_TIMEOUT_S = 10
 
 VALID_STATUSES = frozenset({"ok", "unconfigured", "unreachable", "auth-failed"})
 
+# Soft dependencies (preflight-optional-deps): an `unconfigured` status for
+# one of these logs an INFO skip instead of raising — the service is
+# optional (Qdrant-only mode). `auth-failed` / `unreachable` still
+# hard-fail: an explicitly-configured service that is broken is a real
+# error. Qdrant / LLM / embedding remain hard deps.
+SOFT_DEPS = frozenset({"neo4j"})
+
 logger = logging.getLogger(__name__)
 
 
@@ -321,16 +328,26 @@ def run_health_checks(cfg) -> list:
 
 
 def preflight(cfg) -> list:
-    """Gate: every service in run_health_checks is a hard dependency (US1;
-    T013 shape — all four, none optional).
+    """Gate: qdrant / llm / embedding are hard dependencies; neo4j is a
+    soft dependency (SOFT_DEPS — preflight-optional-deps).
 
-    Raises ServiceDependencyError on the first non-ok check, before the
-    pipeline touches any store (no audit row, no upserts). Returns the
-    ordered list of ok service names when all pass.
+    A non-ok `HealthResult` for a hard dep raises ServiceDependencyError
+    before the pipeline touches any store (no audit row, no upserts). A
+    non-ok result for a soft dep with status="unconfigured" is logged at
+    INFO and skipped (Qdrant-only mode — the service was never
+    configured, so there is nothing to break); `auth-failed` and
+    `unreachable` for a soft dep still hard-fail (the user explicitly
+    configured the service, so a broken config is a real error). Returns
+    the ordered list of ok service names.
     """
     ok_services = []
     for res in run_health_checks(cfg):
         if not res.ok:
+            if res.endpoint in SOFT_DEPS and res.status == "unconfigured":
+                logger.info(
+                    "preflight: service %s is %s — skipping (Qdrant-only "
+                    "mode)", res.endpoint, res.status)
+                continue
             logger.warning(
                 "preflight: service %s is %s: %s", res.endpoint, res.status,
                 res.remediation)

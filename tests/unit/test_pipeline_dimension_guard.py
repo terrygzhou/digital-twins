@@ -3,7 +3,13 @@
 `run` must fail fast when the existing Qdrant collection's vector dimension
 does not match the pinned embedding model, raising DimensionMismatchError
 instead of upserting into the wrong collection.
+
+Also hosts the preflight-optional-deps Qdrant-only mode test
+(`run_pipeline(neo4j=None)` completes a Qdrant write without touching any
+graph write helper).
 """
+
+import logging
 
 import pytest
 
@@ -187,6 +193,129 @@ def test_run_pipeline_matching_dim_proceeds(tmp_path, monkeypatch):
                            embedder=lambda texts: [])
     assert summary.status == "ok"
     assert summary.points == 0
+    conn.close()
+
+
+# --- preflight-optional-deps: Qdrant-only mode (neo4j=None) -------------------
+
+class _ItemSource:
+    """Fake source yielding one real IngestItem so a Qdrant upsert happens."""
+
+    class capability:
+        prefix = "item://"
+
+    def __init__(self):
+        from digital_twins.sources.base import IngestItem
+        self._item = IngestItem(key="i1", content="hello world",
+                                 ts="2025-01-01T00:00:00Z")
+
+    def prerequisites(self):
+        return []
+
+    def read(self, since=None):
+        return iter([self._item])
+
+    def close(self):
+        pass
+
+
+def _patch_item_source(monkeypatch):
+    monkeypatch.setattr(
+        pipeline, "build_source",
+        lambda name, entry: _ItemSource())
+
+
+def test_run_pipeline_neo4j_none_completes_qdrant_write(
+        tmp_path, caplog, monkeypatch):
+    """preflight-optional-deps 2.1: with neo4j=None the pipeline skips the
+    graph write helpers (the helpers' monkeypatched sentinels raise if
+    ever called) and completes the Qdrant write without raising — the
+    exact Qdrant-only scenario from the spec: 'WHEN neo4j.url /
+    neo4j.user / neo4j.password are unset and qdrant is healthy, THEN
+    preflight returns without raising, the pipeline skips graph writes,
+    and the Qdrant write completes'."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    conn = connect(state_dir)
+    from digital_twins.state import migrations
+    migrations.migrate(conn)
+
+    upserted = []
+
+    class _Client(FakeQdrantClient):
+        def upsert(self, *a, **kw):
+            upserted.append((len(kw.get("points") or []),
+                             kw.get("wait")))
+
+    client = _Client(existing_dim=384)
+    _patch_item_source(monkeypatch)
+
+    def _boom(*a, **kw):
+        raise AssertionError("neo4j=None must not call graph write helpers")
+
+    monkeypatch.setattr(pipeline, "_upsert_graph", _boom)
+    monkeypatch.setattr(pipeline, "_ensure_graph_schema", _boom)
+    monkeypatch.setattr(pipeline, "_run_extraction", _boom)
+    monkeypatch.setattr(pipeline, "_execute_cypher", _boom)
+
+    with caplog.at_level(logging.INFO, logger="digital_twins.ingest.pipeline"):
+        summary = run_pipeline(_cfg(), conn, client,
+                               embedder=lambda texts: [[0.1] * 384],
+                               neo4j=None)
+
+    assert summary.status == "ok"
+    assert summary.points == 1
+    assert upserted == [(1, True)]
+    msgs = [r.getMessage() for r in caplog.records
+            if r.levelno == logging.INFO]
+    assert any("Qdrant-only mode" in m and "Neo4j not configured" in m
+               for m in msgs)
+    conn.close()
+
+
+def test_run_pipeline_neo4j_driver_still_writes_graph(
+        tmp_path, monkeypatch):
+    """Sanity (not new behavior): with a session-API-shaped fake driver,
+    the S4 graph write helpers are still invoked (session API surface
+    post 78084f7 — _execute_cypher routes through .session())."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    conn = connect(state_dir)
+    from digital_twins.state import migrations
+    migrations.migrate(conn)
+
+    class _Client(FakeQdrantClient):
+        def upsert(self, *a, **kw):
+            pass
+
+    client = _Client(existing_dim=384)
+    _patch_item_source(monkeypatch)
+
+    cypher_calls = []
+
+    def _recording(neo4j, cypher, **params):
+        cypher_calls.append(cypher)
+
+    monkeypatch.setattr(pipeline, "_execute_cypher", _recording)
+
+    class _S:
+        def __enter__(self_):
+            return self_
+        def __exit__(self_, *a):
+            return False
+        def run(self_, query, **params):
+            pass
+
+    class _Driver:
+        def session(self):
+            return _S()
+
+    summary = run_pipeline(_cfg(), conn, client,
+                           embedder=lambda texts: [[0.1] * 384],
+                           neo4j=_Driver())
+    assert summary.status == "ok"
+    assert any("SourceItem" in c for c in cypher_calls)
+    assert any("CREATE INDEX" in c for c in cypher_calls)
     conn.close()
 
 

@@ -117,15 +117,38 @@ def test_check_neo4j_runs_read_queries(monkeypatch):
 # --- 2. graph writes: the shipped write queries ----------------------------
 
 
-class _RecordingNeo4j:
-    """The driver-shaped object the pipeline hand-off contract defines:
-    ``.run(query, **params)`` (002 US2)."""
+class _SessionRecordingNeo4j:
+    """Driver-shaped fake mirroring the real ``neo4j`` driver surface
+    (BUG-01 / graph-driver-fix): a raw ``neo4j.GraphDatabase.driver``
+    exposes the session API — ``with driver.session() as s:
+    s.run(query, **params)`` — and no driver-level ``.run()``. The
+    pipeline hand-off contract is this session surface (002 US2), not
+    a test-only driver-level ``.run()``.
+
+    Records every ``(query, params)`` executed through a session, and
+    tracks session entry/exit so tests can assert the calls went
+    through ``.session()`` rather than a driver-level ``.run()``."""
 
     def __init__(self):
         self.queries = []
+        self.sessions_opened = 0
 
-    def run(self, query, **params):
-        self.queries.append((query, params))
+    def session(self):
+        rec = self
+
+        class _Session:
+            def __enter__(self):
+                rec.sessions_opened += 1
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def run(self, query, **params):
+                rec.queries.append((query, params))
+                return None
+
+        return _Session()
 
 
 def test_upsert_graph_cypher_write_queries():
@@ -133,9 +156,11 @@ def test_upsert_graph_cypher_write_queries():
     schema bootstrap statements (SourceItem.item_id / .channel), then
     one ``MERGE (si:SourceItem {item_id})`` per item with channel +
     item-level content_hash — deduped on item_id, no chunk nodes, no
-    chunk text in the graph (chunk text lives in Qdrant full_content)."""
+    chunk text in the graph (chunk text lives in Qdrant full_content).
+    All calls go through the driver's session API (graph-driver-fix:
+    the raw ``neo4j`` driver has no driver-level ``.run()``)."""
     from digital_twins.ingest.ids import content_hash
-    fake = _RecordingNeo4j()
+    fake = _SessionRecordingNeo4j()
     a = SimpleNamespace(key="a", content="text-a")
     b = SimpleNamespace(key="b", content="text-b")
     items = [a, b]
@@ -165,6 +190,30 @@ def test_upsert_graph_cypher_write_queries():
     assert legacy == []
 
 
+def test_upsert_graph_uses_session_api():
+    """REGRESSION (BUG-01 / graph-driver-fix, RED-first): the graph-write
+    helpers call through the driver's session API (``with driver.session()
+    as s: s.run(...)``) — the surface a real ``neo4j.GraphDatabase.driver``
+    exposes. The fake above has no driver-level ``.run()``, so the old
+    code (``neo4j.run(...)`` on the driver) fails with AttributeError
+    here; the fix routes every graph write through a session."""
+    from digital_twins.ingest.ids import content_hash
+    fake = _SessionRecordingNeo4j()
+    a = SimpleNamespace(key="a", content="text-a")
+    items = [a]
+    item_hash = {"a": content_hash("text-a")}
+    pipeline._upsert_graph(fake, "notes", items, item_hash)
+    # Every write went through a session (schema DDL + one MERGE each).
+    assert fake.sessions_opened >= 1
+    assert len(fake.queries) == 3  # 2 CREATE INDEX + 1 MERGE
+    # And _ensure_graph_schema on its own also routes through a session.
+    schema_fake = _SessionRecordingNeo4j()
+    pipeline._ensure_graph_schema(schema_fake)
+    assert schema_fake.sessions_opened >= 1
+    assert len(schema_fake.queries) == 2
+    assert all("IF NOT EXISTS" in q for q, _ in schema_fake.queries)
+
+
 # --- 3. driver wiring -------------------------------------------------------
 
 
@@ -176,6 +225,37 @@ def test_build_neo4j_driver_uses_configured_endpoint(monkeypatch):
         {"neo4j": {"url": "bolt://n:7687", "user": "u", "password": "p"}})
     assert d.url == "bolt://n:7687"
     assert d.auth == ("u", "p")
+
+
+def test_build_neo4j_driver_exposes_session_api():
+    """REGRESSION (graph-driver-fix, task 2.2): when a real driver is
+    constructed, it is the raw ``neo4j`` driver shape — it exposes the
+    session API (``driver.session()``) that the graph-write helpers
+    depend on, not a test-only driver-level ``.run()``. Skipped when
+    the real ``neo4j`` package is not importable or when the endpoint
+    is not resolvable through the config layer (NFR-13: no host
+    values in this test — the endpoint/creds come from the config
+    layer only)."""
+    import importlib.util
+    if importlib.util.find_spec("neo4j") is None:
+        pytest.skip("neo4j package not installed — real-driver shape "
+                    "test requires it")
+    from digital_twins.config import loader
+    cfg = loader.load()
+    url = get(cfg, "neo4j.url")
+    user = get(cfg, "neo4j.user")
+    password = get(cfg, "neo4j.password")
+    if not (url and user and password):
+        pytest.skip("neo4j.url/user/password not resolvable via "
+                    "config layer — real-driver shape test skipped")
+    # GraphDatabase.driver(...) is lazy (no network I/O at construction
+    # in the neo4j 5.x/6.x driver) so building + closing is safe.
+    driver = loop.build_neo4j_driver(cfg)
+    try:
+        assert hasattr(driver, "session")
+        assert callable(driver.session)
+    finally:
+        driver.close()
 
 
 def test_neo4j_driver_factory_fails_closed_with_config_error(monkeypatch):
