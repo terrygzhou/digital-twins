@@ -308,34 +308,56 @@ def test_live_neo4j_read_query_against_configured_endpoint():
 
 # --- 4. s4 migration: legacy label removal (spec scenario) ----------------
 
-class _RecordingMigrator:
-    """Driver-shaped fake for the migration module's query surface:
-    ``.run(query, **params)`` returning a single-{"n": int} result."""
+class _SessionRecordingMigrator:
+    """Driver-shaped fake for the migration module's query surface
+    (BUG-01 / graph-driver-fix): a raw ``neo4j.GraphDatabase.driver``
+    exposes the session API — ``with driver.session() as s:
+    s.run(query, **params)`` — and no driver-level ``.run()``. The
+    session's ``.run()`` returns a result with ``.single()`` resolving
+    ``{"n": int}`` from the per-label counts the fake was constructed
+    with (migrate_s4's read surface: the MATCH count queries); the
+    DETACH DELETE statements resolve the same way, so a real run
+    reports the node counts it deleted."""
 
     def __init__(self, counts: dict | None = None):
         self.queries = []
+        self.sessions_opened = 0
         self._counts = counts or {}
 
-    def run(self, query, **params):
-        self.queries.append((query, params))
-        counts = self._counts
+    def session(self):
+        rec = self
 
-        def _single(q=query):
-            for lbl, cnt in counts.items():
-                if f"(n:{lbl}" in q:
-                    return {"n": cnt}
-            return {"n": 0}
+        class _Session:
+            def __enter__(self):
+                rec.sessions_opened += 1
+                return self
 
-        class _Result:
-            def single(self):
-                return _single()
+            def __exit__(self, *args):
+                return False
 
-        return _Result()
+            def run(self, query, **params):
+                rec.queries.append((query, params))
+                counts = rec._counts
+
+                def _single(q=query):
+                    for lbl, cnt in counts.items():
+                        if f"(n:{lbl}" in q:
+                            return {"n": cnt}
+                    return {"n": 0}
+
+                class _Result:
+                    def single(self):
+                        return _single()
+
+                return _Result()
+
+        return _Session()
+
 def test_migrate_s4_deletes_legacy_labels_idempotent():
     """Real (non-dry) run: two DETACH DELETE statements (KbItem, KbChunk),
     idempotent no-op on a fresh DB (counts 0). No :SourceItem statement."""
     from digital_twins import neo4j_migration
-    fake = _RecordingMigrator()
+    fake = _SessionRecordingMigrator()
     res = neo4j_migration.migrate_s4(fake, dry_run=False)
     deletes = [q for q, _ in fake.queries if "DETACH DELETE" in q]
     assert len(deletes) == 2
@@ -344,13 +366,14 @@ def test_migrate_s4_deletes_legacy_labels_idempotent():
     assert not any("SourceItem" in q for q, _ in fake.queries)
     assert res["deleted"]["KbItem"] == 0
     assert res["deleted"]["KbChunk"] == 0
+    assert fake.sessions_opened >= 1
 
 
 def test_migrate_s4_dry_run_reports_counts_without_deleting():
     """Dry run: count queries only, no DELETE, counts surfaced (spec
     scenario 'Migration on legacy database')."""
     from digital_twins import neo4j_migration
-    fake = _RecordingMigrator(counts={"KbItem": 3, "KbChunk": 11})
+    fake = _SessionRecordingMigrator(counts={"KbItem": 3, "KbChunk": 11})
     res = neo4j_migration.migrate_s4(fake, dry_run=True)
     assert res["dry_run"] is True
     assert res["would_delete"] == {"KbItem": 3, "KbChunk": 11}
@@ -358,16 +381,41 @@ def test_migrate_s4_dry_run_reports_counts_without_deleting():
     counts = [q for q, _ in fake.queries if "count" in q]
     assert any("KbItem" in q for q in counts)
     assert any("KbChunk" in q for q in counts)
+    assert fake.sessions_opened >= 1
 
 
 def test_migrate_s4_fresh_db_reports_zero():
     """Spec scenario 'Migration on fresh database': completes, reports 0
     nodes deleted."""
     from digital_twins import neo4j_migration
-    fake = _RecordingMigrator()
+    fake = _SessionRecordingMigrator()
     res = neo4j_migration.migrate_s4(fake, dry_run=False)
     assert res["dry_run"] is False
     assert res["deleted"] == {"KbItem": 0, "KbChunk": 0}
+    assert fake.sessions_opened >= 1
+
+
+def test_migrate_s4_uses_session_api():
+    """REGRESSION (BUG-01 / graph-driver-fix, RED-first): migrate_s4
+    routes every Cypher through the driver's session API (``with
+    driver.session() as s: s.run(...)``) — the surface a real
+    ``neo4j.GraphDatabase.driver`` (what
+    ``scheduler.loop.build_neo4j_driver`` returns) exposes. The fake
+    has no driver-level ``.run()``, so the old code (``driver.run``
+    on the driver) fails with AttributeError here; the fix routes the
+    count reads and the DETACH DELETEs through a session."""
+    from digital_twins import neo4j_migration
+    fake = _SessionRecordingMigrator(counts={"KbItem": 3, "KbChunk": 11})
+    res = neo4j_migration.migrate_s4(fake, dry_run=False)
+    # 2 count reads + 2 DETACH DELETEs, all through a session.
+    assert fake.sessions_opened >= 1
+    assert len(fake.queries) == 4
+    assert res["deleted"] == {"KbItem": 3, "KbChunk": 11}
+    dry = _SessionRecordingMigrator(counts={"KbItem": 3, "KbChunk": 11})
+    neo4j_migration.migrate_s4(dry, dry_run=True)
+    assert dry.sessions_opened >= 1
+    assert len(dry.queries) == 2  # count reads only
+    assert not any("DELETE" in q for q, _ in dry.queries)
 
 
 # --- 5. CLI surface: `digital-twins migrate s4` ------------------------------
@@ -383,7 +431,7 @@ def test_cli_migrate_s4_invokes_migrate_s4(monkeypatch):
 
     def fake_driver(cfg):
         calls.append(("driver", cfg))
-        return _RecordingMigrator()
+        return _SessionRecordingMigrator()
 
     monkeypatch.setattr("digital_twins.cli.load",
                         lambda: {"state_dir": "/tmp/never"})
