@@ -171,3 +171,14 @@ def test_dashboard_css_two_column_grid():
         assert re.search(r"\." + re.escape(pid) + r"\b", css), (
             f"style.css must carry a rule for the .{pid} panel"
         )
+    # Regression (7100d1b follow-up): the base `main` rule caps the page
+    # at 44rem and sits LATER in the sheet, so it would silently override
+    # the two-track dashboard grid and collapse the left column.  The
+    # #kb-view rule must therefore carry its own max-width that survives
+    # the cascade.
+    rule = re.search(r"#kb-view\s*\{([^}]*)\}", css, re.DOTALL).group(1)
+    assert "max-width" in rule, (
+        "the #kb-view rule must set its own max-width — the later base "
+        "`main` rule (max-width: 44rem) would otherwise override the "
+        "two-track dashboard grid"
+    )

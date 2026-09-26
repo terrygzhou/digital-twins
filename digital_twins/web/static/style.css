@@ -61,9 +61,11 @@ main[hidden] { display: none; }
    services / channels) on the right.  Narrow viewports collapse to a
    single stacked column (side first, reads first). */
 #kb-view {
-  max-width: 72rem;
   grid-template-columns: 20rem 1fr;
   align-items: start;
+  /* override the base `main` rule: the dashboard layout is wider than
+     the single-column KB default. */
+  max-width: 72rem;
 }
 
 #kb-view .dashboard-side {
