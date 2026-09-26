@@ -169,6 +169,39 @@ def test_channels_js_error_handling_shape():
     )
 
 
+# --- email / imap_host account knobs on the channel row -------------------------
+
+
+def test_channel_row_exposes_email_and_imap_host():
+    """FR-D: the channel row surfaces the imap_mail account knobs
+    (email address + IMAP host) alongside the three override knobs —
+    the fields that actually make an email channel work, previously
+    only editable by hand-editing kb.local.yml.  The backend
+    channel_view carries ``email`` and ``imap_host`` (non-secret),
+    the row renders two text inputs, and the Save POST includes
+    them."""
+    html = _index_html()
+    assert re.search(
+        r'id\s*=\s*"channels-email-"', html
+    ), "the channel row must carry a channels-email-<name> input"
+    assert re.search(
+        r'id\s*=\s*"channels-imap-host-"', html
+    ), "the channel row must carry a channels-imap-host-<name> input"
+    # The Save POST carries the account knobs.
+    assert "section.email" in html
+    assert "imap_host" in html
+    # channel_view (the GET response shape) carries the two fields.
+    import digital_twins.config.channels as ch
+    row = ch._channel_row("gmail", {"enabled": True,
+                                     "email": "a@b.c",
+                                     "extra": {"imap_host": "imap.b.c"}})
+    assert row["email"] == "a@b.c"
+    assert row["imap_host"] == "imap.b.c"
+    # No-credential source (no extra): empty strings, not KeyError.
+    empty = ch._channel_row("fs", {})
+    assert empty["email"] == "" and empty["imap_host"] == ""
+
+
 # --- FR-004: no credential values in the UI ------------------------------------
 
 

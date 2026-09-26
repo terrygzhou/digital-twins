@@ -1450,6 +1450,42 @@ class _WebAppHandler(BaseHTTPRequestHandler):
                         self._send_json(
                             422, {"error": f"schema violation: {exc}"})
                         return
+                elif key in ("email", "credential", "prefix", "entrypoint"):
+                    # Non-secret per-source string knobs the schema allows
+                    # (email address, credential env-var name, prefix,
+                    # entrypoint module:factory).  ``extra`` is a mapping
+                    # (imap_host etc.) — handled below.
+                    if not isinstance(value, str):
+                        self._send_json(
+                            422,
+                            {"error": f"sources.{name}.{key}: must be a "
+                                       f"string"})
+                        return
+                    entry[key] = value
+                elif key == "extra":
+                    # Mapping of provider-specific knobs (e.g. imap_host,
+                    # max_unseen).  Only string/int values are accepted;
+                    # nested mappings are rejected (the schema's
+                    # ``extra: must be a mapping`` check covers the
+                    # top-level shape, the value types are provider-
+                    # specific).
+                    if not isinstance(value, dict):
+                        self._send_json(
+                            422,
+                            {"error": f"sources.{name}.extra: must be a "
+                                       f"mapping"})
+                        return
+                    clean_extra = {}
+                    for ek, ev in value.items():
+                        if not isinstance(ev, (str, int, float, bool)):
+                            self._send_json(
+                                422,
+                                {"error": f"sources.{name}.extra.{ek}: "
+                                           f"must be a string, number, "
+                                           f"or boolean"})
+                            return
+                        clean_extra[ek] = ev
+                    entry["extra"] = clean_extra
                 else:
                     # Unknown knobs are the CLI `channels add` surface
                     # (entrypoint / credential / prefix …) — the web

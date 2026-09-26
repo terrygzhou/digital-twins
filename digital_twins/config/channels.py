@@ -78,4 +78,10 @@ def _channel_row(name: str, entry: dict, env=None) -> dict:
             row["credential_set"] = bool(os.environ.get(credential, ""))
     else:
         row["credential_set"] = True  # no credential declared -> ready
+    # Non-secret per-source knobs the UI may surface (email address,
+    # IMAP host).  These are NOT credentials — they are user-visible
+    # account identifiers that the imap_mail source requires.
+    row["email"] = str(entry.get("email") or "")
+    extra = entry.get("extra") or {}
+    row["imap_host"] = str(extra.get("imap_host") or "")
     return row

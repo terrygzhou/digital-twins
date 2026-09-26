@@ -867,11 +867,33 @@
         timeoutInp.setAttribute("aria-label", name + " timeout_s");
         row.appendChild(timeoutInp);
 
+        // Per-source account knobs (email address + IMAP host) — the
+        // imap_mail provider fields.  Shown for every source so the
+        // UI is uniform; the backend persists them verbatim.  FR-004:
+        // these are account identifiers, not credentials.
+        var emailInp = document.createElement("input");
+        emailInp.type = "email";
+        emailInp.className = "channel-text";
+        emailInp.id = "channels-email-" + name;
+        emailInp.placeholder = "email account";
+        emailInp.value = s.email || "";
+        emailInp.setAttribute("aria-label", name + " email account");
+        row.appendChild(emailInp);
+
+        var hostInp = document.createElement("input");
+        hostInp.type = "text";
+        hostInp.className = "channel-text";
+        hostInp.id = "channels-imap-host-" + name;
+        hostInp.placeholder = "imap host";
+        hostInp.value = s.imap_host || "";
+        hostInp.setAttribute("aria-label", name + " imap host");
+        row.appendChild(hostInp);
+
         var save = document.createElement("button");
         save.className = "btn ghost small channels-save-btn";
         save.textContent = "Save";
         save.addEventListener("click", function () {
-          saveChannel(name, enabledInp, maxItemsInp, timeoutInp);
+          saveChannel(name, enabledInp, maxItemsInp, timeoutInp, emailInp, hostInp);
         });
         row.appendChild(save);
 
@@ -879,12 +901,21 @@
       });
     }
 
-    function saveChannel(name, enabledInp, maxItemsInp, timeoutInp) {
+    function saveChannel(name, enabledInp, maxItemsInp, timeoutInp,
+                         emailInp, hostInp) {
       var body = {};
       var section = {};
       section.enabled = enabledInp.checked;
       section.max_items = parseInt(maxItemsInp.value, 10);
       section.timeout_s = parseInt(timeoutInp.value, 10);
+      // Account knobs: only sent when non-empty so a refresh-save on a
+      // non-mail source doesn't blank an unrelated key.
+      if (emailInp && emailInp.value) {
+        section.email = emailInp.value;
+      }
+      if (hostInp && hostInp.value) {
+        section.extra = { imap_host: hostInp.value };
+      }
       body[name] = section;
       var prevError = el("channels-error");
       prevError.textContent = "";
