@@ -40,9 +40,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
   `tests/unit/test_embedding.py::test_load_embedder_forwards_model_and_device`
   now asserts the `local_files_only=True` flag is forwarded.
 
-## [0.11.2] - 2026-09-22
+## [0.11.2] - 2026-09-26
 
 ### Added
+- **Dashboard left-column overview panels** (`7100d1b`): the dashboard
+  page now has a left side track with an account panel, an ingestion
+  channels panel, a batch jobs panel, and a models-updating panel
+  next to the main dashboard content.
+- **Email channel settings surfaced** (`0085574`): the channel row
+  on the dashboard now exposes the email account and IMAP host knobs
+  so channel settings (email account, etc.) are visible without
+  editing config files.
+
+### Changed
 - install.sh / install-local.sh: use `uv` (venv + pip) when the `uv`
   binary is already on PATH — faster installs, no dependency on the
   stdlib `venv` module; otherwise fall back to stdlib venv + the
@@ -57,11 +67,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
   system pip remains the default for non-venv installs.
 
 ### Fixed
+- **Dashboard two-track layout** (`e0364a0`): `main`'s `max-width`
+  was clamping the new two-track grid; the override lets the
+  left-column panels and main content lay out side by side.
 - **setup wizard now re-prompts for Neo4j credentials** when a cloud
   Neo4j URL is given but `neo4j.user` / `neo4j.password` are left
   empty — the previous behaviour wrote an incomplete `kb.local.yml`
   and the health check reported `neo4j FAIL unconfigured`.  Each
-  field is re-prompted up to 3 times with an "[empty for
+  field is re-prompted up to 3 times with a "[empty for
   auth-disabled Neo4j]" hint; pressing Enter through all prompts
   still works for auth-disabled instances.  New regression tests:
   `test_cloud_neo4j_credentials_reprompt_when_empty`,
