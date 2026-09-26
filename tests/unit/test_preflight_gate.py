@@ -1,7 +1,9 @@
-"""008/US1 (T012): preflight gate — every service is a hard dependency
-for the MVP (T013 shape: all 4, no optional). Failure aborts the run
-before any write: no audit row, structured log with service + remediation,
-no credential material.
+"""008/US1 (T012): preflight gate — hard/soft dependency contract
+(preflight-optional-deps): qdrant / llm / embedding are hard deps;
+neo4j is soft — `unconfigured` logs INFO and skips (Qdrant-only mode),
+while `auth-failed` / `unreachable` still hard-fail. A hard-dep
+failure aborts the run before any write: no audit row, structured
+log with service + remediation, no credential material.
 """
 from __future__ import annotations
 
