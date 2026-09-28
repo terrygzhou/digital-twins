@@ -104,8 +104,6 @@ def serve_once_tick(db, config) -> dict:
     # the prerequisite check, mirroring 001's fail-fast ordering.)
     qdrant = _qdrant_factory(config)
     embedder = _embedder(config)
-    neo4j = None  # 002 v1: serve fires use the shared 001 state store;
-    # graph writes are a 001 concern (T007 wires the driver if needed).
 
     fired: list[int] = []
     skipped: list[int] = []

@@ -12,7 +12,6 @@ no network listener — it just reads / writes the process's stdio.
 """
 from __future__ import annotations
 
-import sys
 
 from ..config import load
 from ..config.schema import get

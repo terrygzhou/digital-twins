@@ -872,7 +872,6 @@ def schedule_add(source: str, preset: str, param: int, fire_time: str,
     capability (R3: admin/scheduler yes, reader no). On denial: exit 2,
     named reason, no schedule row written.
     """
-    import sqlite3 as _sqlite3
     db = _open_schedules_db()
     try:
         # 003 post-auth role check (C-2 / R3)
@@ -1341,7 +1340,7 @@ def session_revoke(token: str, as_user: str) -> None:
     --as). Revoke succeeds for the session's own owner or an admin.
     """
     from digital_twins.auth import revoke_session
-    from digital_twins.accounts import get_role, require_capability, RoleDenied
+    from digital_twins.accounts import require_capability, RoleDenied
 
     db = _open_schedules_db()
     try:
@@ -1631,7 +1630,7 @@ def _config_check_target(
         try:
             require_capability(caller_role, "manage_all_user_config",
                                "manage config for another user")
-        except RoleDenied as exc:
+        except RoleDenied:
             # The brief requires the message to read like:
             # "role `reader` may not manage config for another user"
             click.echo(
@@ -1742,7 +1741,6 @@ def config_unset(as_user: str, source: str, key: str) -> None:
 
         from digital_twins.user_config import (
             OVERRIDABLE_KEYS,
-            NotUserOverridableError,
             unset_override,
         )
 

@@ -23,7 +23,7 @@ from dotenv import load_dotenv as _load_dotenv
 
 from . import deprecation as _deprecation
 from . import schema as _schema
-from .schema import SchemaError, coerce, env_path_for
+from .schema import SchemaError, env_path_for  # noqa: F401 — SchemaError re-exported via config/__init__.py
 
 
 class ConfigError(Exception):

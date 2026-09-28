@@ -25,7 +25,6 @@ in this change — REL production is a separate follow-up change
 from __future__ import annotations
 
 import json
-import logging
 import urllib.request
 from typing import Any
 from datetime import UTC, datetime

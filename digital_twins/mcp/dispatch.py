@@ -532,7 +532,6 @@ def _kb_run_history_body(ctx: MCPContext, args: dict) -> dict:
     limit = max(0, min(int(limit), 1000))
 
     cross_user = target is not None and target != ctx.caller_email
-    own_scope = not cross_user
 
     if cross_user:
         # R4/R3: cross-user history requires view_all_history (admin-only).

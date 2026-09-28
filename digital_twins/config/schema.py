@@ -8,7 +8,6 @@ not exist.
 
 from __future__ import annotations
 
-import re
 
 # --- knob registry ---------------------------------------------------------
 #
