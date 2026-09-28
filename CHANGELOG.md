@@ -3,7 +3,23 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
-## [Unreleased]
+## [0.11.3] - 2026-09-28
+
+### Added
+- **Neo4j is now a soft dependency** (`23e266d`): when the
+  Neo4j knobs are unconfigured, health reports Qdrant-only mode
+  instead of `neo4j FAIL unconfigured` - the KB runs with Qdrant
+  alone and graph writes are skipped rather than the whole pipeline
+  erroring.  Configured Neo4j still reports as before (hard/soft-
+  dep contract recorded in the preflight test docstring, `d9f1a87`).
+- **Ingestion channels admin** - web admin panel
+  (`GET`/`POST /api/config/channels`), a `digital-twins channels`
+  CLI group (list / status / enable / disable / add), and per-user
+  channel overrides merged by the scheduler.
+- **Qdrant collection knob** (`005f3e0`): `qdrant.collection`
+  (default `kb`) wired through health / pipeline / MCP / web;
+  external embedding endpoints also accept custom (cloud) model
+  names.
 
 ### Changed
 - `install.sh` / `install-local.sh` UX for non-technical users:
@@ -39,6 +55,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
   instead of an implicit download. Regression guard:
   `tests/unit/test_embedding.py::test_load_embedder_forwards_model_and_device`
   now asserts the `local_files_only=True` flag is forwarded.
+
+- **Web sign-up works again** (`dcd43bf`): the sign-up path 500'd
+  on SQLite lock contention and left dead-looking forms; auto
+  sign-in now reuses the signup-form user name so a fresh admin
+  can land on the dashboard in one go.
+- **Ingest run failures are logged with a traceback before the
+  500** (`58f772c`) instead of a bare error, so UAT-style
+  regressions have a server-side trail.
+- **S4 migration + graph writes route through the Neo4j session
+  API** (`6438abe`, `78084f7`): `migrate s4` and S4 graph
+  alignment no longer drive the driver directly (BUG-01 follow-up).
+- Removed 11 stale/unused code items (unused imports / locals)
+  across the package (`770eeaf`) - no behaviour change.
 
 ## [0.11.2] - 2026-09-26
 
