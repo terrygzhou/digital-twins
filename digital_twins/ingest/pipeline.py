@@ -167,16 +167,21 @@ def run_pipeline(
     one-record dedup invariant (NFR-1) is preserved: the same content
     ingested by two different owners still yields one point.
     """
-    if not dry_run:
-        # 008 US1 gate: hard dependencies, before any write. dry-run skips
-        # the gate: it consumes no service capacity and writes nothing
-        # (diff-review P2 — a preview must not fail-fast on live services).
-        preflight(cfg)
     run_id = str(uuid.uuid4())
     built: list = []
     counts: dict = {}
     start_audit_run(db, run_id, trigger=trigger, scheduled_by=scheduled_by)
     try:
+        if not dry_run:
+            # 008 US1 gate: hard dependencies, before any write. dry-run
+            # skips the gate: it consumes no service capacity and writes
+            # nothing (diff-review P2 — a preview must not fail-fast on
+            # live services). Moved inside the audited block (BUG-2):
+            # the gate now audits a `failed` row instead of escaping the
+            # audit path — every failure is reported, never silent.
+            # ServiceDependencyError (008 gate) is re-raised by the
+            # handler below; the audit row still lands.
+            preflight(cfg)
         if source_names is None:
             source_names = [n for n, e in cfg["sources"].items()
                             if e.get("enabled")]

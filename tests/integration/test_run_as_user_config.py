@@ -82,7 +82,7 @@ class TestRunOnceAsMergesUserConfig:
         import digital_twins.ingest.pipeline as pipe
         captured = {}
 
-        def fake_run_pipeline(cfg, db, qdrant, embedder, **kw):
+        def fake_run_pipeline(cfg, db, qdrant, embedder, neo4j=None, **kw):
             captured.update(kw)
             from digital_twins.ingest.pipeline import RunSummary
             return RunSummary(run_id="test-id", points=0, counts={})
@@ -112,7 +112,7 @@ class TestRunOnceAsMergesUserConfig:
         import digital_twins.ingest.pipeline as pipe
         captured_cfg = {}
 
-        def fake_run_pipeline(cfg, db, qdrant, embedder, **kw):
+        def fake_run_pipeline(cfg, db, qdrant, embedder, neo4j=None, **kw):
             captured_cfg["hermes"] = cfg["sources"].get("hermes", {})
             from digital_twins.ingest.pipeline import RunSummary
             return RunSummary(run_id="test-id", points=0, counts={})
@@ -140,7 +140,7 @@ class TestRunOnceAsMergesUserConfig:
         import digital_twins.ingest.pipeline as pipe
         captured_cfg = {}
 
-        def fake_run_pipeline(cfg, db, qdrant, embedder, **kw):
+        def fake_run_pipeline(cfg, db, qdrant, embedder, neo4j=None, **kw):
             captured_cfg["hermes"] = cfg["sources"].get("hermes", {})
             from digital_twins.ingest.pipeline import RunSummary
             return RunSummary(run_id="test-id", points=0, counts={})
@@ -174,7 +174,7 @@ class TestRunOnceAsMergesUserConfig:
         pre_max = pre_cfg["sources"]["hermes"]["max_items"]
         assert pre_max == 100  # global default
 
-        def fake_run_pipeline(cfg, db, qdrant, embedder, **kw):
+        def fake_run_pipeline(cfg, db, qdrant, embedder, neo4j=None, **kw):
             # The cfg passed to run_pipeline should have the override
             assert cfg["sources"]["hermes"]["max_items"] == 50
             from digital_twins.ingest.pipeline import RunSummary

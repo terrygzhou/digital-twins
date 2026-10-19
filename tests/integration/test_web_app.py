@@ -37,6 +37,7 @@ EXPECTED_FETCH_TARGETS = frozenset({
     "/api/auth/signup",
     "/api/auth/signin",
     "/api/auth/signout",
+    "/api/auth/credentials",
     "/api/me",
     "/api/kb/points",
     "/api/kb/search",
@@ -47,6 +48,12 @@ EXPECTED_FETCH_TARGETS = frozenset({
     "/api/config/services",
     # 009/US2 admin connectivity probe (panel Test / Test all).
     "/api/config/services/probe",
+    # 013 S4: admin channels config surface.
+    "/api/config/channels",
+    # Dashboard panels.
+    "/api/dashboard/accounts",
+    "/api/dashboard/jobs",
+    "/api/dashboard/models",
 })
 
 _READY_TIMEOUT_S = 5.0

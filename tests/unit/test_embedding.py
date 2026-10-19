@@ -30,13 +30,13 @@ def test_resolve_device_explicit():
 
 
 def test_resolve_device_auto_prefers_cuda(monkeypatch):
-    import torch
+    torch = pytest.importorskip("torch", reason="torch not installed — env gap, not a code bug")
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     assert resolve_device("auto") == "cuda"
 
 
 def test_resolve_device_auto_falls_back_to_cpu(monkeypatch):
-    import torch
+    torch = pytest.importorskip("torch", reason="torch not installed — env gap, not a code bug")
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     assert resolve_device("auto") == "cpu"
 

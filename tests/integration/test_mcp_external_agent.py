@@ -94,7 +94,7 @@ def _mock_health_checks(config):
     ]
 
 
-def _mock_run_pipeline(config, db, qdrant, embedder, **kwargs):
+def _mock_run_pipeline(config, db, qdrant, embedder, neo4j=None, **kwargs):
     """Stub pipeline: one item ingested per enabled source, audit row written."""
     import uuid as _uuid
     from digital_twins.ingest.pipeline import RunSummary
@@ -564,12 +564,14 @@ def test_kb_search_success(ctx_alice, qdrant):
                         payload={"text": "first doc",
                                  "source_url": "https://a",
                                  "source": "fs", "chunk_index": 0,
-                                 "owner_tag": "alice@example.com-ingest"}),
+                                 "meta": {"owner": "alice@example.com",
+                                 "owner_tag": "alice@example.com-ingest"}}),
             PointStruct(id=2, vector=[0.2] * 384,
                         payload={"text": "second doc",
                                  "source_url": "https://b",
                                  "source": "fs", "chunk_index": 0,
-                                 "owner_tag": "alice@example.com-ingest"}),
+                                 "meta": {"owner": "alice@example.com",
+                                 "owner_tag": "alice@example.com-ingest"}}),
         ],
     )
     result = _call(ctx_alice, "kb_search", {"query": "test", "limit": 5})
@@ -627,7 +629,8 @@ def test_kb_search_limit_clamping(ctx_alice, qdrant):
             PointStruct(id=i, vector=[0.1] * 384,
                         payload={"text": f"doc {i}", "source_url": "https://x",
                                  "source": "fs", "chunk_index": 0,
-                                 "owner_tag": "alice@example.com-ingest"})
+                                 "meta": {"owner": "alice@example.com",
+                                 "owner_tag": "alice@example.com-ingest"}})
             for i in range(7)
         ],
     )

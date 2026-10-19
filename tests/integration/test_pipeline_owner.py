@@ -126,9 +126,9 @@ def test_run_pipeline_owner_kwarg_stamps_owner_and_owner_tag(
     assert len(payloads) == 1
     p = payloads[0]
     # R6: the owner field is stamped on the payload
-    assert p["owner"] == "alice", f"owner missing/incorrect: {p}"
+    assert (p.get("meta") or {}).get("owner") == "alice", f"owner missing/incorrect: {p}"
     # R6: the owner_tag field is "<owner>-ingest"
-    assert p["owner_tag"] == "alice-ingest", f"owner_tag missing/incorrect: {p}"
+    assert (p.get("meta") or {}).get("owner_tag") == "alice-ingest", f"owner_tag missing/incorrect: {p}"
     # the 001 payload fields are still present (unchanged)
     assert p["source"] == "fs"
     assert p["item_key"] == "a.txt"
@@ -156,8 +156,8 @@ def test_run_pipeline_owner_default_none_preserves_002_behavior(
     assert len(payloads) == 1
     p = payloads[0]
     # R6: no owner / owner_tag fields when owner=None
-    assert "owner" not in p, f"owner key unexpectedly present: {p}"
-    assert "owner_tag" not in p, f"owner_tag key unexpectedly present: {p}"
+    assert (p.get("meta") or {}).get("owner") is None
+    assert (p.get("meta") or {}).get("owner_tag") is None
     # the 001/002 payload shape is unchanged
     assert p["source"] == "fs"
     assert p["item_key"] == "a.txt"

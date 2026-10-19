@@ -741,7 +741,7 @@ def _kb_search_body(ctx: MCPContext, args: dict) -> dict:
          once, not per request; load failure → ``embedding_unavailable``
          naming ``embedding.model``).
       7. ``query_points(qdrant_collection(ctx.config), query=<vec>,
-         query_filter=Filter(must=[FieldCondition(key='owner_tag',
+         query_filter=Filter(must=[FieldCondition(key='meta.owner_tag',
          match=MatchValue(value=owner_tag))]), limit=limit,
          with_payload=True)`` — the 006 filter verbatim.
       8. Map rows to ``{score, source_url, text, source, chunk_index}``,
@@ -827,7 +827,7 @@ def _kb_search_body(ctx: MCPContext, args: dict) -> dict:
             coll,
             query=query_vector,
             query_filter=Filter(must=[FieldCondition(
-                key="owner_tag", match=MatchValue(value=owner_tag))]),
+                key="meta.owner_tag", match=MatchValue(value=owner_tag))]),
             limit=limit,
             with_payload=True,
         )

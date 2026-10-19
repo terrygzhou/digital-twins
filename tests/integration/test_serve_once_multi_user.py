@@ -190,10 +190,10 @@ def test_alice_override_fires_with_merged_cap_and_owner_stamp(
     payloads = _scroll_payloads(shared_qdrant)
     assert len(payloads) == 2, f"expected 2 points, got {len(payloads)}"
     for p in payloads:
-        assert p["owner"] == "alice", (
-            f"point missing owner=alice stamp: {p.get('owner')!r}")
-        assert p["owner_tag"] == "alice-ingest", (
-            f"point missing owner_tag=alice-ingest: {p.get('owner_tag')!r}")
+        assert (p.get("meta") or {}).get("owner") == "alice", (
+            f"point missing owner=alice stamp: {(p.get('meta') or {}).get('owner')!r}")
+        assert (p.get("meta") or {}).get("owner_tag") == "alice-ingest", (
+            f"point missing owner_tag=alice-ingest: {(p.get('meta') or {}).get('owner_tag')!r}")
 
 
 def test_bob_no_override_fires_with_global_cap_and_owner_stamp(
@@ -217,10 +217,10 @@ def test_bob_no_override_fires_with_global_cap_and_owner_stamp(
     payloads = _scroll_payloads(shared_qdrant)
     assert len(payloads) == 2, f"expected 2 points, got {len(payloads)}"
     for p in payloads:
-        assert p["owner"] == "bob", (
-            f"point missing owner=bob stamp: {p.get('owner')!r}")
-        assert p["owner_tag"] == "bob-ingest", (
-            f"point missing owner_tag=bob-ingest: {p.get('owner_tag')!r}")
+        assert (p.get("meta") or {}).get("owner") == "bob", (
+            f"point missing owner=bob stamp: {(p.get('meta') or {}).get('owner')!r}")
+        assert (p.get("meta") or {}).get("owner_tag") == "bob-ingest", (
+            f"point missing owner_tag=bob-ingest: {(p.get('meta') or {}).get('owner_tag')!r}")
 
 
 def test_global_config_not_mutated_after_tick(
@@ -309,8 +309,8 @@ def test_two_owners_independent_merges(
 
     # Both owners' points are stamped with their respective owner.
     payloads = _scroll_payloads(shared_qdrant)
-    alice_points = [p for p in payloads if p.get("owner") == "alice"]
-    bob_points = [p for p in payloads if p.get("owner") == "bob"]
+    alice_points = [p for p in payloads if (p.get("meta") or {}).get("owner") == "alice"]
+    bob_points = [p for p in payloads if (p.get("meta") or {}).get("owner") == "bob"]
     assert len(alice_points) == 2, (
         f"expected 2 points owned by alice, got {len(alice_points)}")
     assert len(bob_points) == 2, (

@@ -408,14 +408,14 @@ _OTHER_TAG = owner_tag_for("other-user@example.com")
 def _payload(source, source_url, chunk_index, text, ts,
              owner_tag=_CALLER_TAG):
     """One point payload in the 001/003 shape (pipeline.run_pipeline),
-    owner-stamped with ``owner_tag`` (003 R6)."""
+    owner-stamped with ``owner_tag`` under ``meta`` (003 R6 / S4)."""
     return {
         "source": source,
         "source_url": source_url,
         "chunk_index": chunk_index,
         "text": text,
         "ts": ts,
-        "owner_tag": owner_tag,
+        "meta": {"owner_tag": owner_tag},
     }
 
 
@@ -506,7 +506,15 @@ class FakeQdrantClient:
             key = cond.key
             match = cond.match
             value = match.value if hasattr(match, "value") else match
-            if payload.get(key) != value:
+            # Dotted keys (e.g. "meta.owner_tag") resolve into nested dicts.
+            if "." in key:
+                node = payload
+                for part in key.split("."):
+                    node = (node or {}).get(part)
+                actual = node
+            else:
+                actual = payload.get(key)
+            if actual != value:
                 return False
         return True
 
@@ -839,9 +847,9 @@ def test_kb_search_top_n_owner_scoped(web_app):
         f"limit=2 must yield 2 results, got {len(results)}: {results!r}")
     for r in results:
         assert set(r) == {"score", "source_url", "text", "source",
-                          "chunk_index"}, (
+                          "chunk_index", "id"}, (
             f"result keys must be exactly "
-            f"{{score, source_url, text, source, chunk_index}}, "
+            f"{{score, source_url, text, source, chunk_index, id}}, "
             f"got {set(r)}: {r!r}")
     # Owner-scoped + descending score: two(0.9) then one(0.7).
     assert results[0]["source_url"] == "fs/two", (
@@ -1002,7 +1010,7 @@ def test_kb_search_query_response_shape(web_app):
     owner_points = [
         _ScoredPoint(p, p.payload.get("_score", 0.0))
         for p in fake._points
-        if p.payload.get("owner_tag") == _CALLER_TAG
+        if (p.payload.get("meta") or {}).get("owner_tag") == _CALLER_TAG
     ]
     assert len(owner_points) == 4
 

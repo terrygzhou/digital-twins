@@ -54,14 +54,41 @@ def test_preflight_raises_with_fields(monkeypatch):
 
 
 def test_run_pipeline_gates_before_audit(caplog, monkeypatch):
+    """BUG-2 (EYW-644): preflight now runs *inside* the audited try-block
+    (after ``start_audit_run`` writes the ``running`` row), so a
+    ``ServiceDependencyError`` is caught, a ``failed`` audit row is
+    written, and the exception is re-raised.  The gate still prevents
+    any source read / data write.  BoomDB is therefore no longer a
+    suitable no-op stand-in — use a permissive DB that records calls."""
     _patch_all_but_embedding(monkeypatch)
+
+    class _PermissiveDB:
+        """Allows ``start_audit_run`` to land a ``running`` row, records
+        every call, and asserts no source-data write method is called."""
+        def __init__(self):
+            self.calls = []
+        def __getattr__(self, name):
+            self.calls.append(name)
+            # start_audit_run needs execute(); return a no-op.
+            if name == "execute":
+                return lambda *a, **kw: None
+            if name in ("commit", "close"):
+                return lambda *a, **kw: None
+            raise AssertionError(f"db.{name} called unexpectedly")
+
+    db = _PermissiveDB()
     with caplog.at_level(logging.WARNING):
         with pytest.raises(ServiceDependencyError):
-            run_pipeline(make_cfg_bad_embedding(), db=BoomDB(), qdrant=None)
+            run_pipeline(make_cfg_bad_embedding(), db=db, qdrant=None)
+
     msgs = " ".join(rec.getMessage() for rec in caplog.records)
     assert "embedding" in msgs
     assert "KB_EMBEDDING__ENDPOINT" in msgs
     assert "sekret-x-never-leak" not in msgs
+    # No source data write methods were called.
+    for call in db.calls:
+        assert call not in ("upsert", "insert", "batch_upsert"), (
+            f"unexpected data-write call: {call}")
 
 
 def test_preflight_passes_when_all_ok(monkeypatch):

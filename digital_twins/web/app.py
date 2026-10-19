@@ -492,7 +492,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
                 qdrant_collection(config),
                 count_filter=Filter(
                     must=[FieldCondition(
-                        key="owner_tag", match=MatchValue(value=owner_tag))],
+                        key="meta.owner_tag", match=MatchValue(value=owner_tag))],
                 ),
             )
             # The real Qdrant client returns a CountResult with .count;
@@ -639,7 +639,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             count = self._count_via_client(client, source_filter)
             owner_count = self._count_via_client(client, Filter(
                 must=[FieldCondition(
-                    key="owner_tag", match=MatchValue(value=owner_tag))]))
+                    key="meta.owner_tag", match=MatchValue(value=owner_tag))]))
             # Most recent first: the ingestion pipeline stamps payload
             # ``ts``, so the scroll is ordered by write time.  ``limit``
             # bounds the rows.  The sample is the caller's most-recent
@@ -654,7 +654,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
                 coll, with_payload=True)
             points = [
                 p for p in points
-                if p.payload.get("owner_tag") == owner_tag
+                if (p.payload.get("meta") or {}).get("owner_tag") == owner_tag
             ]
             if source:
                 points = [
@@ -766,7 +766,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
                 qdrant_collection(self.server.config),
                 query=query_vector,
                 query_filter=Filter(must=[FieldCondition(
-                    key="owner_tag", match=MatchValue(value=owner_tag))]),
+                    key="meta.owner_tag", match=MatchValue(value=owner_tag))]),
                 limit=limit,
                 with_payload=True,
             )

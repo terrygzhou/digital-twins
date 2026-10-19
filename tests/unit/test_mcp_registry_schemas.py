@@ -57,7 +57,7 @@ def test_kb_search_schema_shape():
     schema = registry._kb_search_schema()
     assert schema["type"] == "object"
     props = schema["properties"]
-    assert set(props.keys()) == {"query", "limit", "agent_kind"}
+    assert set(props.keys()) == {"query", "limit", "agent_kind", "expand"}
 
     # query: string, required
     assert props["query"]["type"] == "string"

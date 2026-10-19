@@ -96,7 +96,7 @@ def test_do_signin_has_catch_surface():
     """doSignin chains a .catch that routes a fetch-level failure to
     the explicit error message (the form never looks dead)."""
     html = _index_html()
-    m = re.search(r"function doSignin\(event\).*?\n    \}", html, re.S)
+    m = re.search(r"function doSignin\(event.*?\).*?\n    \}", html, re.S)
     assert m, "doSignin not found in index.html"
     body = m.group(0)
     # The .catch must be inside the doSignin fetch chain, routing to

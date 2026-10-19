@@ -269,7 +269,7 @@ def test_kb_search_owner_scoped_filter(db, monkeypatch):
              {"query": "hello"})
 
     expected_filter = Filter(must=[FieldCondition(
-        key="owner_tag",
+        key="meta.owner_tag",
         match=MatchValue(value=owner_tag_for(caller)))])
     assert len(captured) == 1
     assert captured[0].calls[0]["query_filter"] == expected_filter

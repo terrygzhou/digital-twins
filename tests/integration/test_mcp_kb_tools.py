@@ -123,16 +123,19 @@ class _FakeQdrantClient:
             "with_payload": with_payload,
         })
         # Honor the owner_tag filter the way the real Qdrant would: only
-        # rows whose owner_tag matches the filter's value are returned.
+        # rows whose meta.owner_tag matches the filter's value are
+        # returned (S4: owner fields live under the payload `meta`
+        # subtree, not top-level).
         matched = None
         if query_filter is not None and getattr(query_filter, "must", None):
             conds = getattr(query_filter.must[0], "key", None)
-            if conds == "owner_tag":
+            if conds == "meta.owner_tag":
                 matched = query_filter.must[0].match.value
         if matched is None:
             return self.rows
         return [r for r in self.rows
-                if (r.payload or {}).get("owner_tag") == matched]
+                if ((r.payload or {}).get("meta") or {}).get(
+                    "owner_tag") == matched]
 
 
 def _fake_embed_query(cfg, text):
@@ -153,7 +156,7 @@ class _RunPipelineFake:
         self.run_id = run_id
         self.calls = []
 
-    def __call__(self, cfg, db, qdrant, embedder=None, **kwargs):
+    def __call__(self, cfg, db, qdrant, embedder=None, neo4j=None, **kwargs):
         self.calls.append({"kwargs": kwargs})
         trigger = kwargs.get("trigger", "mcp")
         scheduled_by = kwargs.get("scheduled_by", "system")
@@ -210,10 +213,10 @@ def test_kb_search_service_token_owner_scoped(db, tmp_path, monkeypatch):
     other_tag = owner_tag_for("bob@example.com")
     my_point = _FakeQueryPoint(
         0.9, {"source_url": "u-mine", "text": "mine", "source": "hermes",
-              "chunk_index": 0, "owner_tag": owner_tag})
+              "chunk_index": 0, "meta": {"owner_tag": owner_tag}})
     other_point = _FakeQueryPoint(
         0.8, {"source_url": "u-other", "text": "other", "source": "hermes",
-              "chunk_index": 1, "owner_tag": other_tag})
+              "chunk_index": 1, "meta": {"owner_tag": other_tag}})
     client = _FakeQdrantClient(rows=[my_point, other_point])
 
     mp = pytest.MonkeyPatch()
@@ -234,7 +237,7 @@ def test_kb_search_service_token_owner_scoped(db, tmp_path, monkeypatch):
     call = client.calls[0]
     assert call["collection"] == QDRANT_COLLECTION
     assert call["query_filter"] == Filter(must=[FieldCondition(
-        key="owner_tag", match=MatchValue(value=owner_tag))])
+        key="meta.owner_tag", match=MatchValue(value=owner_tag))])
     assert call["with_payload"] is True
 
     # (ii) the wire result carries the exact field set per row; the filter
@@ -243,7 +246,8 @@ def test_kb_search_service_token_owner_scoped(db, tmp_path, monkeypatch):
     assert result["count"] == 1
     for row in result["results"]:
         assert set(row.keys()) == {"score", "source_url", "text", "source",
-                                   "chunk_index", "id"}
+                                   "chunk_index", "id", "full_content",
+                                   "content_snippet", "item_id"}
 
     # (iii) a second owner's point never appears: the filter's match value
     #     is the service account's tag (bob's tag differs), so the fake

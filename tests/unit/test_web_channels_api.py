@@ -313,7 +313,7 @@ def test_post_channels_custom_source_rejected_404(channels_web):
     )
 
 
-def test_post_channels_unknown_knob_404(channels_web):
+def test_post_channels_unknown_knob_422(channels_web):
     """POST with a knob outside the web surface (entrypoint / credential /
     prefix — the CLI `channels add` surface) → 404 naming the knob."""
     _app, _db, host, port, admin_token, _rt, _cd = channels_web
@@ -323,10 +323,10 @@ def test_post_channels_unknown_knob_404(channels_web):
         host, port, "/api/config/channels", body,
         headers={"Authorization": f"Bearer {admin_token}"},
     )
-    assert code == 404, f"expected 404, got {code}: {raw[:300]!r}"
+    assert code == 422, f"expected 422, got {code}: {raw[:300]!r}"
     assert parsed is not None
     msg = json.dumps(parsed).lower()
-    assert "entrypoint" in msg, f"404 body must name the unknown knob: {parsed!r}"
+    assert "entrypoint" in msg, f"422 body must name the unknown knob: {parsed!r}"
 
 
 def test_post_channels_out_of_range_422(channels_web):
