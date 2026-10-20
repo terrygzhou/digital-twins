@@ -142,6 +142,7 @@ def run_pipeline(
     trigger: str = "manual",
     scheduled_by: str = "system",
     owner: str | None = None,
+    injected_sources: dict | None = None,
 ) -> RunSummary:
     """Run one ingestion pass over the enabled (or named) sources.
 
@@ -166,6 +167,15 @@ def run_pipeline(
     field only — it does NOT enter the deterministic point ID, so the
     one-record dedup invariant (NFR-1) is preserved: the same content
     ingested by two different owners still yields one point.
+
+    `injected_sources` (feature 016): a call-time ``{name:
+    Source-instance}`` mapping — one-shot sources that take their
+    config at call time (``kb_ingest_folder``'s folder path) instead of
+    from a config entry.  Injected names are resolved from this mapping
+    first; any name not in it still resolves through the config (FR-7:
+    the config-fixed ``fs`` source and ``kb_ingest`` are unchanged).
+    Dedup is unaffected — content-hash dedup applies exactly as for
+    config sources.
     """
     run_id = str(uuid.uuid4())
     built: list = []
@@ -186,11 +196,18 @@ def run_pipeline(
             source_names = [n for n, e in cfg["sources"].items()
                             if e.get("enabled")]
         # fail-fast: check every enabled source before touching anything
+        injected = injected_sources or {}
         for name in source_names:
-            entry = cfg["sources"].get(name)
-            if entry is None:
-                raise UnknownSourceError(name)
-            source = build_source(name, entry)
+            if name in injected:
+                # Feature 016: call-time one-shot source (no config
+                # entry; the instance carries its own config, e.g. the
+                # folder path from kb_ingest_folder's tool args).
+                source = injected[name]
+            else:
+                entry = cfg["sources"].get(name)
+                if entry is None:
+                    raise UnknownSourceError(name)
+                source = build_source(name, entry)
             missing = source.prerequisites()
             if missing:
                 for s in built:
@@ -211,7 +228,7 @@ def run_pipeline(
 
         total_points = 0
         for name, source in built:
-            entry = cfg["sources"][name]
+            entry = cfg["sources"].get(name) or {}
             cap_max = entry.get("max_items")
             since = _cursor(db, name)
             items = []

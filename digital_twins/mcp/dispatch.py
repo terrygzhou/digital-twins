@@ -17,6 +17,7 @@ The role-gate and owner-scope logic is what T009/T010 test.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import uuid
 from typing import Any, Callable
@@ -24,7 +25,7 @@ from typing import Any, Callable
 from ..accounts import owner_tag_for, require_capability, RoleDenied
 from ..config.schema import get as _cfg_get
 from ..health import qdrant_collection
-from ..ingest.pipeline import run_pipeline  # noqa: F401 — monkeypatch seam
+from ..ingest.pipeline import PrerequisiteError, run_pipeline  # noqa: F401 — monkeypatch seam
 from .acl import can_access_schedule
 from .registry import MCPContext
 
@@ -38,6 +39,7 @@ TOOL_CAPABILITIES: dict[str, str] = {
     "kb_schedule_create": "schedule_crud",
     "kb_schedule_update": "schedule_crud",
     "kb_schedule_delete": "schedule_crud",
+    "kb_ingest_folder": "trigger_run",
     "kb_schedule_run": "trigger_run",
     "kb_run_history": "view_own_history",
 }
@@ -1176,6 +1178,178 @@ def _kb_ingest_body(ctx: MCPContext, args: dict) -> dict:
     }
 
 
+def _kb_ingest_folder_body(ctx: MCPContext, args: dict) -> dict:
+    """Trigger a one-shot pipeline run over a caller-supplied folder
+    (feature 016 — dynamic folder ingestion).
+
+    The folder path arrives in the tool args, NOT in config (FR-6):
+    the body builds a one-shot ``OneShotFolderSource`` instance and
+    injects it into ``run_pipeline`` via the 016 ``injected_sources``
+    seam (call-time config; no config entry is created or mutated).
+
+    Steps (mirroring ``_kb_ingest_body`` where the shapes match):
+      1. Fail-closed guard (``config_not_loaded`` when config is None).
+      2. Capability gate FIRST — ``require_capability(caller_role,
+         "trigger_run", ...)``; refusal → ``permission_denied``, no
+         pipeline call, no audit row (reader role, 016 FR-2).
+      3. Path validation: exists / is a directory / is readable.
+         Error codes echo only the caller-supplied ``path`` value
+         (NFR-13 — never an absolute host path beyond it).
+      4. Merged config + resolved qdrant factory / embedder / Neo4j
+         driver (same lazy, monkeypatchable helpers as ``kb_ingest``).
+      5. One-shot source built with the args' ``source_name``
+         (default ``"folder"``) and ``recursive`` (default true),
+         passed to ``run_pipeline`` as
+         ``injected_sources={source_name: source}`` with
+         ``source_names=[source_name]`` — the pipeline resolves that
+         name from the injection mapping first, so no config entry
+         is required (FR-3/FR-4: since=None dedup via content-hash
+         still applies; re-ingesting the same folder writes 0 new
+         points).
+      6. On ``PrerequisiteError`` → ``prerequisite_missing``; on a
+         pipeline exception → ``run_failed``.
+      7. Stamps ``agent_kind`` on the audit row (004 D6 pattern),
+         then returns the 006-web result shape
+         ``{"ok": True, "run_id", "status", "counts", "points"}``.
+    """
+    from pathlib import Path
+
+    from ..ingest.onshot import OneShotFolderSource
+
+    # 1. Fail-closed guard (006 _fail_closed).
+    if ctx.config is None:
+        return _fail_closed()
+
+    # 2. Capability gate FIRST (the body's own gate, mirroring
+    #    _kb_ingest_body): reader role -> permission_denied, NO
+    #    pipeline call, NO audit row.
+    try:
+        require_capability(
+            ctx.caller_role, "trigger_run", "trigger a run")
+    except RoleDenied as exc:
+        return {
+            "ok": False,
+            "error": {
+                "code": "permission_denied",
+                "message": str(exc),
+            },
+        }
+
+    # 3. Path validation — echo only the caller-supplied value
+    #    (NFR-13).  All three failure codes are bad_request-level,
+    #    not audit-worthy: no run started, no audit row.
+    path_raw = args.get("path")
+    if not isinstance(path_raw, str) or not path_raw:
+        return {
+            "ok": False,
+            "error": {
+                "code": "bad_request",
+                "message": "argument 'path' must be a non-empty string",
+            },
+        }
+    path = Path(path_raw)
+    if not path.exists():
+        return {
+            "ok": False,
+            "error": {
+                "code": "path_not_found",
+                "message": f"path not found: {path_raw}",
+            },
+        }
+    if not path.is_dir():
+        return {
+            "ok": False,
+            "error": {
+                "code": "not_a_directory",
+                "message": f"not a directory: {path_raw}",
+            },
+        }
+    if not os.access(path, os.R_OK):
+        return {
+            "ok": False,
+            "error": {
+                "code": "path_not_readable",
+                "message": f"path not readable: {path_raw}",
+            },
+        }
+
+    source_name = args.get("source_name") or "folder"
+    recursive = bool(args.get("recursive", True))
+
+    # 4. merged_cfg = schema defaults merged over ctx.config (same
+    #    _merge_defaults equivalent as _kb_ingest_body: nested
+    #    dict from the flat dotted-key DEFAULTS, caller wins).
+    merged_cfg = _deep_merge(
+        _defaults_as_nested(_pipeline_mod_run_defaults()),
+        ctx.config or {},
+    )
+
+    # 5. Resolve the qdrant factory + embedder + Neo4j driver (the
+    #    same lazy, monkeypatchable helpers the 004/006 bodies use).
+    qdrant_factory = _resolve_qdrant_factory(merged_cfg)
+    embedder = _resolve_embedder(merged_cfg)
+    neo4j_driver = _resolve_neo4j_driver(merged_cfg)
+
+    # 6. One-shot source + run_pipeline hand-off.  The body reads
+    #    the module attribute at call time (the 006 monkeypatch
+    #    seam — tests patch dispatch.run_pipeline).  The
+    #    OneShotFolderSource is injected under source_name: the
+    #    pipeline resolves that name from the injection mapping
+    #    before falling back to the config registry (feature 016
+    #    seam, FR-3/FR-4).
+    source = OneShotFolderSource(
+        Path(path_raw), source_name=source_name, recursive=recursive,
+    )
+    # The body reads the module attribute at call time (the 006
+    # monkeypatch seam — tests patch dispatch.run_pipeline).
+    try:
+        summary = run_pipeline(
+            merged_cfg, ctx.db, qdrant_factory, embedder, neo4j_driver,
+            source_names=[source_name],
+            trigger="mcp",
+            scheduled_by=ctx.caller_email,
+            owner=ctx.caller_email,
+            injected_sources={source_name: source},
+        )
+    except PrerequisiteError as exc:
+        # The pipeline writes its own `failed` audit row on the
+        # exception path; map to the stable code.  No second row.
+        return {
+            "ok": False,
+            "error": {
+                "code": "prerequisite_missing",
+                "message": (
+                    f"source '{exc.source}': missing prerequisite(s): "
+                    f"{'; '.join(exc.missing)}"
+                ),
+            },
+        }
+    except Exception as exc:
+        # The pipeline writes its own `failed` audit row on the
+        # exception path.  Map to the stable run_failed code.
+        return {
+            "ok": False,
+            "error": {
+                "code": "run_failed",
+                "message": str(exc),
+            },
+        }
+
+    # 7. Post-call: stamp agent_kind on the audit row's
+    #    per_source_counts JSON (004 D6 pattern, mirror
+    #    _kb_ingest_body step 7).
+    _stamp_agent_kind(ctx.db, summary.run_id, ctx.agent_kind)
+
+    # 8. Success — the 006-web result shape.
+    return {
+        "ok": True,
+        "run_id": summary.run_id,
+        "status": summary.status,
+        "counts": summary.counts,
+        "points": summary.points,
+    }
+
+
 def _pipeline_mod_run_defaults() -> dict:
     """The flat dotted-key DEFAULTS from ``config.schema``.
 
@@ -1289,6 +1463,8 @@ TOOL_BODIES: dict[str, Callable[..., dict]] = {
     "kb_chat": _kb_chat_body,
     "kb_ingest": _kb_ingest_body,
     "kb_health": _kb_health_body,
+    # 016 KB tool bodies
+    "kb_ingest_folder": _kb_ingest_folder_body,
 }
 
 

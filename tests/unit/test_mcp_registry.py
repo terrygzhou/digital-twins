@@ -38,7 +38,11 @@ STUB_TOOLS: set[str] = {
     "kb_health",
 }
 
-ALL_TOOLS: set[str] = REAL_TOOLS | STUB_TOOLS
+INGEST_FOLDER_TOOLS: set[str] = {
+    "kb_ingest_folder",
+}
+
+ALL_TOOLS: set[str] = REAL_TOOLS | STUB_TOOLS | INGEST_FOLDER_TOOLS
 
 # Expected inputSchema field names per tool (the agent-facing contract, R2).
 # agent_kind is optional on every tool (R6).
@@ -92,11 +96,11 @@ def _by_name(tools: list[dict]) -> dict[str, dict]:
 # T005: exactly 10 tools, 6 real + 4 stubs
 # ---------------------------------------------------------------------------
 
-def test_returns_exactly_10_tools():
+def test_returns_exactly_11_tools():
     tools = _registry()
-    assert len(tools) == 10, (
-        f"build_tool_registry returned {len(tools)} tools, expected 10 "
-        "(6 real + 4 stubs)"
+    assert len(tools) == 11, (
+        f"build_tool_registry returned {len(tools)} tools, expected 11 "
+        "(6 real + 4 stubs + 1 ingest_folder)"
     )
 
 

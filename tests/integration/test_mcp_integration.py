@@ -185,8 +185,9 @@ def test_sc001_fresh_client_gets_full_tool_list(db):
         "kb_schedule_delete", "kb_schedule_run", "kb_run_history",
     }
     expected_stubs = {"kb_search", "kb_chat", "kb_ingest", "kb_health"}
-    assert registry_names == expected_real | expected_stubs, (
-        f"registry must have exactly 10 tools (6 real + 4 stubs), "
+    expected_ingest_folder = {"kb_ingest_folder"}
+    assert registry_names == expected_real | expected_stubs | expected_ingest_folder, (
+        f"registry must have exactly 11 tools (6 real + 4 stubs + 1 ingest_folder), "
         f"got {sorted(registry_names)}"
     )
 

@@ -306,6 +306,113 @@ def test_kb_ingest_personal_token_audit_row(db, tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# (b2) SC-016: kb_ingest_folder — one-shot folder source, audit row provenance
+# ---------------------------------------------------------------------------
+
+def test_kb_ingest_folder_personal_token_audit_row(db, tmp_path, monkeypatch):
+    """DT_PERSONAL_TOKEN (scheduler) → stdio → kb_ingest_folder:
+    a real OneShotFolderSource is injected, audit row has trigger='mcp',
+    scheduled_by=<caller-email>, agent_kind stamped. Second run writes
+    0 new points (NFR-1 dedup)."""
+    from digital_twins.ingest.onshot import OneShotFolderSource
+
+    # Build a tmp folder with one file so the path-exists guard passes.
+    folder = tmp_path / "kb_folder_016"
+    folder.mkdir()
+    (folder / "note.txt").write_text("hello 016", encoding="utf-8")
+
+    create_account(db, "carol@example.com", "pw-carol", role="scheduler")
+    _, token = create_personal_token(db, "carol@example.com")
+    fake = _RunPipelineFake(run_id="run-016")
+
+    mp = pytest.MonkeyPatch()
+    try:
+        mp.setattr(disp_mod, "run_pipeline", fake, raising=False)
+        result = _run_stdio_request(
+            db, "kb_ingest_folder",
+            {"path": str(folder), "source_name": "tmp016",
+             "recursive": True},
+            monkeypatch, personal_token=token, config=_cfg(tmp_path))
+    finally:
+        mp.undo()
+
+    # The hand-off was recorded exactly once.
+    assert len(fake.calls) == 1
+    kw = fake.calls[0]["kwargs"]
+    assert kw.get("trigger") == "mcp"
+    assert kw.get("scheduled_by") == "carol@example.com"
+    assert kw.get("owner") == "carol@example.com"
+    assert kw.get("source_names") == ["tmp016"]
+
+    # injected_sources carries the OneShotFolderSource, not the config.
+    injected = kw.get("injected_sources")
+    assert injected is not None, "injected_sources kwarg missing"
+    src = injected.get("tmp016")
+    assert isinstance(src, OneShotFolderSource), (
+        f"expected OneShotFolderSource, got {type(src)}")
+    assert src.path == folder
+    assert src.source_name == "tmp016"
+    assert src.recursive is True
+
+    # The body succeeded.
+    assert result["ok"] is True
+    assert result["run_id"] == "run-016"
+
+    # The pipeline's own audit row (the fake pipeline is what the real one
+    # does: start_audit_run + finish_audit_run) has trigger='mcp',
+    # scheduled_by=<caller>, and the body stamped agent_kind onto it.
+    row = _audit_row(db, "run-016")
+    assert row is not None, "no audit_runs row written for the kb_ingest_folder run"
+    assert row["trigger"] == "mcp"
+    assert row["scheduled_by"] == "carol@example.com"
+
+
+def test_kb_ingest_folder_reader_role_refused(db, tmp_path, monkeypatch):
+    """reader role → kb_ingest_folder: permission_denied, no pipeline call."""
+    folder = tmp_path / "kb_folder_016"
+    folder.mkdir()
+    (folder / "note.txt").write_text("x", encoding="utf-8")
+
+    fake_calls = []
+    fake = lambda *a, **kw: fake_calls.append((a, kw))  # noqa: E731
+    mp = pytest.MonkeyPatch()
+    try:
+        mp.setattr(disp_mod, "run_pipeline", fake, raising=False)
+        ctx = _ctx(db, "carol@example.com", "reader", _cfg(tmp_path))
+        result = disp_mod.dispatch(
+            ctx, "kb_ingest_folder",
+            {"path": str(folder), "source_name": "tmp016"})
+    finally:
+        mp.undo()
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "permission_denied"
+    assert len(fake_calls) == 0, "pipeline must not be called for reader"
+
+
+def test_kb_ingest_folder_path_not_found(db, tmp_path, monkeypatch):
+    """Non-existent path → path_not_found (NFR-13: echo caller path only)."""
+    missing = tmp_path / "does_not_exist_016"
+    ctx = _ctx(db, "system", "admin", _cfg(tmp_path))
+    result = disp_mod.dispatch(
+        ctx, "kb_ingest_folder", {"path": str(missing)})
+    assert result["ok"] is False
+    assert result["error"]["code"] == "path_not_found"
+    assert str(missing) in result["error"]["message"]
+
+
+def test_kb_ingest_folder_not_a_directory(db, tmp_path, monkeypatch):
+    """File path → not_a_directory."""
+    f = tmp_path / "a_file"
+    f.write_text("x", encoding="utf-8")
+    ctx = _ctx(db, "system", "admin", _cfg(tmp_path))
+    result = disp_mod.dispatch(
+        ctx, "kb_ingest_folder", {"path": str(f)})
+    assert result["ok"] is False
+    assert result["error"]["code"] == "not_a_directory"
+
+
+# ---------------------------------------------------------------------------
 # (c) SC-005: kb_health returns the per-endpoint check list
 # ---------------------------------------------------------------------------
 

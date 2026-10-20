@@ -1,18 +1,19 @@
-"""MCP tool registry (feature 004, R2/R10, T006; 007 Phase 2, 007-R5).
+"""MCP tool registry (feature 004, R2/R10, T006; 007 Phase 2, 007-R5;
+feature 016 adds ``kb_ingest_folder``).
 
-``build_tool_registry()`` returns the ten MCP tools as a list of dicts,
-each with ``name``, ``description``, and ``inputSchema``.  The six
-scheduler tools mirror 003 ``contracts/scheduler.md`` field names exactly
-(R2); the four KB tools carry full ``inputSchema``s with real-behavior
-descriptions and error codes (007-R5a/R5b), replacing the 004 BR-10
-minimal declarations.
+``build_tool_registry()`` returns the eleven MCP tools as a list of
+dicts, each with ``name``, ``description``, and ``inputSchema``.  The
+six scheduler tools mirror 003 ``contracts/scheduler.md`` field names
+exactly (R2); the five KB tools carry full ``inputSchema``s with
+real-behavior descriptions and error codes (007-R5a/R5b), replacing
+the 004 BR-10 minimal declarations.
 
 The 6 scheduler tools:
     kb_schedule_list, kb_schedule_create, kb_schedule_update,
     kb_schedule_delete, kb_schedule_run, kb_run_history
 
-The 4 KB tools:
-    kb_search, kb_chat, kb_ingest, kb_health
+The 5 KB tools:
+    kb_search, kb_chat, kb_ingest, kb_health, kb_ingest_folder
 """
 from __future__ import annotations
 
@@ -321,12 +322,54 @@ def _kb_health_schema() -> dict:
     }
 
 
+def _kb_ingest_folder_schema() -> dict:
+    """kb_ingest_folder inputSchema (feature 016, FR-1).
+
+    ``path`` (string, required) — the caller-supplied folder to ingest
+    at call time; no config entry is involved (FR-6).
+    ``source_name`` (string, optional, default ``"folder"``) — the tag
+    stamped on the ingested points.
+    ``recursive`` (boolean, optional, default true) — walk subdirs.
+    ``agent_kind`` — the shared client-kind property.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description":
+                    "The folder to ingest (caller-supplied at call time, "
+                    "never read from config). Errors: "
+                    "`path_not_found` (no such path), "
+                    "`not_a_directory` (the path is a file), "
+                    "`path_not_readable` (permission denied on the path).",
+            },
+            "source_name": {
+                "type": "string",
+                "default": "folder",
+                "description":
+                    "Tag stamped on the ingested points (default "
+                    "'folder').",
+            },
+            "recursive": {
+                "type": "boolean",
+                "default": True,
+                "description":
+                    "Walk subdirectories (default true; false ingests "
+                    "the top level only).",
+            },
+            "agent_kind": _agent_kind_prop(),
+        },
+        "required": ["path"],
+    }
+
+
 # ---------------------------------------------------------------------------
 # build_tool_registry
 # ---------------------------------------------------------------------------
 
 def build_tool_registry() -> list[dict]:
-    """Return the ten MCP tools as a list of dicts.
+    """Return the eleven MCP tools as a list of dicts.
 
     Each dict has:
     - ``name``: the tool name (stable, agent-facing).
@@ -334,8 +377,9 @@ def build_tool_registry() -> list[dict]:
     - ``inputSchema``: a JSON-Schema object describing the arguments.
 
     The six scheduler tools mirror 003 ``contracts/scheduler.md`` field
-    names exactly (R2).  The four KB tools carry full inputSchemas with
-    real-behavior descriptions and error codes (007-R5a/R5b).
+    names exactly (R2).  The five KB tools carry full inputSchemas with
+    real-behavior descriptions and error codes (007-R5a/R5b; 016 adds
+    kb_ingest_folder).
     """
     return [
         {
@@ -422,5 +466,19 @@ def build_tool_registry() -> list[dict]:
                 "return per-endpoint results. No I/O beyond the checks "
                 "themselves.",
             "inputSchema": _kb_health_schema(),
+        },
+        {
+            "name": "kb_ingest_folder",
+            "description":
+                "Ingest a caller-supplied folder at call time (feature "
+                "016): the folder arrives in the tool args, never from "
+                "config. One-shot pipeline run with trigger='mcp' and "
+                "the caller's email as scheduled_by. Audited; re-ingest "
+                "dedupes via content hash (NFR-1). Errors: "
+                "`permission_denied` (reader role), "
+                "`path_not_found` / `not_a_directory` / "
+                "`path_not_readable` (bad path), `run_failed` (pipeline "
+                "exception), `config_not_loaded` (config is None).",
+            "inputSchema": _kb_ingest_folder_schema(),
         },
     ]

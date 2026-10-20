@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
 ## [Unreleased]
 
+### Added
+- **`kb_ingest_folder` MCP tool** (feature 016): ingest a caller-supplied
+  folder path at call time. The folder arrives in the tool args, never in
+  config — the body builds a one-shot `OneShotFolderSource` and injects it
+  into `run_pipeline` via the `injected_sources` seam. Content-hash
+  deduplication (NFR-1) still applies: re-ingesting the same folder writes
+  0 new points. `reader` role refused with `permission_denied`; missing /
+  file / unreadable paths fail closed with stable error codes
+  (`path_not_found`, `not_a_directory`, `path_not_readable`) that echo
+  only the caller-supplied path (NFR-13). Registry now carries 11 tools.
+
 ### Fixed
 - **Hermetic test env for the web channels panel.** `test_web_channels_api`
   `channels_web` fixture now clears every env var that can shadow a
