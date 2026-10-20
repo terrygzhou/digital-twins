@@ -3,7 +3,12 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
-## [Unreleased]
+## [0.13.1] - 2026-10-22
+
+### Added
+- **Graph schema bootstrap now indexes `Entity(name, type)` and `REL(source_item)`** (feature 019): `_ensure_graph_schema()` issues two additional `CREATE INDEX IF NOT EXISTS` statements alongside the original `SourceItem.item_id` / `SourceItem.channel` DDL — the composite `Entity` key matches the `materialize()` MERGE/MATCH predicate and the `REL.source_item` key is the lookup property for `supersede()` / `drop()` / per-item reconcile. Both are idempotent; a second pass re-issues the same four statements and Neo4j no-ops them. No new knob, no migration — the DDL is shipped in code and auto-applied on every graph-enabled pipeline pass.
+
+## [0.13.0] - 2026-10-21
 
 ### Added
 - **`materialize()` REL edge materialization** (feature 018): `entities.materialize()` now MERGEs one `REL` edge per LLM-parsed relation (entity↔entity), gated by `extraction.enabled` — the same gate as entity extraction, no new knob. The return dict's `"relations"` field now carries the actual REL write counter (was constant `0`). `supersede()` and `drop()` already handle REL — no change. Additive, no new knob.

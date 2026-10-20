@@ -152,9 +152,10 @@ class _SessionRecordingNeo4j:
 
 
 def test_upsert_graph_cypher_write_queries():
-    """S4 write queries pinned: 2 idempotent CREATE INDEX IF NOT EXISTS
-    schema bootstrap statements (SourceItem.item_id / .channel), then
-    one ``MERGE (si:SourceItem {item_id})`` per item with channel +
+    """S4 write queries pinned: 4 idempotent CREATE INDEX IF NOT EXISTS
+    schema bootstrap statements (SourceItem.item_id / .channel +
+    019: Entity(name, type) / REL.source_item), then one
+    ``MERGE (si:SourceItem {item_id})`` per item with channel +
     item-level content_hash — deduped on item_id, no chunk nodes, no
     chunk text in the graph (chunk text lives in Qdrant full_content).
     All calls go through the driver's session API (graph-driver-fix:
@@ -170,8 +171,8 @@ def test_upsert_graph_cypher_write_queries():
     index_q = [(q, p) for q, p in fake.queries if "CREATE INDEX" in q]
     item_q = [(q, p) for q, p in fake.queries
               if "MERGE (si:SourceItem" in q]
-    # Schema bootstrap: two idempotent index DDL statements, run first.
-    assert len(index_q) == 2
+    # Schema bootstrap: four idempotent index DDL statements, run first.
+    assert len(index_q) == 4
     assert all("IF NOT EXISTS" in q for q, _ in index_q)
     assert "SourceItem" in index_q[0][0] and "SourceItem" in index_q[1][0]
     # One node per item, deduped on the join key (item.key).
@@ -205,12 +206,12 @@ def test_upsert_graph_uses_session_api():
     pipeline._upsert_graph(fake, "notes", items, item_hash)
     # Every write went through a session (schema DDL + one MERGE each).
     assert fake.sessions_opened >= 1
-    assert len(fake.queries) == 3  # 2 CREATE INDEX + 1 MERGE
+    assert len(fake.queries) == 5  # 4 CREATE INDEX + 1 MERGE
     # And _ensure_graph_schema on its own also routes through a session.
     schema_fake = _SessionRecordingNeo4j()
     pipeline._ensure_graph_schema(schema_fake)
     assert schema_fake.sessions_opened >= 1
-    assert len(schema_fake.queries) == 2
+    assert len(schema_fake.queries) == 4
     assert all("IF NOT EXISTS" in q for q, _ in schema_fake.queries)
 
 

@@ -11,8 +11,9 @@ NEW `tests/integration/test_neo4j_query.py`:
 1. `health.check_neo4j` round-trip: `RETURN 1` connectivity probe plus the
    S4 shape probe (`MATCH (si:SourceItem) RETURN count(si)`), driver closed.
 2. `pipeline._upsert_graph` write Cypher pinned (S4 shape, openspec
-   s4-graph-alignment): two idempotent `CREATE INDEX IF NOT EXISTS` schema
-   bootstrap statements (`SourceItem.item_id`, `SourceItem.channel`), then
+   s4-graph-alignment): four idempotent `CREATE INDEX IF NOT EXISTS`
+   schema bootstrap statements (019: `SourceItem.item_id`,
+   `SourceItem.channel`, `Entity(name, type)`, `REL.source_item`), then
    one `MERGE (si:SourceItem {item_id: $id})` per item (deduped on the
    join key) with `channel` + item-level `content_hash` params exact.
    No `KbItem`/`KbChunk`/`HAS_CHUNK` anywhere in the write path — chunk
@@ -53,6 +54,25 @@ Complete — commit `00cf529`; full suite 982 passed, 1 skipped; guards green
 (see ledger). S4 delta cases passing in `tests/integration/test_neo4j_query.py`
 (9 passed, 1 skipped live, sandbox socket-perm pre-existing failures
 unrelated).
+
+## 019 delta (graph-index-bootstrap)
+
+Opened under openspec `019-graph-index-bootstrap`: the schema bootstrap
+DDL site in `pipeline._ensure_graph_schema` now issues **four**
+`CREATE INDEX IF NOT EXISTS` statements instead of two — the two
+018/019 keys (`Entity(name, type)` composite + `REL.source_item`)
+are added alongside the original two `SourceItem` keys. The pinned
+write-count assertions in `test_upsert_graph_cypher_write_queries`
+(013) must be updated from 2 → 4 in the **same commit** per the
+spec-013 delta rule; the 013 plan (this file) must record the two
+new pinned DDL statements.
+
+Newly pinned statements:
+
+```
+CREATE INDEX IF NOT EXISTS FOR (e:Entity) ON (e.name, e.type)
+CREATE INDEX IF NOT EXISTS FOR (r:REL) ON (r.source_item)
+```
 
 ## S4 entity delta (2026-09-24, openspec s4-entity-extraction §5)
 

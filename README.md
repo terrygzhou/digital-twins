@@ -233,6 +233,13 @@ in a real terminal, or set the `KB_*` env vars and re-run with
 
 ## Exposing to agents (MCP)
 
+`digital-twins` is designed for agent-driven use: every tool is a
+self-contained, machine-callable unit — an agent can discover,
+authenticate, and call the full surface with no human in the loop.
+Each tool ships a JSON-Schema `inputSchema` with field-level
+descriptions and `agent_kind` tracking, so an agent's LLM can construct
+valid calls from the schema alone (no prose parsing needed).
+
 Once installed with the `[mcp]` extra, exposing your KB to an MCP-capable
 agent is two commands + one JSON block:
 
@@ -280,14 +287,25 @@ All 11 tools (6 scheduler: `kb_schedule_list/create/update/delete/run`
 `kb_ingest_folder`, `kb_health`) are available; role-gating and
 owner-scoping apply per call.
 
+**Agent-to-agent configuration:** an operator (human or agent) can mint
+a personal token and write the MCP server JSON block for another agent
+in one tool call — no manual steps. The operator agent calls
+`digital-twins token create --as <admin-email>` (auth via
+`DT_USER_PASSWORD` env), then writes the resulting `mcpServers` JSON
+into the target agent's config file. Each tool's `inputSchema` is
+machine-readable JSON Schema, so the target agent's LLM can construct
+valid calls without reading human docs. The `agent_kind` field on
+every tool records *which* agent made the call, visible in the audit
+row — useful for multi-agent setups where you need to attribute
+ingest runs.
+
 `kb_ingest_folder` is a one-shot folder ingest tool: you pass the folder
 path in the tool call (it never goes into config), it is content-hash
 deduplicated like every other ingest (re-ingesting the same folder writes
 0 new points), and it is `reader`-refused (`permission_denied`) — missing,
 file, or unreadable paths fail closed with stable error codes
 (`path_not_found`, `not_a_directory`, `path_not_readable`) that echo only
-the caller-supplied path. Full quickstart:
-[`specs/004-mcp-scheduler-tools/quickstart.md`](specs/004-mcp-scheduler-tools/quickstart.md).
+the caller-supplied path. Feature 018 (REL edge materialization) is gated by the same `extraction.enabled` knob — when enabled, `materialize()` MERGEs one REL edge per LLM-parsed relation (entity↔entity) into Neo4j; see `docs/configuration.md` for the extraction section. MCP quickstart: [`specs/004-mcp-scheduler-tools/quickstart.md`](specs/004-mcp-scheduler-tools/quickstart.md).
 
 ## Manual onboarding (reference)
 
@@ -343,7 +361,7 @@ pip install .
 
 ```bash
 digital-twins --version
-# digital-twins, version 0.11.0
+# digital-twins, version 0.13.0
 ```
 
 ### Start the backend services (pick one)
@@ -617,7 +635,8 @@ types: [`digital_twins/config/knobs.py`](digital_twins/config/knobs.py).
 |------|---------|---------|
 | `qdrant.url` | (unset) | Qdrant base URL — required. |
 | `neo4j.url` / `neo4j.user` / `neo4j.password` | (unset) / `neo4j` / (unset) | Neo4j — required. |
-| `extraction.enabled` | `true` | Entity + REL-edge extraction from chunk text (Neo4j only). |
+| `qdrant.collection` | `personal_kb` | Qdrant collection name (all vector ops point here). |
+| `extraction.enabled` | `false` | LLM entity + REL-edge extraction from chunk text (Neo4j only). |
 | `llm.endpoint` / `llm.model` | (unset) / (unset) | OpenAI-compatible LLM — required. |
 | `embedding.endpoint` | (unset) | Optional; skips local model load when set. |
 | `state_dir` | `~/.digital-twins` | Where `state.db` lives. |
