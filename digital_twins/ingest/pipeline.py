@@ -363,9 +363,19 @@ def _upsert_graph(neo4j, channel: str, items, item_hash: dict) -> None:
 def _ensure_graph_schema(neo4j) -> None:
     """Idempotent schema bootstrap for the S4 graph.
 
-    Secondary index on ``SourceItem.item_id`` (the join key into the
+    Secondary indexes on ``SourceItem.item_id`` (the join key into the
     Qdrant payload ``item_id``) and on ``SourceItem.channel`` (the
     provenance value used by channel-scoped graph reads).
+
+    Since 018 (REL edge materialization) the graph also carries
+    ``:Entity`` nodes and ``:REL`` edges. Their hot-path lookup keys:
+
+    - ``Entity(name, type)`` — the composite key ``materialize()``
+      MERGEs and ``graph_query`` / ``supersede`` look up; the index is
+      composite to match that exact predicate.
+    - ``REL.source_item`` — the property ``supersede()`` / ``drop()``
+      / per-item reconcile filter by (``WHERE r.source_item = $item_id``).
+
     ``CREATE INDEX IF NOT EXISTS`` is a no-op on an already-created
     index, so this is safe to run on every graph-enabled pipeline pass.
     """
@@ -375,6 +385,12 @@ def _ensure_graph_schema(neo4j) -> None:
     _execute_cypher(
         neo4j,
         "CREATE INDEX IF NOT EXISTS FOR (si:SourceItem) ON (si.channel)")
+    _execute_cypher(
+        neo4j,
+        "CREATE INDEX IF NOT EXISTS FOR (e:Entity) ON (e.name, e.type)")
+    _execute_cypher(
+        neo4j,
+        "CREATE INDEX IF NOT EXISTS FOR (r:REL) ON (r.source_item)")
 
 
 def _execute_cypher(neo4j, cypher: str, **params) -> None:
