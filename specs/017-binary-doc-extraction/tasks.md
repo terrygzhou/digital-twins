@@ -2,7 +2,7 @@
 
 ## 1. Knob (RED-first, constitution Principle III)
 - [ ] 1.1 Add `extraction.extract_binary` (bool, default `false`) to
-      `digital_twings/config/knobs.py` + `digital_twings/config/schema.py`
+      `digital_twins/config/knobs.py` + `digital_twins/config/schema.py`
       (nested under the existing `extraction` group; env:
       `KB_EXTRACTION__EXTRACT_BINARY`). **Verification:** `test_knob_docs.py`
       (T027) updated + green; knob absent from a fresh config → default
@@ -23,7 +23,7 @@
       **Verification:** tests fail on current code (module absent).
       Fixtures live under `tests/fixtures/` (tiny, checked in); no host
       paths (NFR-13).
-- [ ] 2.2 Implement `digital_twings/ingest/extract.py`:
+- [ ] 2.2 Implement `digital_twins/ingest/extract.py`:
       `extract_text(path, suffix, cfg) -> tuple[str, str]` +
       `ExtractorUnavailable` / `ExtractionFailed` types + a
       suffix→backend registry with **lazy** imports. `raw` fallback =
@@ -35,17 +35,17 @@
       `pdf = ["pypdf"]`, `xlsx = ["openpyxl"]`, `docx = ["python-docx"]`,
       `docs = [pdf + xlsx + docx]`. Base install pulls none.
       **Verification:** `pip install .` (no extras) still imports
-      `digital_twings` cleanly; `pip install .[docs]` installs all three.
+      `digital_twins` cleanly; `pip install .[docs]` installs all three.
 
 ## 4. Wire into ingestion
-- [ ] 4.1 `digital_twings/ingest/onshot.py` (016): when
+- [ ] 4.1 `digital_twins/ingest/onshot.py` (016): when
       `extraction.extract_binary` is on, `read()` calls `extract_text`
       instead of bare `read_text`; set `metadata["extractor"]`; content
       hash computed over extracted text (NFR-1). Per-file extractor
       failure → item error, run continues. **Verification:** 016 unit
       tests extended to assert `extractor` metadata + continuation on
       failure.
-- [ ] 4.2 `digital_twings/sources/fs.py` (parity): same change.
+- [ ] 4.2 `digital_twins/sources/fs.py` (parity): same change.
       **Verification:** an `fs`-source unit test with the knob on over a
       tmp dir containing a PDF stores extracted text, not bytes.
 

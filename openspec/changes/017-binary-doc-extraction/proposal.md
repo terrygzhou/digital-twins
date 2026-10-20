@@ -7,7 +7,7 @@ and cannot be retrieved. This forces a manual "extract upstream, ship
 `.txt`" workaround before ingesting.
 
 ## What changes
-- New `digital_twings/ingest/extract.py`: `extract_text(path, suffix,
+- New `digital_twins/ingest/extract.py`: `extract_text(path, suffix,
   cfg)` routing by suffix — `pdf`→`pypdf`, `xlsx`→`openpyxl`,
   `docx`→`python-docx`, else `raw` (current `read_text` behaviour).
   Backends are lazy-imported; a missing dependency or corrupt file is a

@@ -11,7 +11,7 @@ unchanged when the knob is off.
 
 ## Approach
 
-1. **Extraction layer** (`digital_twings/ingest/extract.py`, new):
+1. **Extraction layer** (`digital_twins/ingest/extract.py`, new):
    - `extract_text(path, suffix, cfg) -> (text, extractor)`; a small
      suffix→backend registry:
      - `pdf` → `pypdf` (lazy-import; per-file failure on missing/corrupt)
@@ -52,10 +52,10 @@ unchanged when the knob is off.
 
 ## Files touched
 
-- `digital_twings/ingest/extract.py` (new)
-- `digital_twings/ingest/onshot.py` (016 — use `extract_text`)
-- `digital_twings/sources/fs.py` (parity — use `extract_text`)
-- `digital_twings/config/knobs.py` + `config/schema.py` (knob)
+- `digital_twins/ingest/extract.py` (new)
+- `digital_twins/ingest/onshot.py` (016 — use `extract_text`)
+- `digital_twins/sources/fs.py` (parity — use `extract_text`)
+- `digital_twins/config/knobs.py` + `config/schema.py` (knob)
 - `pyproject.toml` (optional extras)
 - `tests/unit/test_extract.py` (new), 016 integration test (extend)
 

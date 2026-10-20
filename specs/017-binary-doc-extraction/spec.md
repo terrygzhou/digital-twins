@@ -47,7 +47,7 @@ XLSX as compressed-zip noise) — the chunk/embedder stores garbage, and
 ## Functional Requirements
 
 - **FR-1**: Add a text-extraction layer
-  `digital_twings/ingest/extract.py`: `extract_text(path: Path,
+  `digital_twins/ingest/extract.py`: `extract_text(path: Path,
   suffix: str | None, cfg) -> tuple[bytes_text, extractor_name]`.
   Suffix routing:
   - `.pdf` → `pypdf` (or `pdfminer`) — concatenated page text

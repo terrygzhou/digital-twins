@@ -11,7 +11,7 @@
       routing, `extractor_unavailable` (dep missing), `extraction_failed`
       (corrupt), `raw` fallback, knob-off path. Fixtures in
       `tests/fixtures/`.
-- [ ] 2.2 Implement `digital_twings/ingest/extract.py`
+- [ ] 2.2 Implement `digital_twins/ingest/extract.py`
       (`extract_text`, lazy backend imports, typed errors, `raw`
       fallback).
 
