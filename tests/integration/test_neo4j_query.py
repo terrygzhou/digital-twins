@@ -468,3 +468,64 @@ def test_cli_migrate_s4_fails_closed_without_neo4j_knobs(monkeypatch):
     r = runner.invoke(cli, ["migrate", "s4"])
     assert r.exit_code == 1
     assert "no Neo4j endpoint resolvable" in r.output
+
+
+# --- 5. 018: REL edge materialization --------------------------------------
+
+
+def test_materialize_rel_edge_query():
+    """018: materialize() with 2 entities + 1 relation issues exactly
+    one REL MERGE query carrying source_item, prompt_version, and the
+    relation's predicate; the return dict's 'relations' key is present.
+
+    Hermetic: the recording driver captures the Cypher without a real
+    Neo4j. The stub reports 0 counters, so we assert on the query
+    itself (shape + params), not the counter value.
+    """
+    from digital_twins.ingest.entities import materialize, PROMPT_VERSION
+
+    rec = []
+    driver = _RecordingDriver("bolt://n:7687")
+    # The recording driver's session records into driver.rec
+    extraction = {
+        "entities": [
+            {"name": "Alice", "type": "person", "desc": ""},
+            {"name": "ACME", "type": "organization", "desc": ""},
+        ],
+        "relations": [
+            {"subject": "Alice", "predicate": "works_for", "object": "ACME"},
+        ],
+        "prompt_version": PROMPT_VERSION,
+    }
+    out = materialize(
+        channel="fs", item_id="item-018", content_hash="h",
+        extraction=extraction, run_id="r1",
+        captured_at="2026-01-01T00:00:00Z", driver=driver, cfg={},
+    )
+
+    # Exactly one REL MERGE query
+    rel_queries = [
+        (q, p) for q, p in driver.rec
+        if "REL" in q and "MERGE" in q
+    ]
+    assert len(rel_queries) == 1, (
+        f"Expected 1 REL MERGE query, got {len(rel_queries)}: "
+        f"{[q for q, _ in rel_queries]}"
+    )
+    q, p = rel_queries[0]
+    # Query shape: MATCH both endpoint entities, MERGE the REL edge
+    assert "MATCH (e1:Entity" in q
+    assert "MATCH (e2:Entity" in q
+    assert "MERGE (e1)-[r:REL" in q
+    assert "->(e2)" in q
+    # Params carry the relation fields + scoping
+    assert p["predicate"] == "works_for"
+    assert p["subject"] == "Alice"
+    assert p["subject_type"] == "person"
+    assert p["object"] == "ACME"
+    assert p["object_type"] == "organization"
+    # The MERGE key uses source_item: $item_id → param name is "item_id"
+    assert p["item_id"] == "item-018"
+    assert p["pv"] == PROMPT_VERSION
+    # Return dict carries the relations key
+    assert "relations" in out

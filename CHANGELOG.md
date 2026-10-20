@@ -6,6 +6,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 ## [Unreleased]
 
 ### Added
+- **`materialize()` REL edge materialization** (feature 018): `entities.materialize()` now MERGEs one `REL` edge per LLM-parsed relation (entity↔entity), gated by `extraction.enabled` — the same gate as entity extraction, no new knob. The return dict's `"relations"` field now carries the actual REL write counter (was constant `0`). `supersede()` and `drop()` already handle REL — no change. Additive, no new knob.
 - **`kb_ingest_folder` MCP tool** (feature 016): ingest a caller-supplied
   folder path at call time. The folder arrives in the tool args, never in
   config — the body builds a one-shot `OneShotFolderSource` and injects it

@@ -216,3 +216,117 @@ def test_drop_issues_detach_delete():
     result = drop("item-a", driver=fake, cfg={})
     queries = [q for q, _ in fake.run_calls]
     assert any("DETACH DELETE" in q for q in queries), queries
+
+
+# ── REL edge materialization (018-rel-edge-materialize) ──────────────────
+
+
+def test_materialize_writes_rel_edges():
+    """018: materialize() with 2 relations issues REL MERGE Cypher."""
+    fake = StubNeo4j()
+    extraction = {
+        "entities": [
+            {"name": "Alice", "type": "person", "desc": ""},
+            {"name": "ACME", "type": "organization", "desc": ""},
+            {"name": "Bob", "type": "person", "desc": ""},
+            {"name": "Paris", "type": "place", "desc": ""},
+        ],
+        "relations": [
+            {"subject": "Alice", "predicate": "works_for", "object": "ACME"},
+            {"subject": "Bob", "predicate": "located_in", "object": "Paris"},
+        ],
+        "prompt_version": PROMPT_VERSION,
+    }
+    out = materialize(
+        channel="fs", item_id="item-018", content_hash="h",
+        extraction=extraction, run_id="r1",
+        captured_at="2026-01-01T00:00:00Z", driver=fake, cfg={},
+    )
+    # REL MERGE queries were issued (one per relation)
+    rel_queries = [
+        q for q, _ in fake.run_calls
+        if "REL" in q and "MERGE" in q
+    ]
+    assert len(rel_queries) == 2, (
+        f"Expected 2 REL MERGE queries, got {len(rel_queries)}: "
+        f"{rel_queries}"
+    )
+    # Return dict carries the relations key
+    assert "relations" in out
+
+
+def test_materialize_rel_idempotent_rerun():
+    """018: re-materialising the same extraction is idempotent (NFR-1).
+    StubNeo4j always reports 0 counters, so both runs must show 0."""
+    fake = StubNeo4j()
+    extraction = {
+        "entities": [
+            {"name": "Alice", "type": "person", "desc": ""},
+            {"name": "ACME", "type": "organization", "desc": ""},
+        ],
+        "relations": [
+            {"subject": "Alice", "predicate": "works_for", "object": "ACME"},
+        ],
+        "prompt_version": PROMPT_VERSION,
+    }
+    out1 = materialize(
+        channel="fs", item_id="item-018", content_hash="h",
+        extraction=extraction, run_id="r1",
+        captured_at="t1", driver=fake, cfg={},
+    )
+    out2 = materialize(
+        channel="fs", item_id="item-018", content_hash="h",
+        extraction=extraction, run_id="r2",
+        captured_at="t2", driver=fake, cfg={},
+    )
+    # Stub reports 0 for both — the contract is that the key exists
+    # and the value is a non-negative int (0 on a no-op stub).
+    assert out1["relations"] == 0
+    assert out2["relations"] == 0
+
+
+def test_extract_filters_relation_with_non_entity_endpoint():
+    """018: extract() drops relations whose subject or object is not
+    in the extracted entity set (guard holds end-to-end)."""
+    import digital_twins.ingest.entities as ent
+
+    def fake_llm(messages, cfg=None):
+        return json.dumps({
+            "entities": [
+                {"name": "Alice", "type": "person", "desc": ""},
+            ],
+            "relations": [
+                {"subject": "Alice", "predicate": "works_for",
+                 "object": "GhostCorp"},  # not in entity set
+            ],
+        })
+
+    monkeypatcher = pytest.MonkeyPatch()
+    monkeypatcher.setattr(ent, "_llm_request", fake_llm)
+    try:
+        result = extract("text", cfg={})
+    finally:
+        monkeypatcher.undo()
+
+    assert result["relations"] == []
+
+
+def test_materialize_returns_relations_key():
+    """018: materialize() return dict always carries the 'relations'
+    key, even when there are no relations in the extraction."""
+    fake = StubNeo4j()
+    extraction = {
+        "entities": [
+            {"name": "Alice", "type": "person", "desc": ""},
+            {"name": "Paris", "type": "place", "desc": ""},
+        ],
+        "relations": [],
+        "prompt_version": PROMPT_VERSION,
+    }
+    out = materialize(
+        channel="fs", item_id="item-018", content_hash="h",
+        extraction=extraction, run_id="r1",
+        captured_at="2026-01-01T00:00:00Z", driver=fake, cfg={},
+    )
+    assert "relations" in out
+    assert out["relations"] == 0

@@ -268,6 +268,14 @@ def supersede(item_id: str, *, driver, cfg: dict | None = None) -> int:
     return n1 + n2
 
 
+def _entity_type(entities: list[dict], name: str) -> str:
+    """Look up an entity's type by name from the extraction's entity list."""
+    for e in entities:
+        if e.get("name", "") == name:
+            return e.get("type", "")
+    return ""
+
+
 def materialize(
     *,
     channel: str,
@@ -279,11 +287,13 @@ def materialize(
     driver,
     cfg: dict | None = None,
 ) -> dict:
-    """Idempotent MERGE of one extraction's entities + MENTIONED edges (NFR-1).
+    """Idempotent MERGE of one extraction's entities + MENTIONED + REL edges.
 
-    Returns ``{"entities": N, "mentioned": N, "relations": 0}`` where N is
-    the non-zero write counter (0 on a no-op re-run). REL step is a no-op
-    (design decision 1 — REL production is a follow-up change).
+    Returns ``{"entities": N, "mentioned": N, "relations": M}`` where N and
+    M are the non-zero write counters (0 on a no-op re-run). 018: the REL
+    step MERGEs one edge per LLM-parsed relation, mirroring the MENTIONED
+    step (ON-CREATE stamps valid_from/captured_at/run_id; ON-MATCH clears
+    valid_to, bumps last_seen/run_id).
     """
     now = _now()
     entities = extraction.get("entities") or []
@@ -334,13 +344,34 @@ def materialize(
             pv=pv, now=now,
         )
 
-    # Step 4: REL — intentionally no-op (design decision 1, follow-up change)
-    # relations_written = 0
+    # Step 4: per-relation REL MERGE (018-rel-edge-materialize)
+    relations = extraction.get("relations") or []
+    relations_written = 0
+    for rel in relations:
+        subj = rel.get("subject", "")
+        pred = rel.get("predicate", "")
+        obj = rel.get("object", "")
+        relations_written += _run(
+            driver,
+            "MATCH (e1:Entity {name: $subject, type: $subject_type}) "
+            "MATCH (e2:Entity {name: $object, type: $object_type}) "
+            "MERGE (e1)-[r:REL {predicate: $predicate, "
+            "source_item: $item_id, prompt_version: $pv}]->(e2) "
+            "ON CREATE SET r.valid_from = $now, "
+            "r.captured_at = $captured_at, r.run_id = $run_id "
+            "ON MATCH SET r.valid_to = NULL, r.last_seen = $now, "
+            "r.run_id = $run_id",
+            subject=subj, subject_type=_entity_type(entities, subj),
+            object=obj, object_type=_entity_type(entities, obj),
+            predicate=pred, item_id=item_id,
+            pv=pv, now=now,
+            captured_at=captured_at, run_id=run_id,
+        )
 
     return {
         "entities": entities_written,
         "mentioned": mentioned_written,
-        "relations": 0,
+        "relations": relations_written,
     }
 
 
