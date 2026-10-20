@@ -17,6 +17,7 @@ import yaml
 
 from digital_twins.accounts import create_account
 from digital_twins.auth import create_session
+from digital_twins.config.knobs import KNOBS
 from digital_twins.state import db as state_db
 from digital_twins.web.app import build_web_app, serve
 
@@ -24,6 +25,22 @@ from digital_twins.web.app import build_web_app, serve
 YMAIL_SECRET = "sk-fake-yahoo-app-password"
 
 _READY_TIMEOUT_S = 5.0
+
+
+def _source_env_vars() -> set:
+    """Every env var that can shadow a ``sources.*`` knob.
+
+    The web endpoint (``_config_channels_view``) reports *any* env var name
+    currently set that shadows a source knob — including the non-``KB_``
+    per-source credential vars (``GMAIL_APP_PASSWORD``, ``YMAIL_EMAIL``, …)
+    declared via ``KNOBS[...]["env"]``.  Driving this set from the same
+    registry the app uses keeps the fixture hermetic as knobs grow.
+    """
+    return {
+        meta.get("env")
+        for knob, meta in KNOBS.items()
+        if knob.startswith("sources.") and meta.get("env")
+    }
 
 
 # --- helpers ----------------------------------------------------------------
@@ -87,6 +104,13 @@ def channels_web(tmp_path, monkeypatch):
     """
     config_dir = tmp_path / "config"
     config_dir.mkdir()
+
+    # Hermetic test env: the web endpoint reports any *currently set* env var
+    # that shadows a sources.* knob (incl. non-KB_ credential vars like
+    # GMAIL_APP_PASSWORD / YMAIL_EMAIL). Clear them all so env_overrides is
+    # deterministic regardless of host env.
+    for var in _source_env_vars():
+        monkeypatch.delenv(var, raising=False)
 
     # Pre-existing kb.local.yml: fs enabled + chunking block (must survive
     # a POST merge_write).

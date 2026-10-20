@@ -6,6 +6,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 ## [Unreleased]
 
 ### Fixed
+- **Hermetic test env for the web channels panel.** `test_web_channels_api`
+  `channels_web` fixture now clears every env var that can shadow a
+  `sources.*` knob (incl. the non-`KB_` per-source credential vars like
+  `GMAIL_APP_PASSWORD` / `YMAIL_EMAIL`, which the endpoint also reports in
+  `env_overrides`), so `test_get_channels_admin_200_shape` no longer depends
+  on the host environment. Test-only; no behaviour change.
+
 - **In-process embedding docs/remediation now honest about the offline
   contract.** `load_embedder` uses `local_files_only=True` (no
   auto-download of the pinned `BAAI/bge-small-en-v1.5` model —
