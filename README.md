@@ -315,6 +315,15 @@ pip install "digital-twins-kb[mcp]"
 pip install "digital-twins-kb[local-embedding]"
 ```
 
+> **`[local-embedding]` is offline-safe — no auto-download.** `load_embedder`
+> reads the pinned model (`BAAI/bge-small-en-v1.5`, 384-dim) from the local
+> HuggingFace cache only (`local_files_only=True`), so it never probes
+> huggingface.co on a fresh host. A cold cache fails fast; to populate it,
+> either copy `models--BAAI--bge-small-en-v1.5` into
+> `~/.cache/huggingface/hub` (ship it alongside the install on an air-gapped
+> host) or run a one-time `huggingface-cli download BAAI/bge-small-en-v1.5`.
+> Prefer `embedding.endpoint` instead if you'd rather not ship the model.
+
 From a git checkout instead of PyPI:
 
 ```bash

@@ -78,12 +78,15 @@ def load_embedder(model: str = DEFAULT_MODEL, device: str = "auto"):
     except Exception as exc:
         raise LocalEmbedderError(
             f"could not load pinned embedding model {model!r} ({exc}); "
-            "the model is loaded from the local HuggingFace cache only — "
-            "if it is not cached, run with network once (unset "
-            "HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE) to populate "
-            "~/.cache/huggingface, or set embedding.endpoint "
-            "(env KB_EMBEDDING__ENDPOINT) to an OpenAI-compatible "
-            "embedding endpoint"
+            "the model is loaded from the local HuggingFace cache only "
+            "(offline-safe, local_files_only=True — no auto-download). "
+            "If it is not cached, populate ~/.cache/huggingface first: "
+            "copy models--BAAI--bge-small-en-v1.5 into "
+            "~/.cache/huggingface/hub, or run a one-time network "
+            "download such as `huggingface-cli download "
+            "BAAI/bge-small-en-v1.5`. Alternatively set "
+            "embedding.endpoint (env KB_EMBEDDING__ENDPOINT) to an "
+            "OpenAI-compatible embedding endpoint"
         ) from exc
 
 

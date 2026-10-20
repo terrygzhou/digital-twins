@@ -3,6 +3,23 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [Unreleased]
+
+### Fixed
+- **In-process embedding docs/remediation now honest about the offline
+  contract.** `load_embedder` uses `local_files_only=True` (no
+  auto-download of the pinned `BAAI/bge-small-en-v1.5` model —
+  offline-safe), so the stale "a cold cache downloads the model"
+  docstring in `setup.py` and the misleading "unset
+  HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE to populate" remediation in
+  `embedding.py` (which `local_files_only=True` makes ineffective) are
+  reworded. They now say the model is read from the local HuggingFace
+  cache only, and how to populate a cold cache: ship
+  `models--BAAI--bge-small-en-v1.5` into `~/.cache/huggingface/hub`, or a
+  one-time `huggingface-cli download BAAI/bge-small-en-v1.5`, or use an
+  `embedding.endpoint`. No behaviour change — the `local_files_only=True`
+  design is preserved.
+
 ## [0.11.4] - 2026-10-20
 
 ### Fixed

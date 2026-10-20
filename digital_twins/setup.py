@@ -601,9 +601,12 @@ def embedding_ready(echo: Callable = click.echo,
       embedding.api_key, when configured, is sent with the probe — a
       401/403 reads as an auth problem, not reachability).
     - no endpoint -> in-process: load the pinned model and embed one probe
-      text.  The heavy import + model download happens at most once per
-      host lifetime (first setup, or when the model cache is cold); later
-      re-runs hit a warm cache and finish in milliseconds.
+      text.  The pinned model is read from the local HuggingFace cache only
+      (offline-safe, ``local_files_only=True`` — no auto-download).  If the
+      cache is cold on this host the probe fails fast with a remediation
+      line telling the operator how to populate it (ship the cache, a
+      one-time ``huggingface-cli download``, or an ``embedding.endpoint``);
+      on a warm cache this finishes in milliseconds.
     """
     if cfg is None:
         from digital_twins.config import load
@@ -620,8 +623,10 @@ def embedding_ready(echo: Callable = click.echo,
             echo(f"  -> {r.remediation}")
         return
     # In-process path: load the pinned model on the resolved device and
-    # embed one probe text (sentence-transformers lazy-loads on first
-    # use — a cold cache downloads the model here, on first setup).
+    # embed one probe text.  The pinned model is read from the local
+    # HuggingFace cache only (offline-safe, local_files_only=True — no
+    # auto-download); a cold cache fails fast with a remediation line
+    # telling the operator how to populate it.
     model = get(cfg, "embedding.model") or "BAAI/bge-small-en-v1.5"
     device = get(cfg, "embedding.device") or "auto"
     from digital_twins.ingest.embedding import (
@@ -632,7 +637,10 @@ def embedding_ready(echo: Callable = click.echo,
     except LocalEmbedderError as exc:
         echo(f"embedding: NOT ready (in-process {model}) — {exc}")
         echo("  -> search/chat will fail with a 503 until this is fixed: "
-             "install the 'local-embedding' extra, or set "
+             "install the 'local-embedding' extra AND populate the "
+             "pinned model's cache (ship models--BAAI--bge-small-en-v1.5 "
+             "into ~/.cache/huggingface/hub, or a one-time "
+             "huggingface-cli download), or set "
              "embedding.endpoint (env: KB_EMBEDDING__ENDPOINT).")
 
 

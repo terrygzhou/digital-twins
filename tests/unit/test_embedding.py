@@ -111,3 +111,32 @@ def test_load_embedder_download_failure_raises_with_remediation(monkeypatch):
 
     with pytest.raises(emb.LocalEmbedderError, match="KB_EMBEDDING__ENDPOINT"):
         emb.load_embedder()
+
+
+def test_load_embedder_remediation_is_honest_about_offline_contract(
+        monkeypatch):
+    """B-consistency guard: the remediation must say the pinned model is
+    read from the local HF cache (offline-safe, local_files_only=True) and
+    how to populate a cold cache — NOT the old misleading 'unset
+    HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE to populate' instruction (which
+    local_files_only=True makes ineffective)."""
+    import digital_twins.ingest.embedding as emb
+
+    class _FakeST:
+        def __init__(self, model, device="cpu"):
+            raise OSError("offline")
+    fake_mod = types.ModuleType("sentence_transformers")
+    fake_mod.SentenceTransformer = _FakeST
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_mod)
+    monkeypatch.setattr(emb, "SentenceTransformer", _FakeST, raising=False)
+
+    with pytest.raises(emb.LocalEmbedderError) as exc_info:
+        emb.load_embedder()
+    msg = str(exc_info.value)
+    # Honest: names the cache / pre-cache path.
+    assert "cache" in msg.lower()
+    # Endpoint alternative is still offered.
+    assert "KB_EMBEDDING__ENDPOINT" in msg
+    # The old, ineffective 'unset the offline flags' instruction is gone.
+    assert "unset" not in msg.lower()
+    assert "HF_HUB_OFFLINE" not in msg
