@@ -238,7 +238,7 @@ def run_pipeline(
                 continue
 
             if chunks:
-                vectors = embedder([text for *_x, text in chunks])
+                vectors = embedder([c[3] for c in chunks])
                 # Item-level content hash (S4): shared by every chunk of
                 # one item — the staleness signal that replaces the
                 # legacy content-dependent point ID.
