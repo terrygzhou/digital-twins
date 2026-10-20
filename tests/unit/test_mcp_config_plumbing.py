@@ -348,10 +348,13 @@ def test_http_serve_threads_explicit_config(db, monkeypatch):
     seen = []
     real_builder = http._build_handler_cls
 
-    def spy_builder(db_, service_account_email, dispatch=None, config=None):
+    def spy_builder(db_, service_account_email, dispatch=None, config=None,
+                    db_lock=None):
+        # 015: serve() goes through build_handler(), which adds the
+        # thread-safe conn + request lock before building the handler.
         seen.append(config)
         return real_builder(db_, service_account_email, dispatch,
-                            config=config)
+                            config=config, db_lock=db_lock)
 
     monkeypatch.setattr(http, "_build_handler_cls", spy_builder)
     server = http.serve(db, service_account_email="system", config=cfg)

@@ -3,6 +3,16 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [0.11.4] - 2026-10-20
+
+### Fixed
+- **MCP HTTP transport now serves authenticated requests under a threaded
+  server (015 / BUG-02)**: `digital-twins serve-mcp --transport http`
+  re-opens the state DB with `check_same_thread=False` and serializes the
+  db-touching request sections under a `threading.Lock` (mirroring
+  `web/server.py`), fixing the `sqlite3.ProgrammingError` that reset
+  every authenticated request (client saw `HTTP 000`).
+
 ## [0.11.3] - 2026-09-28
 
 ### Added

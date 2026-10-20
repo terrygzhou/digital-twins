@@ -27,6 +27,9 @@ The ``MCPContext.agent_kind`` is set to ``"http"`` so the audit row's
 from __future__ import annotations
 
 import json
+import sqlite3
+import threading
+from contextlib import nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -38,12 +41,50 @@ from ..config import loader as _loader
 
 
 # ---------------------------------------------------------------------------
+# thread-safe db (015 / BUG-02)
+# ---------------------------------------------------------------------------
+
+def _open_thread_safe_db(db, check_same_thread: bool = False):
+    """Open a new connection to the same SQLite file as ``db``.
+
+    Mirrors ``web/server.py::_open_same_db``: the HTTP MCP transport is a
+    ``ThreadingHTTPServer`` (fresh worker thread per request), but the
+    CLI's ``serve-mcp`` opens the state DB on the main thread with the
+    stdlib default ``check_same_thread=True``.  Any db call made from a
+    worker thread then raises ``sqlite3.ProgrammingError`` (the
+    thread-identity guard) and the handler dies with a reset connection
+    (015 defect).  Re-opening the same path with
+    ``check_same_thread=False`` keeps the conn usable from worker
+    threads; the ``state/db.py`` connection semantics are unchanged for
+    every other caller.
+
+    In-memory databases (no file) cannot be re-opened, so the original
+    connection is returned as-is.
+    """
+    try:
+        row = db.execute("PRAGMA database_list").fetchone()
+        path = row[2] if row and row[2] else None
+    except Exception:
+        path = None
+
+    if path is None or path == ":memory:":
+        return db
+
+    conn = sqlite3.connect(str(path), check_same_thread=check_same_thread)
+    # Enforce FKs on the secondary connection too (sqlite3.connect
+    # defaults foreign_keys=OFF), matching state.db.connect().
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+# ---------------------------------------------------------------------------
 # request handler
 # ---------------------------------------------------------------------------
 
 def _build_handler_cls(db, service_account_email: str,
                        dispatch: Any = None,
-                       config: Any = None) -> type:
+                       config: Any = None,
+                       db_lock: Any = None) -> type:
     """Build a ``BaseHTTPRequestHandler`` subclass wired to ``db`` + ``dispatch``.
 
     ``dispatch`` is injectable for tests; defaults to
@@ -56,6 +97,18 @@ def _build_handler_cls(db, service_account_email: str,
     entry point (:func:`main`) always loads it via the config layer
     first (007-R6c) so a live server never dispatches with a ``None``
     config.
+
+    ``db_lock`` (015): an optional ``threading.Lock`` serializing the
+    db-touching sections of ``do_POST`` (auth verify + role resolution
+    + dispatch audit write) across worker threads.  ``check_same_thread=
+    False`` only disables the thread-*identity* guard; it does not make
+    concurrent use of one ``sqlite3.Connection`` safe — the lock exists
+    for exactly this (same rationale as ``web/server.py``).  The lock is
+    scoped to the db-touching sections, NOT the KB tool bodies'
+    Qdrant/Neo4j/LLM I/O, so the threaded server keeps its concurrency
+    benefit.  Defaults to ``None`` (no lock) so single-connection,
+    non-threaded callers (stdio tests, direct handler construction) are
+    unaffected.
     """
     if dispatch is None:
         dispatch = _dispatch.dispatch
@@ -86,19 +139,34 @@ def _build_handler_cls(db, service_account_email: str,
                                            "message": f"unknown path: {self.path}"}})
                 return
 
-            # --- auth gate (mcp_authenticator) ---------------------------
-            ok, email_or_reason = authenticator(self.headers)
-            if not ok:
-                # 401 for an unknown / missing credential (email_or_reason
-                # is None); 403 for a known-but-dead credential (a reason
-                # string is present).
-                status = 401 if email_or_reason is None else 403
-                reason = email_or_reason or "authentication failed"
-                self._send(status, {"ok": False,
-                                    "error": {"code": "unauthorized" if status == 401
-                                              else "forbidden",
-                                              "message": reason}})
-                return
+            # 015: the db-touching sections (auth verify + role
+            # resolution) are serialized under db_lock when one is
+            # supplied.  check_same_thread=False only disables the
+            # thread-identity guard; it does not make concurrent use of
+            # one sqlite3.Connection safe — the lock covers that (same
+            # rationale as web/server.py).  The lock is released before
+            # dispatch so the KB tool bodies' external I/O (Qdrant /
+            # Neo4j / LLM) can overlap across worker threads.
+            with db_lock if db_lock is not None else nullcontext():
+                # --- auth gate (mcp_authenticator) -----------------------
+                ok, email_or_reason = authenticator(self.headers)
+                if not ok:
+                    # 401 for an unknown / missing credential
+                    # (email_or_reason is None); 403 for a known-but-dead
+                    # credential (a reason string is present).
+                    status, payload = self._auth_reject(email_or_reason)
+                    self._send(status, payload)
+                    return
+
+                # --- role resolution (accounts.get_role) -----------------
+                caller_role = _accounts.get_role(db, email_or_reason)
+                if caller_role is None:
+                    # Race: account deleted between token verify and role
+                    # resolve.  Fail closed -> 403.
+                    self._send(403, {"ok": False,
+                                     "error": {"code": "forbidden",
+                                               "message": "account no longer exists"}})
+                    return
 
             # --- read the JSON body --------------------------------------
             try:
@@ -119,21 +187,11 @@ def _build_handler_cls(db, service_account_email: str,
                                            "message": "body must be a JSON object"}})
                 return
 
-            # --- resolve the caller's role + dispatch ---------------------
-            caller_role = _accounts.get_role(db, email_or_reason)
-            if caller_role is None:
-                # The authenticator said the credential was accepted but the
-                # account no longer exists (a race: account deleted between
-                # token verify and role resolve). Fail closed → 403.
-                self._send(403, {"ok": False,
-                                 "error": {"code": "forbidden",
-                                           "message": "account no longer exists"}})
-                return
-
+            # --- dispatch (external I/O runs WITHOUT the db lock) --------
             # 007-R6c: thread the loaded config into MCPContext so the KB
-            # tool bodies (kb_search / kb_chat / kb_ingest / kb_health) can
-            # read it. The programmatic seam defaults to None; the live
-            # transport (:func:`main`) always loads it first.
+            # tool bodies (kb_search / kb_chat / kb_ingest / kb_health)
+            # can read it.  The programmatic seam defaults to None; the
+            # live transport (:func:`main`) always loads it first.
             ctx = MCPContext(
                 db=db,
                 caller_email=email_or_reason,
@@ -154,6 +212,14 @@ def _build_handler_cls(db, service_account_email: str,
             self.end_headers()
             self.wfile.write(body)
 
+        def _auth_reject(self, email_or_reason) -> tuple:
+            """Status + body for a rejected credential (015 lock-path helper)."""
+            if email_or_reason is None:
+                return 401, {"ok": False, "error": {"code": "unauthorized",
+                                                     "message": "authentication failed"}}
+            return 403, {"ok": False, "error": {"code": "forbidden",
+                                                 "message": email_or_reason}}
+
     return Handler
 
 
@@ -169,9 +235,24 @@ def build_handler(db, service_account_email: str = "system",
     ``config`` (feature 007, 007-R6c): the loaded config dict, threaded
     into the handler's per-request ``MCPContext``. Defaults to ``None``;
     the CLI entry point (:func:`main`) loads it first.
+
+    015 / BUG-02: this seam is safe to serve from a
+    ``ThreadingHTTPServer`` — it re-opens the conn
+    (``check_same_thread=False``) and serializes the db-touching
+    request sections under a ``threading.Lock``.  The caller's ``db``
+    is not mutated; the handler owns a re-opened connection to the
+    same file.  In-memory conns cannot be shared across threads, so
+    they are returned as-is and carry no lock (pre-015
+    single-thread contract preserved).
     """
-    return _build_handler_cls(db, service_account_email, dispatch,
-                              config=config)
+    # 015 / BUG-02: re-open the same file thread-safe + serialize the
+    # db-touching request sections under a lock (mirror of
+    # web/server.py).  In-memory conns come back as-is (no lock) —
+    # they cannot be shared across threads anyway.
+    thread_safe_db = _open_thread_safe_db(db, check_same_thread=False)
+    db_lock = threading.Lock()
+    return _build_handler_cls(thread_safe_db, service_account_email,
+                              dispatch, config=config, db_lock=db_lock)
 
 
 # ---------------------------------------------------------------------------
@@ -188,12 +269,24 @@ def serve(db, host: str = "127.0.0.1", port: int = 8770,
     the CLI's ``serve-mcp`` does this). ``dispatch`` is injectable for
     tests; defaults to :func:`digital_twins.mcp.dispatch.dispatch`.
 
+    015 / BUG-02: the handler always works against a re-opened
+    ``check_same_thread=False`` connection to the same SQLite file
+    (in-memory conns are returned as-is) with a ``threading.Lock``
+    held across the db-touching sections of every request — see
+    ``_build_handler_cls`` (mirror of ``web/server.py``).  The caller's
+    ``db`` is not mutated; the server owns its own connection.
+
     ``config`` (feature 007, 007-R6c): the loaded config dict, threaded
     into the handler's per-request ``MCPContext``. Defaults to ``None``;
     the CLI entry point (:func:`main`) loads it first.
     """
-    handler = _build_handler_cls(db, service_account_email, dispatch,
-                                 config=config)
+    # 015 / BUG-02: the CLI hands us the main-thread conn (default
+    # check_same_thread=True); build_handler re-opens the same file
+    # thread-safe and serializes the db-touching request sections under
+    # a lock (mirror of web/server.py).  The CLI's original conn stays
+    # usable; the server owns its own connection.
+    handler = build_handler(db, service_account_email, dispatch,
+                            config=config)
     server = ThreadingHTTPServer((host, port), handler)
     return server
 
