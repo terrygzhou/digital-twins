@@ -275,9 +275,18 @@ Stdio variant (agent spawns the server as a child process):
 }
 ```
 
-All 10 tools (6 scheduler: `kb_schedule_list/create/update/delete/run`
-+ `kb_run_history`; 4 KB: `kb_search`, `kb_chat`, `kb_ingest`, `kb_health`)
-are available; role-gating and owner-scoping apply per call. Full quickstart:
+All 11 tools (6 scheduler: `kb_schedule_list/create/update/delete/run`
++ `kb_run_history`; 5 KB: `kb_search`, `kb_chat`, `kb_ingest`,
+`kb_ingest_folder`, `kb_health`) are available; role-gating and
+owner-scoping apply per call.
+
+`kb_ingest_folder` is a one-shot folder ingest tool: you pass the folder
+path in the tool call (it never goes into config), it is content-hash
+deduplicated like every other ingest (re-ingesting the same folder writes
+0 new points), and it is `reader`-refused (`permission_denied`) — missing,
+file, or unreadable paths fail closed with stable error codes
+(`path_not_found`, `not_a_directory`, `path_not_readable`) that echo only
+the caller-supplied path. Full quickstart:
 [`specs/004-mcp-scheduler-tools/quickstart.md`](specs/004-mcp-scheduler-tools/quickstart.md).
 
 ## Manual onboarding (reference)
@@ -518,7 +527,7 @@ flowchart TD
 
     %% Phase 3: storage (upsert + state)
     qdrant[("Qdrant (vectors, payload)")]
-    neo4j[("Neo4j (graph, optional)")]
+    neo4j[("Neo4j (entities + REL edges, optional)")]
     sqlite[("SQLite (WAL) — highwater + audit_runs")]
 
     %% Phase 4: scheduling (wraps 1–3)
@@ -527,7 +536,7 @@ flowchart TD
 
     %% Phase 5: retrieval / serving (read side)
     web["web/ /api/* (search, ingest, audit)"]
-    mcp["mcp/ stdio + http (kb_search, kb_chat, kb_ingest, kb_health, …)"]
+    mcp["mcp/ stdio + http (kb_search, kb_chat, kb_ingest, kb_ingest_folder, kb_health, …)"]
     search{"owner-scoped vector search"}
 
     %% Cross-cutting
@@ -542,7 +551,7 @@ flowchart TD
     chunk -->|chunk text| embed
     embed -->|vectors| ids
     ids -->|"upsert point (dedup: NFR-1)"| qdrant
-    ids -->|MERGE nodes| neo4j
+    ids -->|"MERGE entities + REL edges"| neo4j
     qdrant -->|highwater cursor| sqlite
     qdrant --> search
     sqlite --> audit
@@ -608,6 +617,7 @@ types: [`digital_twins/config/knobs.py`](digital_twins/config/knobs.py).
 |------|---------|---------|
 | `qdrant.url` | (unset) | Qdrant base URL — required. |
 | `neo4j.url` / `neo4j.user` / `neo4j.password` | (unset) / `neo4j` / (unset) | Neo4j — required. |
+| `extraction.enabled` | `true` | Entity + REL-edge extraction from chunk text (Neo4j only). |
 | `llm.endpoint` / `llm.model` | (unset) / (unset) | OpenAI-compatible LLM — required. |
 | `embedding.endpoint` | (unset) | Optional; skips local model load when set. |
 | `state_dir` | `~/.digital-twins` | Where `state.db` lives. |
