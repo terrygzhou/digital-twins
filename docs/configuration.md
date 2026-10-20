@@ -140,7 +140,7 @@ server URL to run the full stack against that external endpoint.
 | neo4j.url | str | ~ | KB_NEO4J__URL | Graph database endpoint URL. |
 | neo4j.user | str | ~ | KB_NEO4J__USER | Neo4j login user. |
 | neo4j.password | str | ~ | KB_NEO4J__PASSWORD | Neo4j login password. |
-| llm.endpoint | str | ~ | KB_LLM__ENDPOINT | LLM server URL (e.g. an SGLang server). |
+| llm.endpoint | str | ~ | KB_LLM__ENDPOINT | LLM server URL (e.g. an SGLang server). **Hard preflight dependency** for non-dry-run ingest: without it `run` exits 2 before any pipeline work (`health.py:check_llm`). |
 | llm.model | str | ~ | KB_LLM__MODEL | LLM model identifier. |
 | llm.api_key | str | ~ | KB_LLM__API_KEY | LLM auth token, when the endpoint requires one. |
 
@@ -273,6 +273,8 @@ run and `timeout_s` bounds a single source's run.
 | sources.mytool.entrypoint | str | ~ | ~ | Custom-source example: `module:factory` entry point to import. |
 | sources.mytool.credential | str | ~ | MYTOOL_TOKEN | Env var name the custom source requires for its credential. |
 | sources.mytool.prefix | str | mytool: | ~ | ID prefix stamped on items this source ingests. |
+
+> **`sources.fs.extra.dir` footgun.** The fs source reads its directory from `sources.fs.extra.dir` (env `KB_SOURCES__FS__EXTRA__DIR`), **not** `sources.fs.directory` — a `kb.local.yml` that uses `directory:` will silently fail the prerequisite check with "path does not exist". This is a free-form `extra` dict value, not a registered knob (hence not in the table above).
 
 ### Adding a source (custom)
 
