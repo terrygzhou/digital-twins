@@ -231,7 +231,7 @@ Default: disabled (no LLM calls, no entity writes).
 
 | knob | type | default | env var | notes |
 |---|---|---|---|---|
-| extraction.enabled | bool | false | KB_EXTRACTION__ENABLED | Run LLM entity extraction after the `:SourceItem` graph write. |
+| extraction.enabled | bool | false | KB_EXTRACTION__ENABLED | Run LLM entity extraction after the `:SourceItem` graph write. When enabled, `materialize()` also MERGEs one REL edge per LLM-parsed relation (entity↔entity); see feature 018 (`specs/018-rel-edge-materialize/`). |
 | extraction.max_text_chars | int | 12000 | KB_EXTRACTION__MAX_TEXT_CHARS | Truncation cap (characters) for the text handed to the LLM. |
 | extraction.prompt_version | str |  | KB_EXTRACTION__PROMPT_VERSION | Prompt version override; empty uses the built-in prompt. |
 
