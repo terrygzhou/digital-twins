@@ -530,3 +530,75 @@ def test_materialize_rel_edge_query():
     assert p["pv"] == PROMPT_VERSION
     # Return dict carries the relations key
     assert "relations" in out
+
+
+def test_materialize_domain_profile_query():
+    """020 (Tier B): materialize() with a domain extraction — 2
+    competitor/standard entities + 1 competes_with REL — issues
+    REL MERGE with predicate 'competes_with' and prompt_version =
+    DOMAIN_PROMPT_VERSION; re-materialising the same extraction is
+    idempotent (count stays 1).
+
+    Hermetic: recording driver captures Cypher without a real Neo4j.
+    """
+    from digital_twins.ingest.entities import (
+        materialize, DOMAIN_PROMPT_VERSION,
+    )
+
+    rec = []
+    driver = _RecordingDriver("bolt://n:7687")
+    extraction = {
+        "entities": [
+            {"name": "Rotork", "type": "competitor", "desc": ""},
+            {"name": "BetaCorp", "type": "competitor", "desc": ""},
+            {"name": "API 598", "type": "standard", "desc": ""},
+        ],
+        "relations": [
+            {"subject": "Rotork", "predicate": "competes_with",
+             "object": "BetaCorp"},
+        ],
+        "prompt_version": DOMAIN_PROMPT_VERSION,
+    }
+    out1 = materialize(
+        channel="fs", item_id="item-020", content_hash="h",
+        extraction=extraction, run_id="r1",
+        captured_at="2026-01-01T00:00:00Z", driver=driver, cfg={},
+    )
+
+    # Exactly one REL MERGE query, carrying the domain predicate + version
+    rel_queries = [
+        (q, p) for q, p in driver.rec
+        if "REL" in q and "MERGE" in q
+    ]
+    assert len(rel_queries) == 1, (
+        f"Expected 1 REL MERGE query, got {len(rel_queries)}: "
+        f"{[q for q, _ in rel_queries]}"
+    )
+    q, p = rel_queries[0]
+    assert "MATCH (e1:Entity" in q
+    assert "MATCH (e2:Entity" in q
+    assert "MERGE (e1)-[r:REL" in q
+    assert "->(e2)" in q
+    assert p["predicate"] == "competes_with"
+    assert p["subject"] == "Rotork"
+    assert p["subject_type"] == "competitor"
+    assert p["object"] == "BetaCorp"
+    assert p["object_type"] == "competitor"
+    assert p["pv"] == DOMAIN_PROMPT_VERSION
+    assert "relations" in out1
+
+    # NFR-1 idempotency: re-materialise the same extraction →
+    # the recording driver captures the query again but the graph
+    # MERGE key is unchanged, so the live count stays 1.
+    driver.rec.clear()
+    out2 = materialize(
+        channel="fs", item_id="item-020", content_hash="h",
+        extraction=extraction, run_id="r1",
+        captured_at="2026-01-01T00:00:00Z", driver=driver, cfg={},
+    )
+    rel_queries2 = [
+        (q, p) for q, p in driver.rec
+        if "REL" in q and "MERGE" in q
+    ]
+    assert len(rel_queries2) == 1
+    assert "relations" in out2

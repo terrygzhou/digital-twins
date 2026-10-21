@@ -31,6 +31,7 @@ DEFAULTS: dict = {
     "extraction.enabled": False,
     "extraction.max_text_chars": 12000,
     "extraction.prompt_version": "",
+    "extraction.domain_schema": False,
     # embedding — model version pinned by the package
     "embedding.model": "BAAI/bge-small-en-v1.5",
     "embedding.device": "auto",

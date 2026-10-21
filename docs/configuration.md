@@ -234,6 +234,7 @@ Default: disabled (no LLM calls, no entity writes).
 | extraction.enabled | bool | false | KB_EXTRACTION__ENABLED | Run LLM entity extraction after the `:SourceItem` graph write. When enabled, `materialize()` also MERGEs one REL edge per LLM-parsed relation (entity↔entity); see feature 018 (`specs/018-rel-edge-materialize/`). |
 | extraction.max_text_chars | int | 12000 | KB_EXTRACTION__MAX_TEXT_CHARS | Truncation cap (characters) for the text handed to the LLM. |
 | extraction.prompt_version | str |  | KB_EXTRACTION__PROMPT_VERSION | Prompt version override; empty uses the built-in prompt. |
+| extraction.domain_schema | bool | false | KB_EXTRACTION__DOMAIN_SCHEMA | Select the domain extraction profile (Tier B, feature 020): the domain prompt, `DOMAIN_ENTITY_TYPES` and the `DOMAIN_PREDICATES` allowlist apply, and extractions are stamped `DOMAIN_PROMPT_VERSION`. Generic profile (default) is unchanged. |
 
 ## Sources
 

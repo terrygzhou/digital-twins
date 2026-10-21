@@ -131,7 +131,11 @@ def build_endpoint_embedder(cfg):
     expected_dim = model_dimension(model, optional=True)
     url = endpoint + "/v1/embeddings"
 
-    def _post(payload: dict, timeout: int = 30):
+    # 300s (was 30): a large batch of CPU-embedded chunks (~11 vec/s on
+    # BGE-small) exceeds 30s well before 300 chunks; the full-corpus and
+    # Tier-B sweeps timed out under the old default, so a single
+    # large-batch POST was aborted before the endpoint could respond.
+    def _post(payload: dict, timeout: int = 300):
         import json as _json
         import urllib.error
         import urllib.request

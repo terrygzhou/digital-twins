@@ -206,6 +206,12 @@ KNOBS: dict[str, dict] = {
         "env": "KB_EXTRACTION__PROMPT_VERSION",
         "group": GROUP_EXTRACTION,
     },
+    "extraction.domain_schema": {
+        "type": "bool",
+        "default": False,
+        "env": "KB_EXTRACTION__DOMAIN_SCHEMA",
+        "group": GROUP_EXTRACTION,
+    },
 
     # --- Sources (per built-in source: enabled / max_items / timeout_s) ---
 }
