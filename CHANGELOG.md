@@ -3,6 +3,11 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [0.14.0] - 2026-10-23
+
+### Added
+- **Domain extraction profile (Tier B) behind `extraction.domain_schema`** (feature 020): `entities.extract()` with `cfg={"domain_schema": True}` runs a domain prompt constrained to `DOMAIN_ENTITY_TYPES` (`product`, `customer`, `competitor`, `standard`, `cert`), applies the `DOMAIN_PREDICATES` allowlist to relations (`competes_with`, `supplied_to`, `complies_with`, `substitutes_for`, `manufactured_by`, `tested_to`), and stamps `DOMAIN_PROMPT_VERSION` (distinct from the generic `PROMPT_VERSION`). The generic profile is unchanged byte-for-byte. New knob: `extraction.domain_schema` (bool, default `false`); forwarded by the pipeline into `extraction_cfg`.
+
 ## [0.13.1] - 2026-10-22
 
 ### Added

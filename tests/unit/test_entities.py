@@ -255,6 +255,50 @@ def test_materialize_writes_rel_edges():
     assert "relations" in out
 
 
+def test_materialize_writes_domain_types_and_predicates():
+    """020: materialize() passes domain entity types and REL predicates
+    through to the graph unchanged — `:Entity {type:'competitor'}` and
+    `(si)-[REL {predicate:'competes_with'}]` for a domain extraction."""
+    import digital_twins.ingest.entities as ent
+
+    fake = StubNeo4j()
+    extraction = {
+        "entities": [
+            {"name": "Rotork", "type": "competitor", "desc": ""},
+            {"name": "API 598", "type": "standard", "desc": ""},
+        ],
+        "relations": [
+            {"subject": "Rotork", "predicate": "competes_with",
+             "object": "BetaCorp"},
+        ],
+        "prompt_version": ent.DOMAIN_PROMPT_VERSION,
+    }
+    out = materialize(
+        channel="fs", item_id="item-020", content_hash="h",
+        extraction=extraction, run_id="r1",
+        captured_at="2026-01-01T00:00:00Z", driver=fake, cfg={},
+    )
+    # Entity MERGE queries carry the domain type values
+    entity_queries = [
+        q for q, params in fake.run_calls
+        if "Entity" in q and "MERGE" in q
+    ]
+    entity_params = [p for q, p in fake.run_calls if "Entity" in q]
+    assert any("competitor" in str(p) for p in entity_params), (
+        f"Expected a competitor entity param, got: {entity_params}")
+    assert any("standard" in str(p) for p in entity_params), (
+        f"Expected a standard entity param, got: {entity_params}")
+    # REL MERGE query carries the domain predicate
+    rel_queries = [
+        q for q, params in fake.run_calls
+        if "REL" in q and "MERGE" in q
+    ]
+    rel_params = [p for q, p in fake.run_calls if "REL" in q]
+    assert any("competes_with" in str(p) for p in rel_params), (
+        f"Expected a competes_with REL param, got: {rel_params}")
+    assert "relations" in out
+
+
 def test_materialize_rel_idempotent_rerun():
     """018: re-materialising the same extraction is idempotent (NFR-1).
     StubNeo4j always reports 0 counters, so both runs must show 0."""
@@ -330,3 +374,161 @@ def test_materialize_returns_relations_key():
     )
     assert "relations" in out
     assert out["relations"] == 0
+
+
+# ── Domain extraction schema (020-domain-extraction-schema, Tier B) ──────────
+
+
+def test_domain_entity_types_and_predicates_exported():
+    """020: the domain profile constants exist, are exported, and match
+    the Tier B spec exactly."""
+    import digital_twins.ingest.entities as ent
+
+    assert ent.DOMAIN_ENTITY_TYPES == (
+        "product", "customer", "competitor", "standard", "cert",
+    )
+    assert ent.DOMAIN_PREDICATES == (
+        "competes_with", "supplied_to", "complies_with",
+        "substitutes_for", "manufactured_by", "tested_to",
+    )
+    assert "DOMAIN_ENTITY_TYPES" in ent.__all__
+    assert "DOMAIN_PREDICATES" in ent.__all__
+
+
+def test_domain_prompt_version_distinct():
+    """020: DOMAIN_PROMPT_VERSION exists and differs from the Tier A
+    PROMPT_VERSION (bump = re-extract, so a distinct stamp is required)."""
+    import digital_twins.ingest.entities as ent
+
+    assert ent.DOMAIN_PROMPT_VERSION != ""
+    assert ent.DOMAIN_PROMPT_VERSION != ent.PROMPT_VERSION
+
+
+def test_extract_domain_mode_uses_domain_prompt(monkeypatch):
+    """020(a): with cfg={"domain_schema": True} the system message sent to
+    the LLM is the domain prompt — it mentions the domain types and the
+    predicate allowlist, not the generic types."""
+    import digital_twins.ingest.entities as ent
+
+    captured = {}
+
+    def fake_llm(messages, cfg=None):
+        captured["system"] = [
+            m for m in messages if m["role"] == "system"
+        ][0]["content"]
+        return json.dumps({"entities": [], "relations": []})
+
+    monkeypatch.setattr(ent, "_llm_request", fake_llm)
+    extract("text", cfg={"domain_schema": True})
+    sys_msg = captured["system"]
+    assert "competes_with" in sys_msg
+    assert "product" in sys_msg
+    # generic-only type vocabulary must not appear in the domain prompt
+    import re
+    assert not re.search(r"person|organization", sys_msg)
+
+
+def test_extract_domain_mode_entity_type_constraint(monkeypatch):
+    """020(b): in domain mode, an entity whose type is not in
+    DOMAIN_ENTITY_TYPES (e.g. "material") is discarded while a "product"
+    entity is kept."""
+    import digital_twins.ingest.entities as ent
+
+    def fake_llm(messages, cfg=None):
+        return json.dumps({
+            "entities": [
+                {"name": "WidgetPro", "type": "product", "desc": ""},
+                {"name": "AlloyX", "type": "material", "desc": ""},
+            ],
+            "relations": [],
+        })
+
+    monkeypatch.setattr(ent, "_llm_request", fake_llm)
+    result = extract("text", cfg={"domain_schema": True})
+    names = [e["name"] for e in result["entities"]]
+    assert "WidgetPro" in names
+    assert "AlloyX" not in names  # "material" not in DOMAIN_ENTITY_TYPES
+
+
+def test_extract_domain_mode_predicate_allowlist(monkeypatch):
+    """020(c): in domain mode, a free-form predicate ("related_to") is
+    dropped while an allowlisted predicate ("competes_with") between two
+    kept domain entities is retained."""
+    import digital_twins.ingest.entities as ent
+
+    def fake_llm(messages, cfg=None):
+        return json.dumps({
+            "entities": [
+                {"name": "AlphaCorp", "type": "competitor", "desc": ""},
+                {"name": "BetaCorp", "type": "competitor", "desc": ""},
+            ],
+            "relations": [
+                {"subject": "AlphaCorp", "predicate": "related_to",
+                 "object": "BetaCorp"},
+                {"subject": "AlphaCorp", "predicate": "competes_with",
+                 "object": "BetaCorp"},
+            ],
+        })
+
+    monkeypatch.setattr(ent, "_llm_request", fake_llm)
+    result = extract("text", cfg={"domain_schema": True})
+    preds = [r["predicate"] for r in result["relations"]]
+    assert "competes_with" in preds
+    assert "related_to" not in preds
+
+
+def test_extract_domain_mode_prompt_version_stamp(monkeypatch):
+    """020(d): the extraction's prompt_version is the domain stamp, not the
+    generic one."""
+    import digital_twins.ingest.entities as ent
+
+    def fake_llm(messages, cfg=None):
+        return json.dumps({"entities": [], "relations": []})
+
+    monkeypatch.setattr(ent, "_llm_request", fake_llm)
+    result = extract("text", cfg={"domain_schema": True})
+    assert result["prompt_version"] == ent.DOMAIN_PROMPT_VERSION
+    assert result["prompt_version"] != ent.PROMPT_VERSION
+
+
+def test_extract_pinned_prompt_version_wins_in_domain_mode(monkeypatch):
+    """020 spec: a pinned extraction.prompt_version is stamped in domain
+    mode too — the pin overrides DOMAIN_PROMPT_VERSION, so a re-extraction
+    with the same pin supersedes both profiles' edges of the item."""
+    import digital_twins.ingest.entities as ent
+
+    def fake_llm(messages, cfg=None):
+        return json.dumps({"entities": [], "relations": []})
+
+    monkeypatch.setattr(ent, "_llm_request", fake_llm)
+    result = extract("text", cfg={"domain_schema": True,
+                                  "prompt_version": "2026-08-23.1"})
+    assert result["prompt_version"] == "2026-08-23.1"
+    assert result["prompt_version"] != ent.DOMAIN_PROMPT_VERSION
+    # Unpinned domain mode still stamps the domain default.
+    result = extract("text", cfg={"domain_schema": True})
+    assert result["prompt_version"] == ent.DOMAIN_PROMPT_VERSION
+
+
+def test_extract_generic_mode_keeps_freeform_predicate(monkeypatch):
+    """Tier A unchanged: in generic mode (no domain_schema) the
+    free-form predicate allowlist does NOT apply — "related_to" survives."""
+    import digital_twins.ingest.entities as ent
+
+    def fake_llm(messages, cfg=None):
+        return json.dumps({
+            "entities": [
+                {"name": "Alice", "type": "person", "desc": ""},
+                {"name": "Paris", "type": "place", "desc": ""},
+            ],
+            "relations": [
+                {"subject": "Alice", "predicate": "related_to",
+                 "object": "Paris"},
+            ],
+        })
+
+    monkeypatch.setattr(ent, "_llm_request", fake_llm)
+    result = extract("text", cfg={})
+    preds = [r["predicate"] for r in result["relations"]]
+    assert "related_to" in preds
+    assert result["prompt_version"] == ent.PROMPT_VERSION

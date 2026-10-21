@@ -443,6 +443,7 @@ def _run_extraction(
         "enabled": bool(get(cfg, "extraction.enabled")),
         "max_text_chars": get(cfg, "extraction.max_text_chars") or 12000,
         "prompt_version": get(cfg, "extraction.prompt_version") or "",
+        "domain_schema": bool(get(cfg, "extraction.domain_schema")),
     }
     if not extraction_cfg["enabled"]:
         return

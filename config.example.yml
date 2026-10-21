@@ -37,6 +37,7 @@ extraction:
   enabled: false          # env: KB_EXTRACTION__ENABLED
   max_text_chars: 12000  # env: KB_EXTRACTION__MAX_TEXT_CHARS
   prompt_version: ""     # env: KB_EXTRACTION__PROMPT_VERSION (empty = use built-in)
+  domain_schema: false   # env: KB_EXTRACTION__DOMAIN_SCHEMA (true = domain extraction profile, Tier B)
 
 # --- Embedding ---
 embedding:

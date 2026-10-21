@@ -2,9 +2,13 @@
 
 Mirrors personal-kb's ``kb/core/graph.py`` contract:
 
-- ``PROMPT_VERSION`` — pinned prompt version (bump = re-extract).
-- ``ENTITY_TYPES`` — allowed entity types (type-constrained).
+- ``PROMPT_VERSION`` — pinned generic prompt version (bump = re-extract).
+- ``ENTITY_TYPES`` — allowed entity types for the generic profile.
+- ``DOMAIN_ENTITY_TYPES`` / ``DOMAIN_PREDICATES`` — Tier B domain profile
+  (020-domain-extraction-schema): entity types + predicate allowlist.
 - ``extract()`` — LLM call → ``{"entities", "relations", "prompt_version"}``.
+  With ``cfg={"domain_schema": True}`` the domain prompt / types /
+  predicate allowlist apply and ``DOMAIN_PROMPT_VERSION`` is stamped.
 - ``supersede()`` — stamps ``valid_to`` on live MENTIONED edges before
   re-extraction (BR-6.4 parity).
 - ``materialize()`` — idempotent MERGE of Entity nodes + MENTIONED edges
@@ -32,6 +36,10 @@ from datetime import UTC, datetime
 __all__ = [
     "PROMPT_VERSION",
     "ENTITY_TYPES",
+    "DOMAIN_ENTITY_TYPES",
+    "DOMAIN_PREDICATES",
+    "DOMAIN_PROMPT_VERSION",
+    "DOMAIN_EXTRACTION_PROMPT",
     "ExtractionError",
     "prompt_version",
     "extract",
@@ -47,6 +55,28 @@ PROMPT_VERSION = "2026-08-23.1"
 #: Allowed entity types — the prompt is constrained to this set, and so is
 #: materialisation (anything else is dropped from the extraction).
 ENTITY_TYPES = ("person", "organization", "place", "event", "concept")
+
+#: Domain profile (Tier B, 020-domain-extraction-schema): allowed entity
+#: types for domain-aware extraction. The domain prompt is constrained to
+#: this set, and materialisation drops anything else.
+DOMAIN_ENTITY_TYPES = ("product", "customer", "competitor", "standard", "cert")
+
+#: Domain profile (Tier B): the relation-predicate allowlist. In domain mode
+#: relations whose lower-cased predicate is not in this set are dropped
+#: (no free-form predicates); the generic profile is unaffected.
+DOMAIN_PREDICATES = (
+    "competes_with",
+    "supplied_to",
+    "complies_with",
+    "substitutes_for",
+    "manufactured_by",
+    "tested_to",
+)
+
+#: Domain prompt version — stamped on domain-profile extractions (bump =
+#: re-extract). Distinct from PROMPT_VERSION so the two profiles stamp
+#: different edges.
+DOMAIN_PROMPT_VERSION = "2026-08-23.2"
 
 EXTRACTION_PROMPT = f"""\
 You are an entity-extraction pipeline for a personal knowledge base.
@@ -71,6 +101,34 @@ Respond with JSON only, in exactly this shape:
 (prompt version {PROMPT_VERSION})
 """
 
+#: Domain extraction prompt (Tier B, 020-domain-extraction-schema).
+#: Same shape as EXTRACTION_PROMPT but constrained to the domain entity
+#: types and the fixed predicate allowlist (no free-form predicates).
+DOMAIN_EXTRACTION_PROMPT = f"""\
+You are an entity-extraction pipeline for a domain knowledge base.
+Read the document and extract the entities and relations it contains.
+
+Rules:
+- "entities": domain entities — products, customers, competitors, standards
+  and certifications that are concrete enough to be useful for navigation.
+  3 to 25 entities.
+- Each entity: {{"name": str, "type": one of product|customer|competitor|standard|cert,
+  "desc": short description, max 120 chars}}.
+- "relations": only relations explicitly supported by the document, each
+  {{"subject": entity name, "predicate": one of
+  competes_with | supplied_to | complies_with | substitutes_for |
+  manufactured_by | tested_to,
+  "object": entity name}}. subject and object MUST be names from "entities".
+- Do not invent entities or relations that are not in the document.
+- If the document is too thin to extract anything useful, return
+  {{"entities": [], "relations": []}}.
+
+Respond with JSON only, in exactly this shape:
+ {{"entities": [{{"name": ..., "type": ..., "desc": ...}}],
+   "relations": [{{"subject": ..., "predicate": ..., "object": ...}}]}}
+ (prompt version {DOMAIN_PROMPT_VERSION})
+"""
+
 
 class ExtractionError(RuntimeError):
     """LLM call or JSON parse failed for one item (isolated per item)."""
@@ -85,9 +143,23 @@ def _safe_int(value: Any, default: int) -> int:
 
 
 def prompt_version(cfg: dict | None = None) -> str:
-    """Effective prompt version: pinned config > built-in."""
-    pinned = str((cfg or {}).get("prompt_version", "")).strip()
-    return pinned or PROMPT_VERSION
+    """Effective prompt version: pinned config > built-in.
+
+    In domain mode the built-in default is :data:`DOMAIN_PROMPT_VERSION`
+    (a pinned override still wins).
+    """
+    cfg = cfg or {}
+    pinned = str(cfg.get("prompt_version", "")).strip()
+    return pinned or (
+        DOMAIN_PROMPT_VERSION if cfg.get("domain_schema") else PROMPT_VERSION)
+
+
+def _profile(cfg: dict | None) -> str:
+    """Extraction profile for a cfg dict: ``"domain"`` when
+    ``cfg.get("domain_schema")`` is truthy, else ``"generic"`` (020, Tier B).
+    One profile knob selects prompt + type set + predicate filter atomically.
+    """
+    return "domain" if (cfg or {}).get("domain_schema") else "generic"
 
 
 # ── LLM transport (stdlib, SGLang OpenAI-compatible /v1/chat/completions) ──
@@ -147,16 +219,25 @@ def extract(text: str, *, title: str = "", cfg: dict | None = None) -> dict:
     """Extract entities + relations from one item's text (versioned prompt).
 
     Returns ``{"entities": [...], "relations": [...], "prompt_version": str}``
-    with types constrained to :data:`ENTITY_TYPES`. Raises
+    with types constrained to :data:`ENTITY_TYPES` (or to
+    :data:`DOMAIN_ENTITY_TYPES` in domain mode). Raises
     :class:`ExtractionError` on LLM/parse failure — callers isolate per item.
+
+    Domain mode (``cfg={"domain_schema": True}``): uses
+    :data:`DOMAIN_EXTRACTION_PROMPT`, constrains entity types to
+    :data:`DOMAIN_ENTITY_TYPES`, applies the :data:`DOMAIN_PREDICATES`
+    allowlist to relations, and stamps :data:`DOMAIN_PROMPT_VERSION`.
     """
     cfg = cfg or {}
+    domain_mode = _profile(cfg) == "domain"
+    allowed_types = DOMAIN_ENTITY_TYPES if domain_mode else ENTITY_TYPES
+    prompt = DOMAIN_EXTRACTION_PROMPT if domain_mode else EXTRACTION_PROMPT
     max_chars = _safe_int(cfg.get("max_text_chars"), 12000)
     body = text[:max_chars]
     user = (f"Title: {title}\n\n" if title else "") + body
     content = _llm_request(
         [
-            {"role": "system", "content": EXTRACTION_PROMPT},
+            {"role": "system", "content": prompt},
             {"role": "user", "content": user},
         ],
         cfg=cfg,
@@ -181,7 +262,7 @@ def extract(text: str, *, title: str = "", cfg: dict | None = None) -> dict:
             continue
         name = str(ent.get("name") or "").strip()
         etype = str(ent.get("type") or "").strip().lower()
-        if not name or etype not in ENTITY_TYPES:
+        if not name or etype not in allowed_types:
             continue
         entities.append(
             {
@@ -207,6 +288,8 @@ def extract(text: str, *, title: str = "", cfg: dict | None = None) -> dict:
         pred = str(rel.get("predicate") or "").strip().lower()
         obj = str(rel.get("object") or "").strip()
         if not subj or not pred or not obj:
+            continue
+        if domain_mode and pred not in DOMAIN_PREDICATES:
             continue
         if not any(n == subj.lower() for n, _ in ent_names) or not any(
             n == obj.lower() for n, _ in ent_names
