@@ -118,7 +118,10 @@ def _llm_request(messages: list[dict], cfg: dict | None = None) -> str:
         }
     ).encode()
     req = urllib.request.Request(
-        f"{endpoint}/v1/chat/completions",
+        # llm.endpoint is the OpenAI-compatible base incl. /v1 (matches
+        # llm.py + health preflight which probe {endpoint}/models); do NOT
+        # re-prepend /v1 here or the request 404s at .../v1/v1/chat/completions.
+        f"{endpoint}/chat/completions",
         data=body,
         headers={
             "Content-Type": "application/json",
