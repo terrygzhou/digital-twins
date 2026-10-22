@@ -508,14 +508,23 @@ def _run_extraction(
             "skipping entity extraction")
         return
 
-    def process_item(item) -> None:
+    def process_item(item):
         """One item's extract -> supersede -> materialize, isolated.
+
+        Returns ``(item.key, status, error)``; it does NOT touch the
+        SQLite ``db`` connection - the caller writes the audit row on
+        the main thread.  This keeps the LLM work parallelizable while
+        keeping every ``record_audit_item`` call on the thread that owns
+        the SQLite connection (issue 7): a shared ``sqlite3.Connection``
+        created in the main thread cannot be used from a
+        ``ThreadPoolExecutor`` worker, so hoisting the audit write out
+        of ``process_item`` is what makes ``concurrency > 1`` safe.
 
         019b (issue 6): supersede runs only AFTER a successful
         extract, so a failed LLM call mutates no graph state (the
         item's prior live MENTIONED/REL edges stay live).  A failure
-        logs a warning, records a failed audit_items row, and the
-        remaining items proceed (per-item isolation).
+        logs a warning, returns a ``failed`` record, and the remaining
+        items proceed (per-item isolation).
         """
         try:
             extraction = entities.extract(
@@ -540,24 +549,30 @@ def _run_extraction(
                 driver=neo4j,
                 cfg=extraction_cfg,
             )
-            if db is not None:
-                record_audit_item(db, run_id, channel, item.key, status="ok")
+            return item.key, "ok", None
         except Exception as exc:  # noqa: BLE001 - per-item isolation
             logging.warning(
                 "entity extraction failed for item %r in channel %r: %s",
                 item.key, channel, exc)
-            if db is not None:
-                record_audit_item(
-                    db, run_id, channel, item.key,
-                    status="failed", error=str(exc))
+            return item.key, "failed", str(exc)
 
     concurrency = int(get(cfg, "extraction.concurrency") or 1)
+    # issue 7: LLM extract stays parallel (the slow work), but every
+    # record_audit_item call happens on the main thread - the thread
+    # that owns the SQLite connection - so concurrency > 1 no longer
+    # hands a main-thread sqlite3.Connection to a worker thread.
+    # pool.map joins in submission order, so the same deterministic
+    # set of entities materializes and audit rows record in order.
     if concurrency <= 1:
-        for item in items:
-            process_item(item)
+        results = [process_item(item) for item in items]
     else:
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            list(pool.map(process_item, items))
+            results = list(pool.map(process_item, items))
+    for item_key, status, error in results:
+        if db is not None:
+            record_audit_item(
+                db, run_id, channel, item_key,
+                status=status, error=error)
 
 def heal_extraction(
     cfg: dict,

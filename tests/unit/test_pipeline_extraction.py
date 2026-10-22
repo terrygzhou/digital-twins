@@ -188,6 +188,64 @@ def test_extraction_concurrency_matches_serial(monkeypatch):
         "concurrent fan-out must materialize the same entity set"
 
 
+# --- issue 7 (thread-safety) red-green regression ---
+#
+# The existing concurrency test above passes db=None, so the per-item
+# record_audit_item write is skipped and the cross-thread path is never
+# exercised in CI.  The live keyva run crashes instead: with a real
+# main-thread SQLite connection (check_same_thread=True, the CLI's shape),
+# process_item runs on ThreadPoolExecutor workers and hands that connection
+# to record_audit_item -> sqlite3.ProgrammingError that escapes the per-item
+# except and kills the whole sweep.
+
+
+def test_extraction_concurrency_with_real_db_no_cross_thread_crash(
+        monkeypatch, tmp_path):
+    """issue 7: concurrency>1 + a REAL main-thread SQLite connection must not
+    raise ProgrammingError, and every item still gets exactly one audit row."""
+    import sqlite3
+    from digital_twins.state.db import state_db_path
+    from digital_twins.state.migrations import migrate
+
+    # The CLI's way: default check_same_thread=True, so the thread-identity
+    # guard is live (not masked by a thread-safe fixture).
+    path = state_db_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    migrate(conn)
+
+    def fake_llm(messages, cfg=None):
+        return json.dumps({
+            "entities": [{"name": "Zoe", "type": "person", "desc": ""}],
+            "relations": [],
+        })
+    monkeypatch.setattr(pipeline.entities, "_llm_request", fake_llm)
+
+    cfg = _extraction_cfg()
+    cfg["extraction"]["concurrency"] = 4
+    items = [_make_item(f"i{k}", f"text {k}") for k in range(6)]
+    item_hash = {f"i{k}": f"h{k}" for k in range(6)}
+    fake_driver = StubNeo4j()
+
+    # Must NOT raise (pre-fix: sqlite3.ProgrammingError from a worker thread,
+    # re-raised by pool.map).
+    pipeline._run_extraction(
+        cfg, fake_driver, items, item_hash, "r-iss7", "fs", db=conn)
+
+    # Post-fix: audit rows are written on the main thread, so a main-thread
+    # conn can read them back.  Every item got exactly one audit row.
+    total = conn.execute(
+        "SELECT COUNT(*) FROM audit_items WHERE run_id='r-iss7'").fetchone()[0]
+    ok = conn.execute(
+        "SELECT COUNT(*) FROM audit_items WHERE run_id='r-iss7' "
+        "AND status='ok'").fetchone()[0]
+    assert total == 6, f"expected 6 audit rows, got {total}"
+    assert ok == 6, f"all 6 items should be ok, got {ok}"
+    conn.close()
+
+
 class _OneShotResp:
     """urlopen stand-in: first call 503, second call 200 with a valid
     chat-completion body; counts calls."""
