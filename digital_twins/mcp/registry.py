@@ -1,10 +1,10 @@
 """MCP tool registry (feature 004, R2/R10, T006; 007 Phase 2, 007-R5;
 feature 016 adds ``kb_ingest_folder``).
 
-``build_tool_registry()`` returns the eleven MCP tools as a list of
+``build_tool_registry()`` returns the twelve MCP tools as a list of
 dicts, each with ``name``, ``description``, and ``inputSchema``.  The
 six scheduler tools mirror 003 ``contracts/scheduler.md`` field names
-exactly (R2); the five KB tools carry full ``inputSchema``s with
+exactly (R2); the six KB tools carry full ``inputSchema``s with
 real-behavior descriptions and error codes (007-R5a/R5b), replacing
 the 004 BR-10 minimal declarations.
 
@@ -12,8 +12,9 @@ The 6 scheduler tools:
     kb_schedule_list, kb_schedule_create, kb_schedule_update,
     kb_schedule_delete, kb_schedule_run, kb_run_history
 
-The 5 KB tools:
-    kb_search, kb_chat, kb_ingest, kb_health, kb_ingest_folder
+The 6 KB tools:
+    kb_search, kb_chat, kb_ingest, kb_health, kb_ingest_folder,
+    kb_extraction_heal (019b, issue 6)
 """
 from __future__ import annotations
 
@@ -368,8 +369,25 @@ def _kb_ingest_folder_schema() -> dict:
 # build_tool_registry
 # ---------------------------------------------------------------------------
 
+
+def _kb_extraction_heal_schema() -> dict:
+    """kb_extraction_heal inputSchema (019b, issue 6).
+
+    No arguments: the heal operates on the audit_items ledger
+    (latest-per-item failed rows) and the caller's resolved config.
+    ``agent_kind`` — the shared client-kind property, recorded on the
+    heal's audit rows.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "agent_kind": _agent_kind_prop(),
+        },
+        "required": [],
+    }
+
 def build_tool_registry() -> list[dict]:
-    """Return the eleven MCP tools as a list of dicts.
+    """Return the twelve MCP tools as a list of dicts.
 
     Each dict has:
     - ``name``: the tool name (stable, agent-facing).
@@ -377,9 +395,9 @@ def build_tool_registry() -> list[dict]:
     - ``inputSchema``: a JSON-Schema object describing the arguments.
 
     The six scheduler tools mirror 003 ``contracts/scheduler.md`` field
-    names exactly (R2).  The five KB tools carry full inputSchemas with
+    names exactly (R2).  The six KB tools carry full inputSchemas with
     real-behavior descriptions and error codes (007-R5a/R5b; 016 adds
-    kb_ingest_folder).
+    kb_ingest_folder; 019b adds kb_extraction_heal).
     """
     return [
         {
@@ -480,5 +498,20 @@ def build_tool_registry() -> list[dict]:
                 "`path_not_readable` (bad path), `run_failed` (pipeline "
                 "exception), `config_not_loaded` (config is None).",
             "inputSchema": _kb_ingest_folder_schema(),
+        },
+        {
+            "name": "kb_extraction_heal",
+            "description":
+                "Targeted heal of failed graph extractions (019b, issue "
+                "6): re-extracts only items whose latest `audit_items` "
+                "row is `failed` (no full re-walk), superseding and "
+                "materializing only on success. Sources locked by a "
+                "running pipeline are skipped. No arguments; gated on "
+                "the `trigger_run` capability. Errors: "
+                "`permission_denied` (reader role), `run_failed` "
+                "(pipeline/heal exception), `config_not_loaded` (config "
+                "is None). No-op when `extraction.enabled` is false or "
+                "no Neo4j driver is configured.",
+            "inputSchema": _kb_extraction_heal_schema(),
         },
     ]

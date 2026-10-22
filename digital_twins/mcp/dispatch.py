@@ -1451,7 +1451,87 @@ def _kb_health_body(ctx: MCPContext, args: dict) -> dict:
     }
 
 
+def _kb_extraction_heal_body(ctx: MCPContext, args: dict) -> dict:
+    """Targeted heal of failed graph extractions (019b, issue 6).
+
+    Re-extracts only the items whose latest ``audit_items`` row is
+    ``failed`` — no full re-walk (FR-3).  Steps mirror
+    ``_kb_ingest_body`` where the shapes match:
+
+    1. Fail-closed guard (``ctx.config is None`` -> ``config_not_loaded``).
+    2. Capability gate FIRST: ``require_capability(ctx.caller_role,
+       "trigger_run", ...)`` — the body's own gate (reader role ->
+       ``permission_denied``); no heal work on refusal.
+    3. Merged config + resolved Qdrant client + Neo4j driver (same lazy,
+       monkeypatchable helpers as ``kb_ingest``).  Neo4j absent ->
+       no-op result (heal is a graph-only operation).
+    4. ``pipeline.heal_extraction(merged_cfg, ctx.db, qdrant, neo4j,
+       run_id)`` under a fresh ``heal-<uuid>`` run id (FR-4: no new
+       knobs, no DDL — audit rows land in the existing ledger).
+    5. Errors -> ``run_failed``; success ->
+       ``{"ok": True, "healed", "failed", "skipped", "run_id"}``.
+    """
+    import uuid
+
+    from ..ingest import pipeline as _pipeline_mod
+
+    # 1. Fail-closed guard.
+    if ctx.config is None:
+        return _fail_closed()
+
+    # 2. Capability gate FIRST (the body's own gate; reader refusal ->
+    #    permission_denied, no heal work).
+    try:
+        require_capability(
+            ctx.caller_role, "trigger_run", "trigger a run")
+    except RoleDenied as exc:
+        return {
+            "ok": False,
+            "error": {"code": "permission_denied", "message": str(exc)},
+        }
+
+    # 3. Merged config + lazy resolvers (same helpers as kb_ingest).
+    merged_cfg = _deep_merge(
+        _defaults_as_nested(_pipeline_mod_run_defaults()),
+        ctx.config or {},
+    )
+    qdrant_factory = _resolve_qdrant_factory(merged_cfg)
+    neo4j_driver = _resolve_neo4j_driver(merged_cfg)
+    if neo4j_driver is None:
+        # Heal is a graph-only operation: with no Neo4j driver there
+        # is nothing to converge.  No-op result, not an error.
+        return {
+            "ok": True,
+            "healed": 0,
+            "failed": 0,
+            "skipped": [],
+            "run_id": None,
+        }
+
+    # 4. Run the targeted heal under a fresh run id.
+    run_id = "heal-" + str(uuid.uuid4())
+    try:
+        qdrant = qdrant_factory()
+        result = _pipeline_mod.heal_extraction(
+            merged_cfg, ctx.db, qdrant, neo4j_driver, run_id)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": {"code": "run_failed", "message": str(exc)},
+        }
+
+    # 5. Success — the FR-3 result shape.
+    return {
+        "ok": True,
+        "healed": result["healed"],
+        "failed": result["failed"],
+        "skipped": result["skipped"],
+        "run_id": run_id,
+    }
+
+
 TOOL_BODIES: dict[str, Callable[..., dict]] = {
+
     "kb_schedule_list": _kb_schedule_list_body,
     "kb_schedule_create": _kb_schedule_create_body,
     "kb_schedule_update": _kb_schedule_update_body,
@@ -1465,6 +1545,7 @@ TOOL_BODIES: dict[str, Callable[..., dict]] = {
     "kb_health": _kb_health_body,
     # 016 KB tool bodies
     "kb_ingest_folder": _kb_ingest_folder_body,
+    "kb_extraction_heal": _kb_extraction_heal_body,
 }
 
 
