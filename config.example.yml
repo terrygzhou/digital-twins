@@ -38,6 +38,15 @@ extraction:
   max_text_chars: 12000  # env: KB_EXTRACTION__MAX_TEXT_CHARS
   prompt_version: ""     # env: KB_EXTRACTION__PROMPT_VERSION (empty = use built-in)
   domain_schema: false   # env: KB_EXTRACTION__DOMAIN_SCHEMA (true = domain extraction profile, Tier B)
+  concurrency: 1         # env: KB_EXTRACTION__CONCURRENCY (max in-flight LLM extraction calls per source batch; 1 = serial)
+
+# --- Pipeline (ingest commit granularity) ---
+# Each sub-batch commits its own Qdrant upsert + graph upsert + highwater
+# checkpoint, so a crash loses at most one sub-batch and the next run
+# resumes from the last committed sub-batch. 0 = legacy single-batch
+# behavior (no sub-batching).
+pipeline:
+  sub_batch_size: 1000   # env: KB_PIPELINE__SUB_BATCH_SIZE
 
 # --- Embedding ---
 embedding:

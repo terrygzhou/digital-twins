@@ -21,6 +21,7 @@ GROUP_SOURCES = "Sources"
 GROUP_MCP = "MCP"
 GROUP_WEB = "Web"
 GROUP_EXTRACTION = "Extraction"
+GROUP_PIPELINE = "Pipeline"
 
 # --- registry ------------------------------------------------------------------
 #
@@ -211,6 +212,26 @@ KNOBS: dict[str, dict] = {
         "default": False,
         "env": "KB_EXTRACTION__DOMAIN_SCHEMA",
         "group": GROUP_EXTRACTION,
+    },
+    "extraction.concurrency": {
+        "type": "int",
+        "default": 1,
+        "env": "KB_EXTRACTION__CONCURRENCY",
+        "group": GROUP_EXTRACTION,
+        "doc": "Max in-flight LLM extraction calls per source batch "
+               "(ThreadPool fan-out around the per-item extract step). "
+               "1 = serial (legacy behavior).",
+    },
+
+    # --- Pipeline (ingest commit granularity) ---
+    "pipeline.sub_batch_size": {
+        "type": "int",
+        "default": 1000,
+        "env": "KB_PIPELINE__SUB_BATCH_SIZE",
+        "group": GROUP_PIPELINE,
+        "doc": "Items per pipeline sub-batch; each sub-batch commits its own "
+               "Qdrant upsert + graph upsert + highwater checkpoint. 0 = "
+               "legacy single-batch behavior.",
     },
 
     # --- Sources (per built-in source: enabled / max_items / timeout_s) ---

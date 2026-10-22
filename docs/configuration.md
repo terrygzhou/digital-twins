@@ -206,6 +206,12 @@ points are orphans under the new content-independent point-ID scheme.
 | chunking.max_chars | int | 800 | KB_CHUNKING__MAX_CHARS | Maximum characters per chunk. |
 | chunking.overlap | int | 100 | KB_CHUNKING__OVERLAP | Character overlap between adjacent chunks; must be less than `max_chars`. |
 
+## Pipeline
+
+| knob | type | default | env var | notes |
+|---|---|---|---|---|
+| pipeline.sub_batch_size | int | 1000 | KB_PIPELINE__SUB_BATCH_SIZE | Items per pipeline sub-batch. Each sub-batch commits its own Qdrant upsert + graph upsert + highwater checkpoint, so a crash loses at most one sub-batch and the next run resumes from the last committed sub-batch. `0` = legacy single-batch behavior (no sub-batching). |
+
 ## Scheduler
 
 | knob | type | default | env var | notes |
@@ -235,6 +241,7 @@ Default: disabled (no LLM calls, no entity writes).
 | extraction.max_text_chars | int | 12000 | KB_EXTRACTION__MAX_TEXT_CHARS | Truncation cap (characters) for the text handed to the LLM. |
 | extraction.prompt_version | str |  | KB_EXTRACTION__PROMPT_VERSION | Prompt version override; empty uses the built-in prompt. |
 | extraction.domain_schema | bool | false | KB_EXTRACTION__DOMAIN_SCHEMA | Select the domain extraction profile (Tier B, feature 020): the domain prompt, `DOMAIN_ENTITY_TYPES` and the `DOMAIN_PREDICATES` allowlist apply, and extractions are stamped `DOMAIN_PROMPT_VERSION`. Generic profile (default) is unchanged. |
+| extraction.concurrency | int | 1 | KB_EXTRACTION__CONCURRENCY | Max in-flight LLM extraction calls per source batch (ThreadPool fan-out around the per-item `supersede → extract → materialize` block). `1` = serial (legacy behavior); the pipeline is sub-batched independently via `pipeline.sub_batch_size`. |
 
 ## Sources
 

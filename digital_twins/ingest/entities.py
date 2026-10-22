@@ -9,8 +9,9 @@ Mirrors personal-kb's ``kb/core/graph.py`` contract:
 - ``extract()`` — LLM call → ``{"entities", "relations", "prompt_version"}``.
   With ``cfg={"domain_schema": True}`` the domain prompt / types /
   predicate allowlist apply and ``DOMAIN_PROMPT_VERSION`` is stamped.
-- ``supersede()`` — stamps ``valid_to`` on live MENTIONED edges before
-  re-extraction (BR-6.4 parity).
+- ``supersede()`` — stamps ``valid_to`` on live MENTIONED edges after a
+  successful re-extract, before materialization (BR-6.4 parity; 019b:
+  supersede-after-extract, idempotent-by-default on failure).
 - ``materialize()`` — idempotent MERGE of Entity nodes + MENTIONED edges
   (NFR-1: re-running the same extraction touches nothing new).
 - ``drop()`` — DETACH-DELETEs a SourceItem and prunes orphaned entities
@@ -201,10 +202,27 @@ def _llm_request(messages: list[dict], cfg: dict | None = None) -> str:
         },
         method="POST",
     )
+    # 5xx retry-once (house style, mirrors embedding.py / health.py): a
+    # transient server error is retried exactly once; timeouts and
+    # non-5xx errors are not retried (deterministic failure, surfaced as
+    # a per-item extraction failure).
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            data = json.loads(r.read())
-    except Exception as e:  # noqa: BLE001 — surfaced as a per-item failure
+        import urllib.error as _urlerror
+        data = None
+        for _attempt in (1, 2):
+            try:
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    data = json.loads(r.read())
+                break
+            except _urlerror.HTTPError as he:
+                if 500 <= he.code < 600 and _attempt == 1:
+                    # 5xx on attempt 1 -> one retry; attempt-2 5xx or any
+                    # non-5xx falls through to the raise below.
+                    continue
+                raise
+        if data is None:
+            raise _urlerror.URLError("no response after 5xx retry")
+    except Exception as e:  # noqa: BLE001 - surfaced as a per-item failure
         raise ExtractionError(f"LLM call failed: {e}") from e
     try:
         content = data["choices"][0]["message"]["content"]

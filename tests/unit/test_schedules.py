@@ -68,7 +68,7 @@ def test_migration_v2_applies_cleanly(tmp_path):
     conn.execute("PRAGMA user_version=2")
     conn.commit()
     assert migrations.user_version(conn) == 2
-    assert migrations.SCHEMA_VERSION == 3
+    assert migrations.SCHEMA_VERSION == 4
 
     cols = _table_info(conn)
     assert cols, "schedules table must exist after v2 migration"

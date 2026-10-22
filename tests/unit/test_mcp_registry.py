@@ -42,7 +42,12 @@ INGEST_FOLDER_TOOLS: set[str] = {
     "kb_ingest_folder",
 }
 
-ALL_TOOLS: set[str] = REAL_TOOLS | STUB_TOOLS | INGEST_FOLDER_TOOLS
+EXTRACT_HEAL_TOOLS: set[str] = {
+    "kb_extraction_heal",  # 019b, issue 6 (FR-3)
+}
+
+ALL_TOOLS: set[str] = (REAL_TOOLS | STUB_TOOLS
+                       | INGEST_FOLDER_TOOLS | EXTRACT_HEAL_TOOLS)
 
 # Expected inputSchema field names per tool (the agent-facing contract, R2).
 # agent_kind is optional on every tool (R6).
@@ -74,6 +79,8 @@ EXPECTED_FIELDS: dict[str, set[str]] = {
     "kb_chat": {"agent_kind"},
     "kb_ingest": {"agent_kind"},
     "kb_health": {"agent_kind"},
+    # 019b, issue 6: no-arg heal (agent_kind recorded on heal audit rows)
+    "kb_extraction_heal": {"agent_kind"},
 }
 
 
@@ -96,11 +103,11 @@ def _by_name(tools: list[dict]) -> dict[str, dict]:
 # T005: exactly 10 tools, 6 real + 4 stubs
 # ---------------------------------------------------------------------------
 
-def test_returns_exactly_11_tools():
+def test_returns_exactly_12_tools():
     tools = _registry()
-    assert len(tools) == 11, (
-        f"build_tool_registry returned {len(tools)} tools, expected 11 "
-        "(6 real + 4 stubs + 1 ingest_folder)"
+    assert len(tools) == 12, (
+        f"build_tool_registry returned {len(tools)} tools, expected 12 "
+        "(6 real + 4 stubs + 1 ingest_folder + 1 extraction_heal, 019b)"
     )
 
 
