@@ -100,6 +100,32 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 AUDIT_STATUSES = ("ok", "partial", "failed")
 
+DDL_V4 = """
+-- audit_items: per-item extraction/write failure ledger (issue 4-A).
+-- One row per (run_id, item_key) failure; supports targeted re-ingest
+-- and coverage diagnostics.  Additive: new table only.
+CREATE TABLE IF NOT EXISTS audit_items (
+    run_id    TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    item_key  TEXT NOT NULL,
+    status    TEXT NOT NULL CHECK (status IN ('ok', 'failed')),
+    error     TEXT,
+    ts        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_items_run
+    ON audit_items (run_id, item_key);
+
+-- ingest_locks: single-writer advisory lock (issue 5-A).
+-- One row per source; a running pipeline holds a lease until exit.
+-- Re-entry by the same run_id is safe (idempotent upsert).
+CREATE TABLE IF NOT EXISTS ingest_locks (
+    source     TEXT PRIMARY KEY,
+    run_id     TEXT NOT NULL,
+    acquired_at TEXT NOT NULL
+);
+"""
+
+
 
 def apply_v1(conn) -> None:
     conn.executescript(DDL_V1)
@@ -130,6 +156,27 @@ def apply_v3(conn) -> None:
             conn.execute(stmt)
         else:
             conn.execute(stmt)
+
+
+def apply_v4(conn) -> None:
+    """Apply the v4 traceability schema (additive: 2 new tables).
+
+    - audit_items (issue 4-A): per-item failure ledger
+    - ingest_locks (issue 5-A): single-writer advisory lock
+
+    Both are new tables (IF NOT EXISTS), safe to re-run.  Also closes
+    any orphaned partial audit_runs rows (the two stale in-flight
+    rows observed on OCI) by marking them failed with a remediation
+    note — they represent runs that never completed and must not block
+    the next run.
+    """
+    conn.executescript(DDL_V4)
+    # Close stale partial audit_runs rows (started but never finished).
+    conn.execute(
+        "UPDATE audit_runs SET status='failed', "
+        "completed_at=? WHERE status='partial'",
+        (_now(),),
+    )
 
 
 def _statements(sql: str):
@@ -198,6 +245,62 @@ def finish_audit_run(conn, run_id: str, status: str, per_source_counts=None) -> 
         "UPDATE audit_runs SET status=?, completed_at=?, per_source_counts=? "
         "WHERE run_id=?",
         (status, _now(), json.dumps(per_source_counts or {}), run_id),
+    )
+    conn.commit()
+
+
+def record_audit_item(conn, run_id: str, source: str, item_key: str,
+                      status: str, error: str | None = None) -> None:
+    """Write one row to audit_items (issue 4-A failure ledger).
+
+    Called from the pipeline when an item's extraction or write fails.
+    Status is 'ok' or 'failed'.  The row is queryable for
+    targeted re-ingest and coverage diagnostics.
+    """
+    conn.execute(
+        "INSERT INTO audit_items (run_id, source, item_key, status, error, ts) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (run_id, source, item_key, status, error, _now()),
+    )
+    conn.commit()
+
+
+def acquire_ingest_lock(conn, source: str, run_id: str) -> bool:
+    """Attempt to acquire the single-writer ingest lock for source.
+
+    Returns True if the lock was acquired, False if another run already
+    holds it.  The lock is released implicitly when the run finishes
+    (or by explicit call to :func:).
+
+    This is a simple DB-based advisory lock: the ingest_locks table
+    has one row per source.  A concurrent run whose INSERT fails
+    (UNIQUE constraint) or whose SELECT shows a different run_id
+    is rejected.
+    """
+    try:
+        conn.execute(
+            "INSERT INTO ingest_locks (source, run_id, acquired_at) "
+            "VALUES (?, ?, ?)",
+            (source, run_id, _now()),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        # Row exists: check if it's our own run (re-entry) or another's.
+        row = conn.execute(
+            "SELECT run_id FROM ingest_locks WHERE source=?", (source,)
+        ).fetchone()
+        if row and row[0] == run_id:
+            # Our own re-entry (e.g. sub-batch loop re-locks): OK.
+            return True
+        return False
+
+
+def release_ingest_lock(conn, source: str, run_id: str) -> None:
+    """Release the ingest lock for source (only if we hold it)."""
+    conn.execute(
+        "DELETE FROM ingest_locks WHERE source=? AND run_id=?",
+        (source, run_id),
     )
     conn.commit()
 

@@ -25,7 +25,7 @@ def test_migrate_creates_schema(tmp_path):
     v = migrations.migrate(c)
     tables = {r[0] for r in c.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
-    assert v == migrations.SCHEMA_VERSION == 3
+    assert v == migrations.SCHEMA_VERSION == 4
     assert {"accounts", "highwater", "audit_runs", "schedules",
             "personal_tokens", "user_config", "sessions"} <= tables
     c.close()
@@ -35,7 +35,7 @@ def test_migrate_is_idempotent(tmp_path):
     c = connect(tmp_path)
     migrations.migrate(c)
     migrations.migrate(c)
-    assert migrations.user_version(c) == 3
+    assert migrations.user_version(c) == 4
     c.close()
 
 
@@ -99,7 +99,7 @@ def test_pre_command_migrates_existing_state_dir(tmp_path, monkeypatch):
     pre_command()
     assert state_db_path(state).exists()
     c = sqlite3.connect(str(state_db_path(state)))
-    assert c.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert c.execute("PRAGMA user_version").fetchone()[0] == 4
     c.close()
 
 
@@ -119,7 +119,7 @@ def test_cli_invocation_runs_hook(tmp_path, monkeypatch):
     # when a callback fired — assert the migration artifact when it did:
     if state_db_path(state).exists():
         c = sqlite3.connect(str(state_db_path(state)))
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 4
         c.close()
     else:
         # bare help short-circuits before the group callback: verify via a

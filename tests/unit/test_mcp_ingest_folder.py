@@ -243,8 +243,9 @@ def test_run_failed(tmp_path, monkeypatch):
 def test_registry_exposes_eleventh_tool():
     from digital_twins.mcp.registry import build_tool_registry
     tools = {t["name"]: t for t in build_tool_registry()}
-    assert len(tools) == 11
+    assert len(tools) == 12
     assert "kb_ingest_folder" in tools
+    assert "kb_extraction_heal" in tools  # 019b, issue 6
     schema = tools["kb_ingest_folder"]["inputSchema"]
     assert schema["type"] == "object"
     props = schema["properties"]

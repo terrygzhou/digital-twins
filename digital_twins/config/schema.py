@@ -32,6 +32,9 @@ DEFAULTS: dict = {
     "extraction.max_text_chars": 12000,
     "extraction.prompt_version": "",
     "extraction.domain_schema": False,
+    "extraction.concurrency": 1,
+    # pipeline (019 — ingest commit granularity)
+    "pipeline.sub_batch_size": 1000,
     # embedding — model version pinned by the package
     "embedding.model": "BAAI/bge-small-en-v1.5",
     "embedding.device": "auto",
@@ -59,6 +62,7 @@ _ALLOW_EMPTY: frozenset = frozenset({
 _INT_KNOBS: frozenset = frozenset({
     "mcp.port", "web.port",
     "scheduler.run_hour", "scheduler.run_minute", "scheduler.run_minute_jitter_s",
+    "extraction.concurrency", "pipeline.sub_batch_size",
 })
 
 EMBEDDING_DEVICES: tuple = ("auto", "cpu", "cuda")
@@ -264,7 +268,7 @@ def validate(cfg: dict) -> dict:
         raise SchemaError("config root must be a mapping")
     known_sections = {
         "state_dir", "config_dir", "qdrant", "neo4j", "llm",
-        "extraction",
+        "extraction", "pipeline",
         "embedding", "chunking", "scheduler", "sources",
         "mcp", "web",
     }
@@ -285,8 +289,8 @@ def validate(cfg: dict) -> dict:
                 )
         elif key in ("state_dir", "config_dir"):
             out[key] = coerce(key, value)
-        elif key in ("qdrant", "neo4j", "llm", "extraction", "embedding",
-                     "chunking", "scheduler", "mcp", "web"):
+        elif key in ("qdrant", "neo4j", "llm", "extraction", "pipeline",
+                     "embedding", "chunking", "scheduler", "mcp", "web"):
             if not isinstance(value, dict):
                 raise SchemaError(f"{key}: must be a mapping")
             # For sections not in the legacy DEFAULTS registry (mcp, web),
@@ -320,8 +324,8 @@ def validate(cfg: dict) -> dict:
                             section[sub_key] = entry["default"]
             out[key] = section
     # every section with a default is always present, even when omitted
-    for section_key in ("qdrant", "neo4j", "llm", "extraction", "embedding",
-                        "chunking", "scheduler", "mcp", "web"):
+    for section_key in ("qdrant", "neo4j", "llm", "extraction", "pipeline",
+                        "embedding", "chunking", "scheduler", "mcp", "web"):
         out.setdefault(section_key, {})
         for sub, default in DEFAULTS.items():
             if sub.startswith(section_key + "."):

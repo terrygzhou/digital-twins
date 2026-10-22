@@ -3,6 +3,22 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [0.15.0] - 2026-10-22
+
+### Added
+- **Supersede-before-extract edge loss (issue 6, 019b):** graph extraction now supersedes an item's prior `MENTIONED`/`REL` edges only *after* a successful LLM re-extract, before materialization — a failed extract mutates no graph state, so re-ingest stays idempotent-on-failure and prior live edges survive. Per-item `ok` audit rows are recorded on success too.
+- **Targeted heal tool (019b, FR-3):** new `kb_extraction_heal` MCP tool re-extracts only items whose latest `audit_items` row is `failed` (no full re-walk), reading content from the Qdrant chunk-0 payload; sources locked by a running pipeline are skipped; gated on the `trigger_run` capability; no new knobs, no DDL.
+- **Ingest reliability: resumable sub-batched pipeline + concurrent LLM extraction** (feature 019): `pipeline.sub_batch_size` knob (int, default 1000; 0 = legacy single-batch) partitions each source's item list so that Qdrant upsert, graph upsert, extraction fan-out, and highwater checkpoint commit per sub-batch instead of once at source-end. A crash loses at most one sub-batch; the next run resumes from the last committed checkpoint. `extraction.concurrency` knob (int, default 1) bounds in-flight LLM extraction calls per source batch via ThreadPoolExecutor; 1 preserves serial behavior. The LLM transport in `entities.extract` now retries once on HTTP 5xx (house style, mirrors `llm.py` / `embedding.py`); timeouts are not retried.
+- **Ingest traceability + single-writer lock** (feature 020): `audit_items` table (per-item failure ledger), `ingest_locks` advisory lock (single-writer discipline), `scripts/kb_coverage.py` (per-folder on-disk vs in-Qdrant diff), `scripts/kb_status.py` (one-line operational status). `apply_v4` migration creates both tables and closes stale partial audit_runs rows. Schema version 3 to 4.
+
+### Fixed
+- `highwater` for `source=fs` stayed at 0 rows on the live OCI box because the cursor was written only at source-end; a 15,000-item batch that never completed meant the cursor never advanced and every run re-walked the entire tree. Per-sub-batch checkpointing (019) fixes the observable symptom.
+
+### Notes
+- OCI validation (terry-pci-ubuntu): `highwater.fs` went from 0 to 73 rows after one time-boxed run; Qdrant points increased by 300 across sub-batches; HNSW index fully built (14,405 indexed vectors); 2 stale partial rows closed by v4 migration. In-process BGE-small embedder OOMs at `max_items=15000` on a 16 GB box; production runs need a remote embedding endpoint.
+- OCI Option-1 in-process bge-small validation (terry-pci-ubuntu, 2026-10-22): CPU torch 2.14.1+cpu + sentence-transformers==3.4.1 (ST 6.x breaks model.encode(list) at the pipeline call site - must pin 3.x). BAAI/bge-small-en-v1.5 384-dim in HF cache. Time-boxed pipeline run (max_items=2000, sub_batch_size=1000, extraction.concurrency=4, trigger=oci-validation): Qdrant personal_kb 15,512 -> 20,597 points; HNSW fully indexed (20,993); highwater.fs advanced to key 2026-10-20T00:22:24; auth points 0 -> 100+ across 89 unique source files; kb_extraction_heal post-pipeline: healed=0 failed=0 (all previously-failed items cleared by the pipeline). LLM 401 cleared via llm.api_key in box kb.local.yml. NFR-1 dedup confirmed: no duplicate points per source_url.
+- **Embedder pin gotcha**: sentence-transformers>=3.0,<4 is the supported range for the digital-twins[local-embedding] extra. ST 6.x changed encode() internals to expect dict inputs, breaking the packages model.encode(list(texts)) call site. Upgrade requires changing the pipeline call site or pinning ST 3.x.
+
 ## [0.14.0] - 2026-10-23
 
 ### Added
