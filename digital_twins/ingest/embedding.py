@@ -129,7 +129,20 @@ def build_endpoint_embedder(cfg):
     # vectors of another model's shape still fails the Qdrant upsert
     # backstop).
     expected_dim = model_dimension(model, optional=True)
-    url = endpoint + "/v1/embeddings"
+    # The endpoint value is the OpenAI-compatible *base* URL. The OpenAI
+    # embeddings route lives at {base}/embeddings when the base already
+    # includes the /v1 namespace prefix (e.g. Ollama's http://host:11434/v1,
+    # or SGLang/LiteLLM .../v1), and at {base}/v1/embeddings when the base
+    # is the bare scheme+host+port (the historical form the tests pin).
+    # Accept both so a single embedding.endpoint knob works for the health
+    # preflight probe ({endpoint}/models) AND this embedder: a /v1 base
+    # gives /v1/models + /v1/embeddings; a bare base gives /models +
+    # /v1/embeddings. This fixes the probe-vs-embedder URL conflict that
+    # made Ollama (which serves only /v1/*) 404 one or the other.
+    if endpoint.endswith("/v1"):
+        url = endpoint + "/embeddings"
+    else:
+        url = endpoint + "/v1/embeddings"
 
     # 300s (was 30): a large batch of CPU-embedded chunks (~11 vec/s on
     # BGE-small) exceeds 30s well before 300 chunks; the full-corpus and

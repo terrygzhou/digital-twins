@@ -461,9 +461,12 @@ def test_endpoint_embedder_posts_to_v1_embeddings(monkeypatch):
     )
     assert captured, "the endpoint embedder must make an HTTP request"
     req = captured[0]
-    assert req.full_url == EMB_ENDPOINT + "/v1/embeddings", (
-        f"endpoint embedder must POST to {{endpoint}}/v1/embeddings, got "
-        f"{req.full_url!r}"
+    # EMB_ENDPOINT already carries the /v1 prefix, so the embedder appends
+    # only /embeddings (the /v1-base → /embeddings resolution; a bare base
+    # would append /v1/embeddings).
+    assert req.full_url == EMB_ENDPOINT + "/embeddings", (
+        f"endpoint embedder with a /v1 base must POST to {{endpoint}}/embeddings, "
+        f"got {req.full_url!r}"
     )
     assert req.get_header("Authorization") == f"Bearer {EMB_KEY}", (
         f"embedding.api_key must reach the endpoint embedder as a Bearer "
