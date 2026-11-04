@@ -282,10 +282,10 @@ Stdio variant (agent spawns the server as a child process):
 }
 ```
 
-All 11 tools (6 scheduler: `kb_schedule_list/create/update/delete/run`
-+ `kb_run_history`; 5 KB: `kb_search`, `kb_chat`, `kb_ingest`,
-`kb_ingest_folder`, `kb_health`) are available; role-gating and
-owner-scoping apply per call.
+All 12 tools (6 scheduler: `kb_schedule_list/create/update/delete/run`
++ `kb_run_history`; 6 KB: `kb_search`, `kb_chat`, `kb_ingest`,
+`kb_ingest_folder`, `kb_health`, `kb_extraction_heal`) are available;
+role-gating and owner-scoping apply per call.
 
 **Agent-to-agent configuration:** an operator (human or agent) can mint
 a personal token and write the MCP server JSON block for another agent
@@ -361,7 +361,7 @@ pip install .
 
 ```bash
 digital-twins --version
-# digital-twins, version 0.13.0
+# digital-twins, version 0.15.0
 ```
 
 ### Start the backend services (pick one)
