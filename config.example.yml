@@ -117,7 +117,17 @@ sources:
     enabled: false       # env: KB_SOURCES__FS__ENABLED
     max_items: 200       # env: KB_SOURCES__FS__MAX_ITEMS
     timeout_s: 1500      # env: KB_SOURCES__FS__TIMEOUT_S
-    # extra: { dir: "" }            # directory of files (demo/test source)
+    extra:
+      dir: ""            # env: KB_SOURCES__FS__EXTRA__DIR — root dir to walk
+      # Ingestion-scope filter: keep document/text types at any size; keep any
+      # other file only below max_bytes; drop only unsupported AND >= cap.
+      filter_enabled: true   # env: KB_SOURCES__FS__EXTRA__FILTER_ENABLED
+      max_bytes: 10000000    # env: KB_SOURCES__FS__EXTRA__MAX_BYTES
+      # supported_exts: [.pdf, .txt, .md]  # default set in sources/fs.py
+      # Binary-guard: fs reads are decoded utf-8 with errors="replace";
+      # binary payloads (photos, .mov, .exe) still reach the embedder when
+      # small enough. Keep filter_enabled on; do NOT widen supported_exts
+      # to cover binary types. See sources/fs.py module docstring.
 
   # Custom (user-defined) sources — no package update needed.
   # Example: a user-defined source named "mytool". Add such a block to your
