@@ -1,0 +1,48 @@
+# kb.ontology.example.yml — 021 building-block ontology catalog
+#
+# Copy this file to your user config directory (e.g.
+# ~/.config/digital-twins/ontology.yml) and set:
+#   extraction.ontology: /path/to/ontology.yml
+#
+# The catalog is ADDITIVE over the 020 floor (product, customer,
+# competitor, standard, cert + the 6 020 predicates). You can add new
+# entity_types and relations; you cannot remove the 020 floor from the
+# *effective* catalog (removing an entry from this file only stops NEW
+# extractions from emitting it — already-written nodes are governed by
+# the existing supersede()/drop() time-box).
+#
+# Bump `catalog_version` on every change so the new extraction stamps a
+# new prompt_version and old edges survive (020's coexistence guarantee,
+# now applied inside B itself).
+
+catalog_version: "2026-08-24.1"
+
+entity_types:
+  - id: product
+    desc: "A named offering or system."
+  - id: building_block
+    desc: "A constituent component of a product."
+  - id: capability
+    desc: "A thing a product or customer can do."
+  - id: value_stream
+    desc: "An ordered value-producing process."
+  - id: motivation
+    desc: "A 'why' — what drives a value stream, capability, or product."
+
+relations:
+  - predicate: composed_of
+    from: [product, building_block]
+    to:   [building_block]
+    desc: "a product or block is built from smaller blocks."
+  - predicate: enables
+    from: [capability, building_block]
+    to:   [capability, value_stream]
+    desc: "a capability or block makes another possible."
+  - predicate: flows_through
+    from: [value_stream]
+    to:   [value_stream, building_block, capability]
+    desc: "value moves along the stream through blocks/capabilities."
+  - predicate: motivated_by
+    from: [value_stream, capability, product]
+    to:   [motivation]
+    desc: "the 'why' layer — what this block is for."
