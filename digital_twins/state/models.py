@@ -177,6 +177,183 @@ def apply_v4(conn) -> None:
         "completed_at=? WHERE status='partial'",
         (_now(),),
     )
+DDL_V6 = """
+-- 025 multi-tenant (apply_v6, user_version 4 -> 6).  Purely additive:
+-- the two in-place table swaps (highwater, ingest_locks) copy every
+-- legacy row into the tenant-partitioned primary key with
+-- tenant_id = 1 (the install tenant).  No legacy data is dropped.
+
+-- 1. tenants (T1 hard boundary: one Qdrant collection + one Neo4j DB
+--    per tenant; slug is the deterministic naming key).
+CREATE TABLE IF NOT EXISTS tenants (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug             TEXT NOT NULL UNIQUE
+                     CHECK (slug GLOB '[a-z0-9-]*'),
+    name             TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'active'
+                     CHECK (status IN ('active', 'suspended', 'deleted')),
+    qdrant_collection TEXT NOT NULL,     -- "kb-" || slug, disjoint
+                                          -- from reserved personal_kb / mem0
+    neo4j_database   TEXT NOT NULL,      -- = slug; driver must pin ?db=
+    created_at       TEXT NOT NULL,
+    deleted_at       TEXT
+);
+
+-- 2. accounts gains the tenant (T3: legacy rows carry the install
+--    tenant; install-level admin crosses tenants, tenant admins do not).
+ALTER TABLE accounts ADD COLUMN tenant_id INTEGER NOT NULL DEFAULT 1;
+
+-- 3. audit runs/items gain the tenant (additive; legacy rows = install).
+ALTER TABLE audit_runs ADD COLUMN tenant_id INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE audit_items ADD COLUMN tenant_id INTEGER NOT NULL DEFAULT 1;
+
+-- 4. tenant_service_tokens (C-1 per-tenant analogue of the shared
+--    system token: hash-only, no raw token at rest, revocable).
+CREATE TABLE IF NOT EXISTS tenant_service_tokens (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id   INTEGER NOT NULL,
+    token_hash  TEXT NOT NULL UNIQUE,     -- pbkdf2$salt_hex$hash_hex (C-1)
+    created_at  TEXT NOT NULL,
+    revoked     INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_service_tokens_tenant
+    ON tenant_service_tokens (tenant_id);
+"""
+
+_INSTALL_TENANT = {
+    "slug": "install",
+    "name": "Install tenant",
+    "status": "active",
+    # Empty strings, not 'kb-install': the install tenant stays on the
+    # legacy shared collection + default DB until the T2 backfill
+    # retires them (task-11). The provision CLI rejects a create with
+    # empty store names; only the seeded row carries them.
+    "qdrant_collection": "",
+    "neo4j_database": "",
+    "created_at": None,  # filled with _now() at insert time
+}
+
+
+def apply_v6(conn) -> None:
+    """Apply the v6 multi-tenant schema (025).
+
+    Steps, all inside the migration transaction `migrate()` opens:
+
+    1. DDL_V6 (tenants table, tenant_id on accounts/audit_runs/
+       audit_items, tenant_service_tokens) statement-by-statement,
+       with the v3-style ALTER guard so a partial step re-runs clean.
+    2. Seed the install tenant (id 1, slug "install", active, empty
+       qdrant_collection/neo4j_database: the install tenant uses the
+       legacy shared collection + default DB until the T2 backfill
+       retires them, task-11).
+    3. In-place table swap of highwater:
+       PK (source, item_key) -> (tenant_id, source, item_key).
+       Legacy rows copied with tenant_id = 1.
+    4. In-place table swap of ingest_locks:
+       PK source -> (tenant_id, source).  Legacy rows copied with
+       tenant_id = 1.
+
+    Idempotent: guarded ALTERs + CREATE TABLE IF NOT EXISTS; the swap
+    helpers are no-ops when the new primary key already exists.
+    """
+    for stmt in _statements(DDL_V6):
+        upper = stmt.lstrip().upper()
+        if upper.startswith("ALTER TABLE"):
+            target = stmt.split()[2]  # ALTER TABLE <table> ...
+            _add_column_if_missing(conn, target, "tenant_id")
+        else:
+            conn.execute(stmt)
+    conn.execute(
+        "INSERT INTO tenants (id, slug, name, status, qdrant_collection,"
+        " neo4j_database, created_at) VALUES (1, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (id) DO NOTHING",
+        (
+            _INSTALL_TENANT["slug"],
+            _INSTALL_TENANT["name"],
+            _INSTALL_TENANT["status"],
+            _INSTALL_TENANT["qdrant_collection"],
+            _INSTALL_TENANT["neo4j_database"],
+            _now(),
+        ),
+    )
+    # In-place table swaps (no-op when already at the new PK).
+    _table_swap(conn, "highwater",
+                new_pk=("tenant_id", "source", "item_key"))
+    _table_swap(conn, "ingest_locks",
+                new_pk=("tenant_id", "source"))
+
+
+def _add_column_if_missing(conn, table: str, column: str) -> None:
+    """ALTER TABLE ... ADD COLUMN, guarded (SQLite has no IF NOT EXISTS)."""
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        conn.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} "
+            f"INTEGER NOT NULL DEFAULT 1"
+        )
+
+
+def _table_pk(conn, table: str):
+    """Return the primary-key column sequence of `table` (in order)."""
+    return [
+        row[1]
+        for row in conn.execute(f"PRAGMA table_info({table})")
+        if row[5]  # row[5] is the non-zero pk position (1-based)
+    ]
+
+
+def _swap_to(conn, table: str, new_pk) -> None:
+    """Copy `table` into a rebuilt copy with the new PK + tenant_id.
+
+    Creates `table__new` with `tenant_id INTEGER NOT NULL` placed as
+    the first PK column, copies every legacy row with `tenant_id = 1`,
+    drops the old table, and renames the new one into place.  Runs
+    inside the caller's transaction (migrate() commits at step end).
+    """
+    old_cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+    cols_to_copy = [c for c in old_cols if c != "tenant_id"]
+    new_cols = ["tenant_id INTEGER NOT NULL"] + [
+        _col_type(conn, table, c) for c in cols_to_copy
+    ]
+    conn.execute(
+        f"CREATE TABLE {table}__new (\n    "
+        + ",\n    ".join(new_cols)
+        + f",\n    PRIMARY KEY ({', '.join(new_pk)})\n)"
+    )
+    conn.execute(
+        f"INSERT INTO {table}__new ({', '.join(['tenant_id'] + cols_to_copy)}) "
+        f"SELECT 1, {', '.join(cols_to_copy)} FROM {table}"
+    )
+    conn.execute(f"DROP TABLE {table}")
+    conn.execute(f"ALTER TABLE {table}__new RENAME TO {table}")
+
+
+def _col_type(conn, table: str, column: str) -> str:
+    """Reconstruct a column declaration from PRAGMA table_info."""
+    for row in conn.execute(f"PRAGMA table_info({table})"):
+        if row[1] == column:
+            col_type = row[2] or "TEXT"
+            suffix = ""
+            if row[3]:  # notnull
+                suffix += " NOT NULL"
+            if row[4]:  # default value
+                suffix += f" DEFAULT {row[4]}"
+            return f"{column} {col_type}{suffix}"
+    raise ValueError(f"column {column!r} not in {table}")
+
+
+def _table_swap(conn, table: str, new_pk) -> None:
+    """Swap `table` to a tenant-partitioned primary key.
+
+    `new_pk` is the tuple of PK column names in order (first column
+    must be `tenant_id`).  No-op when the table already carries
+    tenant_id (i.e. the swap has already happened).
+    """
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if "tenant_id" in cols:
+        return
+    _swap_to(conn, table, new_pk)
 
 
 def _statements(sql: str):
@@ -203,23 +380,26 @@ def _now() -> str:
 
 # --- highwater (resumability, NFR-9) --------------------------------------
 
-def upsert_highwater(conn, source: str, item_key: str, last_key: str) -> None:
-    """Record the last committed cursor for (source, item_key)."""
+def upsert_highwater(conn, source: str, item_key: str, last_key: str,
+                     tenant_id: int = 1) -> None:
+    """Record the last committed cursor for (tenant_id, source, item_key)."""
     conn.execute(
-        "INSERT INTO highwater (source, item_key, last_key, updated_at) "
-        "VALUES (?, ?, ?, ?) "
-        "ON CONFLICT (source, item_key) DO UPDATE SET "
+        "INSERT INTO highwater (tenant_id, source, item_key, last_key, updated_at) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT (tenant_id, source, item_key) DO UPDATE SET "
         "last_key=excluded.last_key, updated_at=excluded.updated_at",
-        (source, item_key, last_key, _now()),
+        (tenant_id, source, item_key, last_key, _now()),
     )
     conn.commit()
 
 
-def get_highwater(conn, source: str, item_key: str):
-    """Last committed cursor for (source, item_key), or None."""
+def get_highwater(conn, source: str, item_key: str,
+                  tenant_id: int = 1):
+    """Last committed cursor for (tenant_id, source, item_key), or None."""
     row = conn.execute(
-        "SELECT last_key FROM highwater WHERE source=? AND item_key=?",
-        (source, item_key),
+        "SELECT last_key FROM highwater "
+        "WHERE tenant_id=? AND source=? AND item_key=?",
+        (tenant_id, source, item_key),
     ).fetchone()
     return row[0] if row else None
 
@@ -265,7 +445,8 @@ def record_audit_item(conn, run_id: str, source: str, item_key: str,
     conn.commit()
 
 
-def acquire_ingest_lock(conn, source: str, run_id: str) -> bool:
+def acquire_ingest_lock(conn, source: str, run_id: str,
+                       tenant_id: int = 1) -> bool:
     """Attempt to acquire the single-writer ingest lock for source.
 
     Returns True if the lock was acquired, False if another run already
@@ -273,22 +454,23 @@ def acquire_ingest_lock(conn, source: str, run_id: str) -> bool:
     (or by explicit call to :func:).
 
     This is a simple DB-based advisory lock: the ingest_locks table
-    has one row per source.  A concurrent run whose INSERT fails
-    (UNIQUE constraint) or whose SELECT shows a different run_id
-    is rejected.
+    has one row per (tenant_id, source).  A concurrent run whose
+    INSERT fails (UNIQUE constraint) or whose SELECT shows a
+    different run_id is rejected.
     """
     try:
         conn.execute(
-            "INSERT INTO ingest_locks (source, run_id, acquired_at) "
-            "VALUES (?, ?, ?)",
-            (source, run_id, _now()),
+            "INSERT INTO ingest_locks (tenant_id, source, run_id, acquired_at) "
+            "VALUES (?, ?, ?, ?)",
+            (tenant_id, source, run_id, _now()),
         )
         conn.commit()
         return True
     except Exception:
         # Row exists: check if it's our own run (re-entry) or another's.
         row = conn.execute(
-            "SELECT run_id FROM ingest_locks WHERE source=?", (source,)
+            "SELECT run_id FROM ingest_locks WHERE tenant_id=? AND source=?",
+            (tenant_id, source),
         ).fetchone()
         if row and row[0] == run_id:
             # Our own re-entry (e.g. sub-batch loop re-locks): OK.
@@ -296,11 +478,12 @@ def acquire_ingest_lock(conn, source: str, run_id: str) -> bool:
         return False
 
 
-def release_ingest_lock(conn, source: str, run_id: str) -> None:
+def release_ingest_lock(conn, source: str, run_id: str,
+                       tenant_id: int = 1) -> None:
     """Release the ingest lock for source (only if we hold it)."""
     conn.execute(
-        "DELETE FROM ingest_locks WHERE source=? AND run_id=?",
-        (source, run_id),
+        "DELETE FROM ingest_locks WHERE tenant_id=? AND source=? AND run_id=?",
+        (tenant_id, source, run_id),
     )
     conn.commit()
 

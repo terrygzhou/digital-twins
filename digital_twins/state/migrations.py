@@ -8,7 +8,7 @@ changes are rolled back, and `user_version` only advances after the step
 commits. A subsequent `migrate()` call re-runs the failed step from scratch.
 """
 
-from .models import apply_v1, apply_v2, apply_v3, apply_v4
+from .models import apply_v1, apply_v2, apply_v3, apply_v4, apply_v6
 
 MIGRATIONS = [
     # (target user_version, apply function)
@@ -16,9 +16,10 @@ MIGRATIONS = [
     (2, apply_v2),
     (3, apply_v3),
     (4, apply_v4),
+    (6, apply_v6),          # 025 multi-tenant (additive-only, NFR-15)
 ]
 
-SCHEMA_VERSION = len(MIGRATIONS)
+SCHEMA_VERSION = 6
 
 
 def migrate(conn) -> int:
