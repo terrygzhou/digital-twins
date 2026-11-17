@@ -123,9 +123,9 @@ Test-first: each task starts with a failing test, then the implementation that m
 
 ### Phase 6 — User Story 4: Tenant-scoped service tokens (P2)
 
-- [ ] **T018 (test-first)**: Write `tests/unit/test_tenant_service_tokens.py` — per-tenant service token authenticates only that tenant's runs; presenting tenant-A token to tenant-B surface → 401; revoking A's token does not affect B. Legacy shared `system` token maps to install tenant. RED: token-to-tenant resolution does not exist.
-- [ ] **T019**: Implement `tenant_service_tokens` CRUD in `tenant_service.py`; modify `mcp/auth.py` to resolve token → `(tenant_id, account_email)`; cross-tenant = 401, fail-closed.
-- [ ] **T020**: Verify SC-001 (token dimension): tenant-A service token authenticates only A; B's surface rejects A's token with 401. GREEN.
+- [x] **T018 (test-first)**: Write `tests/unit/test_tenant_service_tokens.py` — per-tenant service token authenticates only that tenant's runs; presenting tenant-A token to tenant-B surface → 401; revoking A's token does not affect B. Legacy shared `system` token maps to install tenant. RED: token-to-tenant resolution does not exist.
+- [x] **T019**: Implement `tenant_service_tokens` CRUD in `tenant_service.py`; modify `mcp/auth.py` to resolve token → `(tenant_id, account_email)`; cross-tenant = 401, fail-closed.
+- [x] **T020**: Verify SC-001 (token dimension): tenant-A service token authenticates only A; B's surface rejects A's token with 401. GREEN.
 
 ### Phase 7 — CLI + Web surfaces (P2)
 

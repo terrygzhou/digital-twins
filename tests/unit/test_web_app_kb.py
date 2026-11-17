@@ -847,10 +847,11 @@ def test_kb_search_top_n_owner_scoped(web_app):
         f"limit=2 must yield 2 results, got {len(results)}: {results!r}")
     for r in results:
         assert set(r) == {"score", "source_url", "text", "source",
-                          "chunk_index", "id"}, (
+                          "chunk_index", "id", "images"}, (
             f"result keys must be exactly "
-            f"{{score, source_url, text, source, chunk_index, id}}, "
-            f"got {set(r)}: {r!r}")
+            f"{{score, source_url, text, source, chunk_index, id, images}} "
+            f"(020 FR-6: images is always present), got {set(r)}: {r!r}")
+        assert r["images"] == []
     # Owner-scoped + descending score: two(0.9) then one(0.7).
     assert results[0]["source_url"] == "fs/two", (
         f"top result must be fs/two (owner-scoped, score 0.9), "

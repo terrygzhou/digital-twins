@@ -776,8 +776,9 @@ def test_auth_service_token_resolves_to_admin(db, alice, monkeypatch):
     """DT_SERVICE_TOKEN env → service-account email (admin)."""
     monkeypatch.setenv("DT_SERVICE_TOKEN", "svc-secret")
     authenticator = mcp_authenticator(db, service_account_email=alice)
-    ok, email = authenticator({"Authorization": "Bearer svc-secret"})
+    ok, tenant_id, email = authenticator({"Authorization": "Bearer svc-secret"})
     assert ok is True
+    assert tenant_id == 1
     assert email == alice
 
 
@@ -785,9 +786,10 @@ def test_auth_personal_token_resolves_to_scheduler(db, bob_token, monkeypatch):
     """Personal token → Bob's email + scheduler role."""
     monkeypatch.delenv("DT_SERVICE_TOKEN", raising=False)
     authenticator = mcp_authenticator(db, service_account_email="system")
-    ok, email = authenticator(
+    ok, tenant_id, email = authenticator(
         {"Authorization": f"Bearer {bob_token}"})
     assert ok is True
+    assert tenant_id == 1
     assert email == "bob@example.com"
     role = get_role(db, email)
     assert role == "scheduler"
@@ -798,30 +800,33 @@ def test_auth_session_token_resolves_to_reader(db, carol_session,
     """Session token → Carol's email + reader role."""
     monkeypatch.delenv("DT_SERVICE_TOKEN", raising=False)
     authenticator = mcp_authenticator(db, service_account_email="system")
-    ok, email = authenticator(
+    ok, tenant_id, email = authenticator(
         {"Authorization": f"Bearer {carol_session}"})
     assert ok is True
+    assert tenant_id == 1
     assert email == "carol@example.com"
     role = get_role(db, email)
     assert role == "reader"
 
 
 def test_auth_unknown_token_rejected(db, monkeypatch):
-    """Unknown Bearer token → 401-class denial (False, None)."""
+    """Unknown Bearer token → 401-class denial (False, None, None)."""
     monkeypatch.delenv("DT_SERVICE_TOKEN", raising=False)
     authenticator = mcp_authenticator(db, service_account_email="system")
-    ok, email = authenticator(
+    ok, tenant_id, email = authenticator(
         {"Authorization": "Bearer unknown-token-123"})
     assert ok is False
+    assert tenant_id is None
     assert email is None
 
 
 def test_auth_no_credential_rejected(db, monkeypatch):
-    """Missing Authorization header → 401-class denial (False, None)."""
+    """Missing Authorization header → 401-class denial (False, None, None)."""
     monkeypatch.delenv("DT_SERVICE_TOKEN", raising=False)
     authenticator = mcp_authenticator(db, service_account_email="system")
-    ok, email = authenticator({})
+    ok, tenant_id, email = authenticator({})
     assert ok is False
+    assert tenant_id is None
     assert email is None
 
 

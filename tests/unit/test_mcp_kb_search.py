@@ -65,7 +65,7 @@ def db(tmp_path):
 
 def _ctx(db, config=None, email="alice@example.com", role="reader",
          agent_kind="hermes"):
-    return MCPContext(db, email, role, agent_kind, config=config)
+    return MCPContext(db, email, role, None, agent_kind, config=config)
 
 
 # A minimal config that the body will read (qdrant.url + embedding.*).
@@ -314,11 +314,14 @@ def test_kb_search_success_shape_sorted_desc(db, monkeypatch):
     scores = [r["score"] for r in result["results"]]
     assert scores == sorted(scores, reverse=True)
     assert scores == [0.9, 0.6, 0.3]
-    # exact field set per row
+    # exact field set per row (020 FR-6: `images` is always present — an
+    # empty array when a hit carries no image metadata)
     for r in result["results"]:
         assert set(r.keys()) == {"score", "source_url", "text", "source",
                                   "chunk_index", "id", "item_id",
-                                  "full_content", "content_snippet"}
+                                  "full_content", "content_snippet",
+                                  "images"}
+        assert r["images"] == []
     # the highest-score row is first
     assert result["results"][0]["source_url"] == "high"
 

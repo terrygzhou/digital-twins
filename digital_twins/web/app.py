@@ -86,6 +86,7 @@ from digital_twins.config.loader import ConfigError as _ConfigError
 from digital_twins.health import qdrant_collection
 from digital_twins.ingest import pipeline as _pipeline_mod
 from digital_twins import sources as _sources_mod
+from digital_twins import tenant_service as _ts
 
 
 # The static-asset root: ``digital_twins/web/static/`` (C-2/R4).  The actual
@@ -323,6 +324,20 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/dashboard/models" and method == "GET":
             self._handle_dashboard_models(caller_email)
+            return
+        # T023: tenant management + tenant-scoped audit (spec 025, T3
+        # install-admin gate; 403 permission_denied for reader/scheduler).
+        if path == "/api/tenants" and method == "GET":
+            self._handle_tenants_list(caller_email)
+            return
+        if path == "/api/tenants" and method == "POST":
+            self._handle_tenant_create(caller_email)
+            return
+        if path == "/api/tenants/suspend" and method == "POST":
+            self._handle_tenant_suspend(caller_email)
+            return
+        if path == "/api/tenants/delete" and method == "POST":
+            self._handle_tenant_delete(caller_email)
             return
         del method, query, caller_email  # wired up by the later handler tasks
         self._send_json(404, {"error": "not_found", "path": path})
@@ -785,6 +800,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
                 "text": (r.payload or {}).get("text"),
                 "source": (r.payload or {}).get("source"),
                 "chunk_index": (r.payload or {}).get("chunk_index"),
+                "images": (r.payload or {}).get("images", []),
                 "id": r.id,
             }
             for r in points
@@ -998,19 +1014,24 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             "points": summary.points,
         })
 
-    # --- /api/audit/recent handler (T014) --------------------------------------
+    # --- /api/audit/recent handler (T014 + T023 tenant scoping) ---------------
 
     def _handle_audit_recent(self, query: str, caller_email: str) -> None:
-        """GET /api/audit/recent → ``{"rows": [...]}`` (the last N audit
+        """GET /api/audit/recent → ``{"runs": [...]}`` (the last N audit
         runs, most recent first).
 
-        Reads ``audit_runs`` from the 001/003 SQLite state (unchanged
-        schema — no new migration).  Non-admin callers get only rows where
-        ``scheduled_by`` equals their own email (NFR-16); an admin gets all
-        rows.  ``limit`` defaults to 10, capped at 100.  Each row carries
-        the 001/002/004 audit record shape with ``per_source_counts``
-        DECODED to a dict (the table stores it JSON-encoded).
+        Reads ``audit_runs`` from the SQLite state.  T023 (spec 025):
+        the route is admin-gated — reader/scheduler callers get 403
+        ``permission_denied`` (the T3 install-admin discipline).  An admin
+        with no ``tenant`` param sees every tenant's rows (NFR-16 all-
+        tenants overview); an admin with ``?tenant=N`` sees only that
+        tenant's rows.  An invalid tenant param is a 400.  ``limit``
+        defaults to 10, capped at 100.  Each row carries the 001/002/004
+        audit record shape with ``per_source_counts`` DECODED to a dict
+        (the table stores it JSON-encoded).
         """
+        if not self._require_admin(caller_email):
+            return
         params = urllib.parse.parse_qs(query)
         try:
             limit = int((params.get("limit") or ["10"])[0])
@@ -1018,22 +1039,28 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             limit = 10
         limit = max(1, min(limit, 100))
 
+        tenant_id = None
+        if "tenant" in params:
+            raw = (params.get("tenant") or [""])[0]
+            try:
+                tenant_id = int(raw)
+            except (TypeError, ValueError):
+                self._send_json(400, {"error": f"invalid tenant param '{raw}'"})
+                return
+
         with self.server._db_lock:
-            role = _accounts_mod.get_role(self.server.db, caller_email)
-            if role is None:
-                role = "reader"
-            if role == "admin":
+            if tenant_id is not None:
+                rows = self.server.db.execute(
+                    "SELECT run_id, started_at, completed_at, status, "
+                    "trigger, scheduled_by, per_source_counts FROM audit_runs "
+                    "WHERE tenant_id=? ORDER BY started_at DESC LIMIT ?",
+                    (tenant_id, limit)).fetchall()
+            else:
                 rows = self.server.db.execute(
                     "SELECT run_id, started_at, completed_at, status, "
                     "trigger, scheduled_by, per_source_counts FROM audit_runs "
                     "ORDER BY started_at DESC LIMIT ?",
                     (limit,)).fetchall()
-            else:
-                rows = self.server.db.execute(
-                    "SELECT run_id, started_at, completed_at, status, "
-                    "trigger, scheduled_by, per_source_counts FROM audit_runs "
-                    "WHERE scheduled_by=? ORDER BY started_at DESC LIMIT ?",
-                    (caller_email, limit)).fetchall()
 
         out_rows = [
             {
@@ -1047,7 +1074,7 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             }
             for row in rows
         ]
-        self._send_json(200, {"rows": out_rows})
+        self._send_json(200, {"runs": out_rows})
 
     # --- /api/kb/chat handler (T016, C-1/R8) ----------------------------------
 
@@ -1701,8 +1728,138 @@ class _WebAppHandler(BaseHTTPRequestHandler):
             "env_overrides": services_view["env_overrides"],
         })
 
-    # ``unknown service "<name>"``.  Credential values never enter the
-    # response or the logs (the health checks already scrub, FR-004).
+    # ------------------------------------------------------------------
+    # T023: /api/tenants* handlers (spec 025 multi-tenant)
+    # ------------------------------------------------------------------
+
+    def _handle_tenants_list(self, caller_email: str) -> None:
+        """GET /api/tenants → 200 ``{"tenants": [...], "total": N}`` (admin).
+
+        T023 (spec 025): the install-admin's tenant overview.  Each row
+        carries the T1 store boundary (``qdrant_collection`` /
+        ``neo4j_database``) plus status; C-1 — no ``token_hash`` /
+        ``password_hash`` / credential columns ever reach the response.
+        A non-admin caller gets 403 ``permission_denied``.
+        """
+        if not self._require_admin(caller_email):
+            return
+        with self.server._db_lock:
+            rows = self.server.db.execute(
+                "SELECT id, slug, name, status, qdrant_collection, "
+                "neo4j_database, created_at FROM tenants ORDER BY id"
+            ).fetchall()
+        tenants = [
+            {
+                "id": r[0],
+                "slug": r[1],
+                "name": r[2],
+                "status": r[3],
+                "qdrant_collection": r[4],
+                "neo4j_database": r[5],
+                "created_at": r[6],
+            }
+            for r in rows
+        ]
+        self._send_json(200, {"tenants": tenants, "total": len(tenants)})
+
+    def _handle_tenant_create(self, caller_email: str) -> None:
+        """POST /api/tenants → 200 ``{"id", "slug", "created": true}`` (admin).
+
+        Body ``{"slug", "name", "dimension"}`` → ``tenant_service.
+        provision_tenant`` (no ``qdrant_client`` — the row-only path; the
+        store-side collection gate lives in the provision CLI, not the
+        web surface).  ``InvalidSlug`` → 400; ``ReservedSlug`` /
+        ``DuplicateSlug`` → 409.  A non-admin caller gets 403.
+        """
+        if not self._require_admin(caller_email):
+            return
+        body = self._read_json_body()
+        if body is None:
+            self._send_json(400, {"error": "invalid JSON body"})
+            return
+        slug = body.get("slug")
+        if not isinstance(slug, str):
+            self._send_json(400, {"error": "slug must be a string"})
+            return
+        name = body.get("name")
+        if name is not None and not isinstance(name, str):
+            self._send_json(400, {"error": "name must be a string"})
+            return
+        dimension = body.get("dimension", 384)
+        if not isinstance(dimension, int) or dimension <= 0:
+            self._send_json(400, {"error": "dimension must be a positive int"})
+            return
+        try:
+            with self.server._db_lock:
+                new_id = _ts.provision_tenant(
+                    self.server.db, slug, name=name, dimension=dimension)
+        except _ts.InvalidSlug:
+            self._send_json(400, {"error": f"invalid slug '{slug}'"})
+            return
+        except (_ts.ReservedSlug, _ts.DuplicateSlug):
+            self._send_json(409, {"error": f"slug '{slug}' unavailable"})
+            return
+        self._send_json(200, {"id": new_id, "slug": slug, "created": True})
+
+    def _handle_tenant_suspend(self, caller_email: str) -> None:
+        """POST /api/tenants/suspend → 200 ``{"suspended": true}`` (admin).
+
+        Body ``{"tenant_id": N}`` → ``tenant_service.suspend_tenant``
+        (idempotent).  The install tenant (id 1) raises
+        ``InstallTenantProtected`` → 409; an unknown id raises
+        ``UnknownTenant`` → 404.  A non-admin caller gets 403.
+        """
+        if not self._require_admin(caller_email):
+            return
+        body = self._read_json_body()
+        if body is None:
+            self._send_json(400, {"error": "invalid JSON body"})
+            return
+        tenant_id = body.get("tenant_id")
+        if not isinstance(tenant_id, int) or tenant_id <= 0:
+            self._send_json(400, {"error": "tenant_id must be a positive int"})
+            return
+        try:
+            with self.server._db_lock:
+                _ts.suspend_tenant(self.server.db, tenant_id)
+        except _ts.InstallTenantProtected:
+            self._send_json(409, {"error": "the install tenant cannot be suspended"})
+            return
+        except _ts.UnknownTenant:
+            self._send_json(404, {"error": f"unknown tenant id {tenant_id}"})
+            return
+        self._send_json(200, {"suspended": True})
+
+    def _handle_tenant_delete(self, caller_email: str) -> None:
+        """POST /api/tenants/delete → 200 ``{"deleted": true}`` (admin).
+
+        Body ``{"tenant_id": N}`` → ``tenant_service.delete_tenant``
+        (the row is retained for audit — NFR-15 additive-only — with
+        ``status='deleted'`` and ``deleted_at`` stamped).  The install
+        tenant (id 1) raises ``InstallTenantProtected`` → 409; an
+        unknown id raises ``UnknownTenant`` → 404.  A non-admin caller
+        gets 403.
+        """
+        if not self._require_admin(caller_email):
+            return
+        body = self._read_json_body()
+        if body is None:
+            self._send_json(400, {"error": "invalid JSON body"})
+            return
+        tenant_id = body.get("tenant_id")
+        if not isinstance(tenant_id, int) or tenant_id <= 0:
+            self._send_json(400, {"error": "tenant_id must be a positive int"})
+            return
+        try:
+            with self.server._db_lock:
+                _ts.delete_tenant(self.server.db, tenant_id)
+        except _ts.InstallTenantProtected:
+            self._send_json(409, {"error": "the install tenant cannot be deleted"})
+            return
+        except _ts.UnknownTenant:
+            self._send_json(404, {"error": f"unknown tenant id {tenant_id}"})
+            return
+        self._send_json(200, {"deleted": True})
 
     def _handle_config_probe(self, caller_email: str) -> None:
         """POST /api/config/services/probe -> 200 probe results (admin)."""

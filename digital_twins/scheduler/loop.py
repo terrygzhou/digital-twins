@@ -227,7 +227,7 @@ def _qdrant_factory(config) -> callable:
     return factory
 
 
-def _neo4j_driver_factory(config):
+def _neo4j_driver_factory(config, tenant_install: bool = False):
     """Zero-arg factory returning the configured Neo4j driver (lazy).
 
     Mirrors :func:`_qdrant_factory`: the driver is only constructed when the
@@ -235,12 +235,25 @@ def _neo4j_driver_factory(config):
     ``neo4j.password`` never pays the cost of a network connection.  US2
     / FR-003: the credential knobs reach the driver here (pre-US2 they
     reached only ``health.check_neo4j``).
+
+    025 FR-7: ``tenant_install=True`` marks a tenant-partitioned write
+    path; the resolved URL MUST then carry a ``?db=<slug>`` pin or
+    construction fails fast (spec section 5.3).  Reads keep the default
+    ``False`` — a missing pin on a read silently falls through to the
+    server-default database, and that asymmetry is the contract.
     """
     url = get(config, "neo4j.url")
     user = get(config, "neo4j.user")
     password = get(config, "neo4j.password")
 
     def factory():
+        if tenant_install and "?db=" not in (url or ""):
+            from digital_twins.config.loader import ConfigError
+            raise ConfigError(
+                "025 FR-7: tenant-partitioned write path requires a "
+                "?db=<slug> pin on neo4j.url (KB_NEO4J__URL); got "
+                "%r without the pin - refusing to silently target the "
+                "server-default database" % url)
         if not (url and user and password):
             from digital_twins.config.loader import ConfigError
             raise ConfigError(
@@ -253,11 +266,17 @@ def _neo4j_driver_factory(config):
     return factory
 
 
-def build_neo4j_driver(config):
+def build_neo4j_driver(config, tenant_install: bool = False):
     """Eager Neo4j driver built from ``config`` (US2 / FR-003).
 
     Convenience alias for callers that want the driver immediately rather
     than a lazy zero-arg factory.
+
+    025 FR-7: ``tenant_install=True`` marks a tenant-partitioned write
+    path (ingest, migrate_s4, tenant-scoped CLI) and requires a
+    ``?db=`` pin on ``neo4j.url``; construction raises ``ConfigError``
+    without one.  Read paths keep the default ``False`` — the asymmetry
+    is the contract (spec section 5.3, FR-7).
 
     Returns the raw ``neo4j.GraphDatabase.driver`` object unchanged (no
     wrapper, no adapter). Callers that execute Cypher against it must
@@ -266,7 +285,7 @@ def build_neo4j_driver(config):
     ``.run()``. That contract is what the graph-write helpers in
     ``ingest.pipeline`` rely on (BUG-01 / graph-driver-fix).
     """
-    return _neo4j_driver_factory(config)()
+    return _neo4j_driver_factory(config, tenant_install)()
 
 
 def _embedder(config):

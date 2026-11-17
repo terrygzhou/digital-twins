@@ -269,8 +269,8 @@ def test_web_subcommand_reuses_pre_command(tmp_path):
         try:
             version = conn.execute(
                 "PRAGMA user_version").fetchone()[0]
-            assert version == 3, (
-                f"expected migrated v3 schema, got user_version "
+            assert version == 6, (
+                f"expected migrated v6 schema, got user_version "
                 f"{version}")
             # The accounts table exists (part of the migrated schema).
             tables = {row[0] for row in conn.execute(

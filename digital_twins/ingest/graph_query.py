@@ -116,7 +116,7 @@ def _guard_db_pin(driver, caller: str) -> None:
     missing or has no ``?db=`` query parameter.
     """
     from urllib.parse import urlparse, parse_qs
-    from digital_twins.config.schema import ConfigError
+    from digital_twins.config import ConfigError
 
     url: str | None = None
     addr = getattr(driver, "_address", None)

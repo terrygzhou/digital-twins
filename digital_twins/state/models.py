@@ -407,12 +407,13 @@ def get_highwater(conn, source: str, item_key: str,
 # --- audit runs (Constitution V: a row for every run, regardless of outcome)
 
 def start_audit_run(conn, run_id: str, trigger: str = "manual",
-                    scheduled_by: str = "system") -> None:
+                    scheduled_by: str = "system",
+                    tenant_id: int = 1) -> None:
     """Insert the run's audit row up front as in-flight (`partial`)."""
     conn.execute(
-        "INSERT INTO audit_runs (run_id, started_at, status, trigger, scheduled_by) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (run_id, _now(), "partial", trigger, scheduled_by),
+        "INSERT INTO audit_runs (run_id, started_at, status, trigger, scheduled_by, tenant_id) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (run_id, _now(), "partial", trigger, scheduled_by, tenant_id),
     )
     conn.commit()
 

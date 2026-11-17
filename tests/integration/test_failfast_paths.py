@@ -141,7 +141,7 @@ def test_mcp_ingest_dispatch_error_dict_no_success_audit(tmp_path, monkeypatch):
     _patch_services(monkeypatch)
     sched_id = db.execute("SELECT id FROM schedules").fetchone()[0]
 
-    ctx = MCPContext(db, "admin@example.com", "admin", "stdio")
+    ctx = MCPContext(db, "admin@example.com", "admin", None, "stdio")
     out = dispatch._kb_schedule_run_body(ctx, {"schedule_id": sched_id})
     assert out["ok"] is False
     assert out["error"]["code"] == "run_failed"

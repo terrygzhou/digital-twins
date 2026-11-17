@@ -38,6 +38,7 @@ from digital_twins.state.models import (
     upsert_highwater,
 )
 from digital_twins.ingest import entities  # s4-entity-extraction
+from digital_twins.ingest.extract_images import extract_images, ImageExtraction  # 020
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +89,10 @@ def _resolve_embedder(cfg):
     )
 
 
-def _cursor(db, source: str):
+def _cursor(db, source: str, tenant_id: int = 1):
     row = db.execute(
-        "SELECT MAX(last_key) FROM highwater WHERE source=?", (source,)
+        "SELECT MAX(last_key) FROM highwater "
+        "WHERE tenant_id=? AND source=?", (tenant_id, source),
     ).fetchone()
     return row[0] if row and row[0] else None
 
@@ -248,7 +250,22 @@ def run_pipeline(
             # personal-kb's one uuid5 ID space. Chunk count is known before
             # embedding, so it can be stamped on every chunk's payload.
             chunks = []  # (point_id, chunk_index, item, text, n_chunks)
+            image_items = []  # 020: binary image items skipped from text
             for item in items:
+                # 020: standalone raster images carry binary content —
+                # route them to image extraction, not text chunking.
+                # The item still produces one chunk (index 0) with an empty
+                # text placeholder so that _run_image_extraction's
+                # images[] metadata is attached to a real point, satisfying
+                # NFR-14 (one point per item, not one point per image).
+                if getattr(item, "metadata", {}).get("is_image"):
+                    image_items.append(item)
+                    # One chunk (index 0) with empty text: the image's
+                    # images[] metadata (set by _run_image_extraction
+                    # before the sub-batch loop) attaches to this point.
+                    pid = point_id_s4(name, item.key, 0)
+                    chunks.append((pid, 0, item, "", 1))
+                    continue
                 texts = chunk_text(item.content, max_chars, overlap)
                 for i, text in enumerate(texts):
                     pid = point_id_s4(name, item.key, i)
@@ -267,7 +284,9 @@ def run_pipeline(
             # Item-level content hash (S4): shared by every chunk of one
             # item — the staleness signal that replaces the legacy
             # content-dependent point ID.
-            item_hash = {item.key: content_hash(item.content)
+            item_hash = {item.key: content_hash(
+                item.content if isinstance(item.content, str) else item.content.decode("utf-8", errors="replace")
+            )
                          for item in items}
             embed_model = get(cfg, "embedding.model") or DEFAULT_MODEL
 
@@ -290,6 +309,11 @@ def run_pipeline(
                         "ingest lock; skipping this source for run %s",
                         name, run_id)
                     continue
+            # 020: run image extraction on all items up-front so the
+            # images[] metadata is attached before point payloads are
+            # built.  No-op when extraction.extract_images is false.
+            _run_image_extraction(cfg, items, run_id, name)
+
             for sub_idx, sub in enumerate(sub_batches):
                 sub_points = []
                 sub_items: list = []          # de-duplicated item objects
@@ -321,6 +345,7 @@ def run_pipeline(
                             "owner": owner,
                             "owner_tag": f"{owner}-ingest" if owner else None,
                         },
+                        "images": item.metadata.get("images", []) if hasattr(item, "metadata") else [],
                         "run_id": run_id,
                         "trigger": trigger,
                     }
@@ -488,6 +513,7 @@ def _run_extraction(
         "max_text_chars": get(cfg, "extraction.max_text_chars") or 12000,
         "prompt_version": get(cfg, "extraction.prompt_version") or "",
         "domain_schema": bool(get(cfg, "extraction.domain_schema")),
+        "ontology": get(cfg, "extraction.ontology") or "",
     }
     if not extraction_cfg["enabled"]:
         return
@@ -574,6 +600,112 @@ def _run_extraction(
                 db, run_id, channel, item_key,
                 status=status, error=error)
 
+
+def _run_image_extraction(
+    cfg: dict,
+    items: list,
+    run_id: str,
+    channel: str,
+) -> None:
+    """020: extract embedded PDF images and standalone raster files.
+
+    Config-gated: when ``extraction.extract_images`` is false (the
+    default) this is a no-op.  When enabled, for each ingested item:
+
+    1. ``extract_images(path, suffix, cfg, max_bytes)`` — extract
+       embedded PDF images via pypdf, or read standalone raster bytes.
+    2. If ``extraction.image_caption`` is true and an LLM endpoint is
+       configured, send each image to the LLM for captioning (FR-8:
+       caption degrades to null + warning when no endpoint is set).
+    3. Store the image bytes either in the point's Qdrant payload
+       (``extraction.image_store: payload``) or on the filesystem
+       (``extraction.image_store: filesystem``) under ``storage/images/``.
+
+    Per-item failure isolation: an item whose image extraction fails
+    logs a warning and the remaining items proceed (017 pattern).
+    """
+    if not bool(get(cfg, "extraction.extract_images")):
+        return
+
+    import base64
+    from pathlib import Path as _Path
+
+    from digital_twins.ingest.extract_images import (
+        extract_images as _extract_images,
+        caption_image,
+    )
+
+    img_cfg = {
+        "caption": bool(get(cfg, "extraction.image_caption")),
+        "store": str(get(cfg, "extraction.image_store") or "payload"),
+        "max_bytes": int(get(cfg, "extraction.image_max_bytes") or 10_000_000),
+    }
+
+    logger.info(
+        "020 image extraction enabled (store=%s, caption=%s, cap=%d bytes) "
+        "on channel %r with %d items",
+        img_cfg["store"], img_cfg["caption"], img_cfg["max_bytes"],
+        channel, len(items),
+    )
+
+    for item in items:
+        path_meta = item.metadata.get("path") if hasattr(item, "metadata") else None
+        if not path_meta:
+            continue
+        path = _Path(path_meta)
+        if not path.is_file():
+            continue
+
+        ext = path.suffix.lower()
+        if ext not in (".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif"):
+            continue
+
+        try:
+            ex = _extract_images(path, ext, cfg, img_cfg["max_bytes"])
+        except Exception as exc:  # noqa: BLE001 - per-item isolation
+            logger.warning(
+                "020 image extraction failed for %r: %s", path, exc)
+            continue
+
+        if not ex:
+            continue
+
+        images_payload = []
+        for img in ex:
+            # Caption (FR-8): degrade to null + warning when no endpoint.
+            if img_cfg["caption"]:
+                caption_image(img, cfg)
+                caption = img.caption
+            else:
+                caption = None
+
+            # Store (payload vs filesystem).
+            if img_cfg["store"] == "filesystem":
+                rel = f"{channel}/{path.name}.{img.mime.split('/')[-1]}"
+                storage_dir = _Path("storage/images")
+                (storage_dir / channel).mkdir(parents=True, exist_ok=True)
+                (storage_dir / rel).write_bytes(img.bytes)
+                images_payload.append({
+                    "caption": caption,
+                    "mime": img.mime,
+                    "source": str(path),
+                    "url": None,
+                    "image_path": str(rel),
+                    "image_store": "filesystem",
+                })
+            else:
+                images_payload.append({
+                    "caption": caption,
+                    "mime": img.mime,
+                    "source": str(path),
+                    "url": "data:" + img.mime + ";base64," +
+                           base64.b64encode(img.bytes).decode("ascii"),
+                    "image_store": "payload",
+                })
+
+        # Attach to the item's Qdrant payload (merged in at upsert time).
+        item.metadata["images"] = images_payload
+
 def heal_extraction(
     cfg: dict,
     db,
@@ -610,6 +742,7 @@ def heal_extraction(
         "max_text_chars": get(cfg, "extraction.max_text_chars") or 12000,
         "prompt_version": get(cfg, "extraction.prompt_version") or "",
         "domain_schema": bool(get(cfg, "extraction.domain_schema")),
+        "ontology": get(cfg, "extraction.ontology") or "",
     }
     rows = db.execute(
         "SELECT source, item_key, status FROM audit_items WHERE rowid IN "
@@ -623,7 +756,8 @@ def heal_extraction(
         by_source.setdefault(source, []).append(key)
     for source, keys in sorted(by_source.items()):
         holder = db.execute(
-            "SELECT run_id FROM ingest_locks WHERE source=?", (source,)
+            "SELECT run_id FROM ingest_locks "
+            "WHERE tenant_id=1 AND source=?", (source,)
         ).fetchone()
         if holder is not None and holder[0] != run_id:
             result["skipped"].append(source)

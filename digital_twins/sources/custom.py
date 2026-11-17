@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib
 import os
+from dataclasses import replace
 
 from .base import Capability, Source
 
@@ -96,9 +97,14 @@ def build_custom(name: str, entry: dict) -> Source:
         source.name = name
 
     # Config-level prefix overrides the factory's capability prefix.
+    # `replace` creates a *new* Capability instance so the override is an
+    # instance attribute on `source` — the factory's (possibly class-shared)
+    # capability object is never mutated. Mutating it in place would
+    # contaminate every other source that shares the same object (e.g. all
+    # FsSource instances share the module-level CAPABILITY in fs.py).
     prefix = entry.get("prefix")
     if prefix:
-        source.capability.prefix = str(prefix)
+        source.capability = replace(source.capability, prefix=str(prefix))
 
     credential = entry.get("credential")
     if credential:

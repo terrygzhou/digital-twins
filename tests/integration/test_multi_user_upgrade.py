@@ -192,8 +192,8 @@ def test_v2_to_v3_preserves_all_preexisting_tables(tmp_path):
     assert len(before["schedules"]) == 1, "precondition: one schedule row"
 
     v = migrations.migrate(conn)
-    assert v == 3, f"user_version must advance to 3, got {v}"
-    assert migrations.user_version(conn) == 3
+    assert v == 6, f"user_version must advance to 6, got {v}"
+    assert migrations.user_version(conn) == 6
 
     after = _snapshot(conn)
     for table in ("accounts", "highwater", "audit_runs", "schedules"):
@@ -282,7 +282,7 @@ def test_v3_creates_new_tables(tmp_path):
 
 
 def test_v2_to_v3_upgrade_is_idempotent(tmp_path):
-    """Running migrate() a second time is a no-op: user_version stays at 3.
+    """Running migrate() a second time is a no-op: user_version stays at 6.
 
     Additive DDL is idempotent: the new tables already exist and the two new
     accounts columns already exist, so a second migrate() must not error,
@@ -293,19 +293,19 @@ def test_v2_to_v3_upgrade_is_idempotent(tmp_path):
     _seed_v2(conn)
 
     v1 = migrations.migrate(conn)
-    assert v1 == 3
+    assert v1 == 6
 
     tables_after_first = _table_names(conn)
     acct_cols_after_first = _accounts_columns(conn)
 
     v2 = migrations.migrate(conn)
-    assert v2 == 3, "re-run must not advance user_version past 3"
-    assert migrations.user_version(conn) == 3
+    assert v2 == 6, "re-run must not advance user_version past 6"
+    assert migrations.user_version(conn) == 6
 
     assert _table_names(conn) == tables_after_first, (
-        "re-running v3 changed the table set")
+        "re-running migrate() changed the table set")
     assert _accounts_columns(conn) == acct_cols_after_first, (
-        "re-running v3 changed the accounts columns")
+        "re-running migrate() changed the accounts columns")
     conn.close()
 
 

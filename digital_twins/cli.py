@@ -1994,5 +1994,433 @@ def channels_add(name: str, entrypoint: str, credential: str,
     click.echo(f"added channel `{name}` (disabled) -> {path}")
 
 
+# ---------------------------------------------------------------------------
+# 025: tenant group (T022)
+#
+# ``digital-twins tenant list|create|suspend|delete|service-token``
+#
+# Store-side effects per spec 025 T1 + contracts/cli.md:
+# - create  ⇒ Qdrant CREATE COLLECTION kb-<slug> (dim 384) +
+#             Neo4j CREATE DATABASE <slug> (Enterprise only; Community
+#             5.26 degrades to channel partitioning — no hard gate).
+# - delete  ⇒ DROP COLLECTION + (Enterprise) DROP DATABASE, then
+#             the tenants row flips to deleted (audit trail retained,
+#             NFR-15).
+# - service-token ⇒ plaintext 32-byte hex shown exactly once; only
+#             pbkdf2$salt_hex$hash_hex (C-1) at rest.
+# ---------------------------------------------------------------------------
+
+_EMBEDDING_DIMENSION = 384  # T4: install-global, pinned in the CLI
+
+
+def _qdrant_client(cfg) -> "QdrantClient":
+    """Build a QdrantClient from the config layer (no live check).
+
+    Patchable seam for unit tests (monkeypatch ``cli_mod._qdrant_client``);
+    the run command builds its factory inline because it needs the
+    ConfigError-fail-fast behaviour, which the tenant group handles by
+    plain try/except around each call.
+    """
+    qdrant_url = get(cfg, "qdrant.url")
+    if not qdrant_url:
+        raise ConfigError(
+            "qdrant.url is not set — set KB_QDRANT__URL first")
+    from qdrant_client import QdrantClient
+    return QdrantClient(
+        url=qdrant_url,
+        api_key=get(cfg, "qdrant.api_key") or None)
+
+
+def _open_state_db() -> "sqlite3.Connection":
+    """Connect + migrate the state DB (the tenant commands always need
+    the v6 schema).  Closes the file after the caller closes the conn."""
+    import sqlite3
+    cfg = load()
+    state_dir = Path(cfg["state_dir"])
+    if not state_dir.is_dir():
+        click.echo(
+            "no state db — run 'digital-twins init' first", err=True)
+        raise SystemExit(2)
+    db = connect(state_dir)
+    try:
+        migrate(db)
+    except Exception:
+        db.close()
+        raise
+    return db
+
+
+def _edition_check(driver, db_name: str) -> bool:
+    """Return True if the Neo4j instance supports CREATE DATABASE
+    (Enterprise / Aura).  Community 5.26 lacks it; degrade to
+    channel partitioning without failing the command.
+
+    Patchable seam for tests (no live Neo4j required in unit tests).
+    """
+    if driver is None:
+        return False
+    try:
+        driver.execute_query(
+            "SHOW DATABASES YIELD name WHERE name = $name",
+            {"name": db_name})
+        # The query succeeded → the `system` DB supports SHOW DATABASES,
+        # which exists in every edition.  To detect *CREATE* DATABASE
+        # capability, look at the edition string:
+        row = driver.execute_query(
+            "CALL dbms.components() YIELD name, version, edition, status "
+            "WHERE name = 'neo4j'").to_data_frame()
+        for r in row.iterrows():
+            if "enterprise" in (r[2] or "").lower():
+                return True
+        return False
+    except Exception:
+        # Edition probe failed (auth, network, unsupported procedure on
+        # Community): degrade to channel partitioning, never block
+        # tenant creation.
+        return False
+
+
+@cli.group(name="tenant")
+def tenant_group() -> None:
+    """Tenant lifecycle (025 T1/T3).  Install-level admin only."""
+
+
+def _tenant_auth_gate() -> tuple:
+    """Authenticate the caller + gate on install-admin capability.
+
+    T3: all tenant lifecycle commands are install-level admin.
+    Reuses the C-2 personal-token auth path (DT_PERSONAL_TOKEN).
+    """
+    from digital_twins.accounts import require_capability, RoleDenied
+
+    db = _open_state_db()
+    caller_email, caller_role = _token_authenticate(db, None)
+    try:
+        require_capability(
+            caller_role, "manage_accounts",
+            "manage tenants")
+    except RoleDenied as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(2)
+    return db, caller_email, caller_role
+
+
+def _get_tenant_by_slug(db, slug: str) -> dict:
+    row = db.execute(
+        "SELECT id, slug, name, status, qdrant_collection, neo4j_database "
+        "FROM tenants WHERE slug=?", (slug,)).fetchone()
+    if row is None:
+        click.echo(f"tenant `{slug}` not found", err=True)
+        raise SystemExit(2)
+    return dict(zip(("id", "slug", "name", "status",
+                     "qdrant_collection", "neo4j_database"), row))
+
+
+@tenant_group.command(name="list")
+def list_tenants() -> None:
+    """List all tenants (slug, name, status, qdrant_collection,
+    neo4j_database).  Install-level admin only."""
+    db, _, _ = _tenant_auth_gate()
+    try:
+        rows = db.execute(
+            "SELECT slug, name, status, qdrant_collection, neo4j_database "
+            "FROM tenants ORDER BY id").fetchall()
+    finally:
+        db.close()
+    import shutil
+    cols = ("slug", "name", "status", "qdrant_collection",
+            "neo4j_database")
+    widths = [max(len(c), max((len(str(r[i])) for r in rows), default=0))
+              for i, c in enumerate(cols)]
+    header = "  ".join(c.ljust(widths[i]) for i, c in enumerate(cols))
+    click.echo(header)
+    for row in rows:
+        click.echo(
+            "  ".join(str(v).ljust(widths[i])
+                      for i, v in enumerate(row)))
+
+
+@tenant_group.command()
+@click.option("--slug", required=True, help="Tenant slug [a-z0-9-]+.")
+@click.option("--name", default=None,
+              help="Display name (defaults to slug.capitalize()).")
+def create(slug: str, name: str | None) -> None:
+    """Create a tenant + auto-provision Qdrant collection + Neo4j
+    database at the pinned embedding dimension.  Prints slug,
+    collection, and DB name on success.  Install-level admin only.
+
+    Community edition: the Neo4j CREATE DATABASE step is skipped
+    (channel partitioning, A1-hard posture); the tenant row is
+    written with neo4j_database=<slug> regardless.
+    """
+    from digital_twins.tenant_service import (
+        provision_tenant, TenantError)
+
+    db, _, _ = _tenant_auth_gate()
+    try:
+        tenant_id = provision_tenant(db, slug, name=name,
+                                     dimension=_EMBEDDING_DIMENSION)
+    except TenantError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(2)
+    finally:
+        pass
+
+    collection = f"kb-{slug}"
+    # Qdrant CREATE COLLECTION (T1 hard boundary).
+    qdrant_url = get(load(), "qdrant.url")
+    qdrant = _qdrant_client(load())
+    try:
+        qdrant.create_collection(
+            collection,
+            vectors_config={"size": _EMBEDDING_DIMENSION,
+                            "distance": "Cosine"})
+    except Exception as exc:
+        click.echo(
+            f"Qdrant create_collection({collection}) failed: {exc}",
+            err=True)
+        db.close()
+        raise SystemExit(2)
+
+    # Neo4j CREATE DATABASE (Enterprise only; Community degrades).
+    cfg = load()
+    neo4j_url = get(cfg, "neo4j.url")
+    if neo4j_url:
+        driver = _cli_resolve_neo4j_driver(cfg)
+        if driver is not None:
+            if _edition_check(driver, slug):
+                try:
+                    driver.execute_query(
+                        "CREATE DATABASE $name IF NOT EXISTS",
+                        {"name": slug})
+                except Exception as exc:
+                    click.echo(
+                        f"Neo4j CREATE DATABASE {slug} failed: {exc}",
+                        err=True)
+                    db.close()
+                    raise SystemExit(2)
+            else:
+                click.echo(
+                    f"note: Neo4j is Community edition — "
+                    f"database `{slug}` is unavailable; "
+                    f"tenant {slug} partitions on channel "
+                    f"within the default `neo4j` DB",
+                    err=True)
+    db.close()
+
+    click.echo(
+        f"created tenant {slug!r} (id={tenant_id}): "
+        f"collection={collection}, database={slug}, "
+        f"dimension={_EMBEDDING_DIMENSION}")
+
+
+@tenant_group.command()
+@click.option("--slug", required=True, help="Tenant slug.")
+def suspend(slug: str) -> None:
+    """Suspend a tenant: status=suspended, all tokens 403.  The
+    install tenant cannot be suspended.  Install-level admin only."""
+    from digital_twins.tenant_service import (
+        suspend_tenant, TenantError, UnknownTenant)
+
+    db, _, _ = _tenant_auth_gate()
+    tenant = _get_tenant_by_slug(db, slug)
+    try:
+        if tenant["id"] == 1:
+            click.echo(
+                "the install tenant cannot be suspended "
+                "(legacy shared stores are its identity)",
+                err=True)
+            db.close()
+            raise SystemExit(2)
+        suspend_tenant(db, tenant["id"])
+    except TenantError as exc:
+        click.echo(str(exc), err=True)
+        db.close()
+        raise SystemExit(2)
+    db.close()
+    click.echo(f"suspended tenant `{slug}`")
+
+
+@tenant_group.command()
+@click.option("--slug", required=True, help="Tenant slug.")
+@click.option("--confirm", required=False, default=None,
+              help="Type the slug to confirm deletion.")
+def delete(slug: str, confirm: str | None) -> None:
+    """Delete a tenant: status=deleted + drop Qdrant collection +
+    (Enterprise) Neo4j database.  Requires --confirm <slug>.
+    Install-level admin only."""
+    from digital_twins.tenant_service import (
+        delete_tenant, TenantError, InstallTenantProtected,
+        UnknownTenant)
+
+    if confirm != slug:
+        click.echo(
+            f"deletion refused: --confirm must equal the slug ({slug!r})",
+            err=True)
+        raise SystemExit(2)
+
+    db, _, _ = _tenant_auth_gate()
+    tenant = _get_tenant_by_slug(db, slug)
+    collection = tenant["qdrant_collection"]
+
+    # Storage teardown before the row flips (audit trail NFR-15).
+    if collection:
+        qdrant = _qdrant_client(load())
+        try:
+            qdrant.delete_collection(collection)
+        except Exception as exc:
+            click.echo(
+                f"Qdrant delete_collection({collection}) failed: {exc}",
+                err=True)
+            db.close()
+            raise SystemExit(2)
+
+    cfg = load()
+    neo4j_url = get(cfg, "neo4j.url")
+    if neo4j_url:
+        driver = _cli_resolve_neo4j_driver(cfg)
+        if driver is not None and _edition_check(driver, slug):
+            try:
+                driver.execute_query(
+                    "DROP DATABASE $name IF EXISTS",
+                    {"name": slug})
+            except Exception as exc:
+                click.echo(
+                    f"Neo4j DROP DATABASE {slug} failed: {exc}",
+                    err=True)
+                db.close()
+                raise SystemExit(2)
+
+    try:
+        delete_tenant(db, tenant["id"])
+    except InstallTenantProtected as exc:
+        click.echo(str(exc), err=True)
+        db.close()
+        raise SystemExit(2)
+    except TenantError as exc:
+        click.echo(str(exc), err=True)
+        db.close()
+        raise SystemExit(2)
+    finally:
+        pass
+
+    db.close()
+    click.echo(f"deleted tenant `{slug}` (row retained in audit trail)")
+
+
+@tenant_group.group()
+def service_token() -> None:
+    """Per-tenant service tokens (025 T3, C-1 pattern)."""
+
+
+@service_token.command(name="create")
+@click.option("--slug", required=True, help="Tenant slug.")
+def create_token(slug: str) -> None:
+    """Issue a per-tenant service token.  The plaintext is shown
+    exactly once; only the pbkdf2 hash is stored at rest.
+    A suspended tenant cannot get a new token (fail-closed)."""
+    import hashlib
+    import os as _os
+    import secrets
+
+    from digital_twins.tenant_service import (
+        SuspendedTenant, TenantError)
+
+    db, _, _ = _tenant_auth_gate()
+    tenant = _get_tenant_by_slug(db, slug)
+    if tenant["status"] == "suspended":
+        click.echo(
+            f"tenant `{slug}` is suspended — no new tokens "
+            "(resume the tenant first)",
+            err=True)
+        db.close()
+        raise SystemExit(2)
+
+    # C-1 pattern: 32-byte plaintext, pbkdf2 hash at rest.
+    plaintext = secrets.token_hex(32)
+    salt_hex = _os.urandom(16).hex()
+    dk = hashlib.pbkdf2_hmac(
+        "sha256", plaintext.encode(), bytes.fromhex(salt_hex), 100_000)
+    token_hash = f"pbkdf2${salt_hex}${dk.hex()}"
+
+    db.execute(
+        "INSERT INTO tenant_service_tokens "
+        "(tenant_id, token_hash, created_at, revoked) "
+        "VALUES (?, ?, datetime('now'), 0)",
+        (tenant["id"], token_hash))
+    db.commit()
+    db.close()
+    click.echo(f"service token for tenant `{slug}` (shown once):")
+    click.echo(plaintext)
+    click.echo("(store this now; only the pbkdf2 hash is kept at rest)")
+
+
+@service_token.command(name="list")
+@click.option("--slug", default=None,
+              help="Only list tokens for this tenant.  Omit for all tenants.")
+def service_token_list(slug):
+    """List per-tenant service-token metadata (never the hash, C-1).
+
+    Shows token id, tenant slug, created_at, and revoked flag.  The
+    pbkdf2 hash is deliberately omitted (C-1).
+    """
+    from digital_twins.tenant_service import list_service_tokens
+
+    db, _, _ = _tenant_auth_gate()
+    tenant_id = None
+    if slug is not None:
+        tenant_id = _get_tenant_by_slug(db, slug)["id"]
+    rows = list_service_tokens(db, tenant_id=tenant_id)
+    # Build a tenant_id → slug map for display
+    slug_map = {row[0]: row[1] for row in
+                db.execute("SELECT id, slug FROM tenants").fetchall()}
+    db.close()
+
+    if not rows:
+        click.echo("no service tokens found")
+        return
+
+    click.echo("id  tenant  created_at  revoked")
+    for r in rows:
+        tslug = slug_map.get(r["tenant_id"], "?")
+        click.echo(
+            f"{r['id']}  {tslug}  {r['created_at']}  "
+            f"{'yes' if r['revoked'] else 'no'}")
+
+
+@service_token.command(name="revoke")
+@click.option("--slug", required=True,
+              help="Tenant slug to revoke the token for.")
+@click.option("--token", required=True,
+              help="The plaintext service token to revoke.")
+def service_token_revoke(slug, token):
+    """Revoke a per-tenant service token (install-level admin only).
+
+    The operator supplies the plaintext token shown at issuance;
+    the row is matched by re-deriving its pbkdf2 hash.  Unknown or
+    already-revoked tokens are a silent no-op.
+    """
+    from digital_twins.tenant_service import revoke_service_token
+
+    db, _, _ = _tenant_auth_gate()
+    tenant = _get_tenant_by_slug(db, slug)
+    if tenant["status"] == "suspended":
+        click.echo(
+            f"tenant `{slug}` is suspended — token revoke "
+            "unavailable (resume the tenant first)",
+            err=True)
+        db.close()
+        raise SystemExit(2)
+
+    revoked = revoke_service_token(db, token)
+    db.close()
+    if revoked:
+        click.echo(f"service token revoked for tenant `{slug}`")
+    else:
+        click.echo(
+            f"no matching active service token for tenant `{slug}` "
+            "(no-op: token was unknown or already revoked)")
+
+
 def main() -> None:
     cli()

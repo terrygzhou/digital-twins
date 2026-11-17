@@ -93,7 +93,7 @@ def _guard_db_pin(driver: Any, caller: str) -> None:
     """
     from urllib.parse import urlparse, parse_qs
 
-    from digital_twins.config.schema import ConfigError
+    from digital_twins.config import ConfigError
 
     # neo4j driver instances expose the URL in several ways depending
     # on the version: ``driver._address`` (older), or the recorded

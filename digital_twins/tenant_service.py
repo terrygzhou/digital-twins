@@ -301,8 +301,17 @@ def provision_tenant(conn: sqlite3.Connection,
     if qdrant_client is not None:
         collection = f"kb-{slug}"
         if not qdrant_client.collection_exists(collection):
+            # Real qdrant-client API: create_collection takes a
+            # VectorParams object, not a bare vector_size kwarg.
+            # The pinned distance is DOT (matches the install-global
+            # embedding config; bge-small-en-v1.5 vectors are
+            # L2-normalised so DOT == cosine without the normalise
+            # step).
+            from qdrant_client.models import Distance, VectorParams
             qdrant_client.create_collection(
-                collection, vector_size=dimension)
+                collection,
+                vectors_config=VectorParams(
+                    size=dimension, distance=Distance.DOT))
 
     display_name = name if name is not None else slug.capitalize()
     try:
@@ -334,17 +343,15 @@ def suspend_tenant(conn: sqlite3.Connection, tenant_id: int) -> None:
 
     The install tenant (id 1) cannot be suspended (it is the legacy
     shared store's identity; suspending it would 403 every legacy
-    consumer until the backfill lands).  Raises ``UnknownTenant`` if
-    the id does not exist.
+    consumer until the backfill lands) — raises
+    :class:`InstallTenantProtected`.  A non-existent id raises
+    :class:`UnknownTenant`.
     """
     if tenant_id == 1:
         # The install tenant is not suspendable (same protection as
-        # delete, but as a suspension guard: a suspended install
-        # tenant would 403 every legacy consumer).
-        # Not a distinct exception class — the operator-facing message
-        # is "unknown" because from a lifecycle standpoint, id 1 is
-        # not a provisionable tenant.
-        raise UnknownTenant(tenant_id)
+        # delete: a suspended install tenant would 403 every legacy
+        # consumer until the backfill lands).
+        raise InstallTenantProtected()
     cur = conn.execute(
         "UPDATE tenants SET status='suspended' WHERE id=?",
         (tenant_id,),

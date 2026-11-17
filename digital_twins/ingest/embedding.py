@@ -13,6 +13,10 @@ from digital_twins.config.schema import SchemaError
 # model name -> vector dimension (pinned by the package)
 PINNED_MODELS = {
     "BAAI/bge-small-en-v1.5": 384,
+    # Ollama-hosted embedding models; accepted so host Ollama deployments
+    # can satisfy the FR-010 dimension guard with the local model name.
+    "all-minilm:33m": 384,
+    "bge-m3:latest": 1024,
 }
 
 DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"

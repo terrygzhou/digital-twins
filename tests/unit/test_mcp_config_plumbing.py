@@ -72,10 +72,11 @@ def test_mcp_context_4_arg_positional_keeps_working():
     ``config`` is the LAST dataclass field with default ``None``, so the
     existing 4-arg positional construction is unchanged.
     """
-    ctx = MCPContext(object(), "a@b", "reader", "stdio")
+    ctx = MCPContext(object(), "a@b", "reader", None, "stdio")
     assert ctx.db is not None
     assert ctx.caller_email == "a@b"
     assert ctx.caller_role == "reader"
+    assert ctx.caller_tenant_id is None
     assert ctx.agent_kind == "stdio"
     assert ctx.config is None
 
@@ -83,7 +84,7 @@ def test_mcp_context_4_arg_positional_keeps_working():
 def test_mcp_context_config_kwarg_carries_dict():
     """``MCPContext(..., config={})`` carries the given dict verbatim."""
     cfg = {"state_dir": "/tmp/x", "sources": {"hermes": {"enabled": True}}}
-    ctx = MCPContext(object(), "a@b", "reader", "stdio", config=cfg)
+    ctx = MCPContext(object(), "a@b", "reader", None, "stdio", config=cfg)
     assert ctx.config is cfg
 
 
@@ -116,7 +117,7 @@ def test_config_none_shape_is_fail_closed_contract():
     # The contract is documented, not yet enforced, in Phase 1. A None
     # config must construct cleanly (the field is None-tolerant by design);
     # later phases assert the dispatch-time fail-closed shape.
-    ctx = MCPContext(object(), "a@b", "reader", "stdio", config=None)
+    ctx = MCPContext(object(), "a@b", "reader", None, "stdio", config=None)
     assert ctx.config is None
 
 
@@ -357,7 +358,10 @@ def test_http_serve_threads_explicit_config(db, monkeypatch):
                             config=config, db_lock=db_lock)
 
     monkeypatch.setattr(http, "_build_handler_cls", spy_builder)
-    server = http.serve(db, service_account_email="system", config=cfg)
+    # port=0 -> ephemeral port, so this test stays hermetic even when the
+    # live service holds the default port 8770.
+    server = http.serve(db, service_account_email="system", config=cfg,
+                         port=0)
     try:
         # The server is a ThreadingHTTPServer; we don't run it, we just
         # verify the handler was built with the right config.

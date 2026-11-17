@@ -104,9 +104,9 @@ def _seed_v1(conn):
     )
     conn.commit()
 
-    models.upsert_highwater(conn, "fs", "notes/a.txt", "abc123")
-    models.upsert_highwater(conn, "imap", "inbox", "msg-id-42")
-    models.upsert_highwater(conn, "fs", "logs/b.log", "xyz789")
+    models.upsert_highwater(conn, "fs", "notes/a.txt", "abc123", 1)
+    models.upsert_highwater(conn, "imap", "inbox", "msg-id-42", 1)
+    models.upsert_highwater(conn, "fs", "logs/b.log", "xyz789", 1)
 
     models.start_audit_run(conn, "run-001", trigger="schedule",
                            scheduled_by="cron-e4735")
@@ -127,12 +127,12 @@ def test_seed_data_survives_version_bumped_migration(tmp_path):
     before = _snapshot_all(conn)
 
     v = migrations.migrate(conn)
-    assert v == 4, "user_version must advance to 4"
+    assert v == 6, "user_version must advance to 6"
 
     after = _snapshot_all(conn)
     for table in ("accounts", "highwater", "audit_runs", "schedules"):
         assert after[table] == before[table], (
-            f"{table} rows changed after migration to v3"
+            f"{table} rows changed after migration to v6"
         )
     conn.close()
 
@@ -191,9 +191,9 @@ def test_highwater_survives_upgrade(tmp_path):
     ).fetchall()
     assert hw_after == hw_before, "highwater data changed"
 
-    assert models.get_highwater(conn, "fs", "notes/a.txt") == "abc123"
-    assert models.get_highwater(conn, "imap", "inbox") == "msg-id-42"
-    assert models.get_highwater(conn, "fs", "logs/b.log") == "xyz789"
+    assert models.get_highwater(conn, "fs", "notes/a.txt", 1) == "abc123"
+    assert models.get_highwater(conn, "imap", "inbox", 1) == "msg-id-42"
+    assert models.get_highwater(conn, "fs", "logs/b.log", 1) == "xyz789"
     conn.close()
 
 
@@ -245,8 +245,8 @@ def test_migration_is_idempotent(tmp_path):
     v1 = migrations.migrate(conn)
     v2 = migrations.migrate(conn)
     v3 = migrations.migrate(conn)
-    assert v1 == v2 == v3 == 4
-    assert migrations.user_version(conn) == 4
+    assert v1 == v2 == v3 == 6
+    assert migrations.user_version(conn) == 6
     conn.close()
 
 
@@ -257,11 +257,11 @@ def test_migration_is_idempotent_after_upgrade(tmp_path):
     _seed_v1(conn)
 
     v = migrations.migrate(conn)
-    assert v == 4
+    assert v == 6
 
     v_again = migrations.migrate(conn)
-    assert v_again == 4, "re-running migrate() must not advance version"
-    assert migrations.user_version(conn) == 4
+    assert v_again == 6, "re-running migrate() must not advance version"
+    assert migrations.user_version(conn) == 6
 
     # data still intact
     assert len(conn.execute("SELECT * FROM accounts").fetchall()) == 2
@@ -335,8 +335,8 @@ def test_v3_adds_new_tables_and_version(tmp_path):
     _pin_v2(conn)
 
     v = migrations.migrate(conn)
-    assert v == 4, "user_version must advance to 4"
-    assert migrations.user_version(conn) == 4
+    assert v == 6, "user_version must advance to 6"
+    assert migrations.user_version(conn) == 6
 
     tables = _table_names(conn)
     assert {"personal_tokens", "user_config", "sessions"} <= tables, (
@@ -392,7 +392,7 @@ def test_v2_seeded_rows_survive_v3(tmp_path):
     assert len(schedules_before) == 1, "precondition: one schedule seeded"
 
     v = migrations.migrate(conn)
-    assert v == 4
+    assert v == 6
 
     assert conn.execute(
         "SELECT id, email, role, password_hash FROM accounts ORDER BY id"
@@ -417,15 +417,15 @@ def test_v3_is_idempotent(tmp_path):
     _seed_v2(conn)
 
     v1 = migrations.migrate(conn)
-    assert v1 == 4
+    assert v1 == 6
     tables_after_first = _table_names(conn)
     acct_cols_after_first = {r[1] for r in conn.execute(
         "PRAGMA table_info(accounts)")}
 
     # Second full migrate() must not error nor duplicate anything.
     v2 = migrations.migrate(conn)
-    assert v2 == 4, "re-run must not advance user_version past 4"
-    assert migrations.user_version(conn) == 4
+    assert v2 == 6, "re-run must not advance user_version past 6"
+    assert migrations.user_version(conn) == 6
 
     assert _table_names(conn) == tables_after_first, (
         "re-running v3 changed the table set")
@@ -443,8 +443,8 @@ def test_fresh_install_migrates_to_v3(tmp_path):
     """Fresh db: migrate() runs v1→v2→v3 and lands on v3 with all tables."""
     conn = connect(tmp_path)
     v = migrations.migrate(conn)
-    assert v == 4
-    assert migrations.SCHEMA_VERSION == 4
+    assert v == 6
+    assert migrations.SCHEMA_VERSION == 6
 
     tables = _table_names(conn)
     assert {"accounts", "highwater", "audit_runs", "schedules",
@@ -509,5 +509,5 @@ def test_failed_migration_step_rolls_back(tmp_path, monkeypatch):
     # user_version at 1). A full migrate() now lands on v3.
     monkeypatch.undo()
     v = migrations.migrate(conn)
-    assert v == 4, "a subsequent migrate() must apply the now-working steps"
+    assert v == 6, "a subsequent migrate() must apply the now-working steps"
     conn.close()

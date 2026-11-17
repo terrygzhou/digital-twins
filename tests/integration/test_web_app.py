@@ -697,22 +697,16 @@ def test_e2e_full_journey(web_app):
     )
 
     # -- 10. SC-005: per-user audit -------------------------------------------
-    # The reader's /api/audit/recent → only their own rows (empty: the 403
-    # wrote no audit row; the reader never ran anything).
+    # T023 (spec 025): /api/audit/recent is admin-gated — reader/scheduler
+    # callers get 403 permission_denied.  The reader's call must be denied.
     code, parsed, raw, _ct = _http_get_full(
         host, port, "/api/audit/recent", headers=reader_auth)
-    assert code == 200, (
-        f"reader /api/audit/recent expected 200, got {code}: {raw[:300]!r}"
+    assert code == 403, (
+        f"T023: reader /api/audit/recent expected 403, got {code}: "
+        f"{raw[:300]!r}"
     )
-    reader_rows = parsed.get("rows", [])
-    assert all(r["scheduled_by"] == "reader@example.com"
-               for r in reader_rows), (
-        f"SC-005: reader's audit must contain ONLY their own rows: "
-        f"{[r.get('scheduled_by') for r in reader_rows]!r}"
-    )
-    assert reader_rows == [], (
-        f"SC-005: the reader triggered nothing (the 403 wrote no audit "
-        f"row), so their audit must be empty, got {reader_rows!r}"
+    assert parsed.get("code") == "permission_denied", (
+        f"T023: 403 body must be permission_denied, got {parsed!r}"
     )
 
     # The admin's /api/audit/recent → ALL rows (NFR-16 admin privilege).
@@ -721,7 +715,7 @@ def test_e2e_full_journey(web_app):
     assert code == 200, (
         f"admin /api/audit/recent expected 200, got {code}: {raw[:300]!r}"
     )
-    admin_rows = parsed.get("rows", [])
+    admin_rows = parsed.get("runs", [])
     assert len(admin_rows) == 2, (
         f"admin audit must have exactly 2 rows (web + direct), "
         f"got {len(admin_rows)}: {[r.get('trigger') for r in admin_rows]!r}"

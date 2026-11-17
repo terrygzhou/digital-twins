@@ -1,7 +1,7 @@
 version: "3.8"
 services:
   qdrant:
-    image: qdrant/qdrant:1.9.7
+    image: qdrant/qdrant:v1.20.0
     volumes:
       - qdrant-data:/qdrant/storage
     healthcheck:

@@ -136,12 +136,12 @@ def _seed_audit_row(db, started_at: str, scheduled_by: str, trigger: str,
 
 
 def test_audit_recent_non_admin_only_own_rows(web_app):
-    """Non-admin alice GET /api/audit/recent?limit=10 → ONLY rows where
-    scheduled_by=alice (NFR-16); bob's rows and system rows never leak.
+    """T023 (spec 025): /api/audit/recent is admin-gated.  Non-admin
+    alice GET /api/audit/recent → 403 permission_denied; the per-user
+    scoping from T014 no longer applies.
 
-    Seeded: 3 alice rows (one trigger='web'), 2 bob rows, 1 system row.
-
-    RED: the route is unimplemented (T014) → the scaffold's clean JSON 404.
+    Seeded: 3 alice rows (one trigger='web'), 2 bob rows, 1 system row —
+    the rows exist but are never visible to alice.
     """
     _app, db, host, port, tokens = web_app
     _seed_audit_row(db, "2026-01-01T00:00:00+00:00", "alice@example.com",
@@ -159,22 +159,14 @@ def test_audit_recent_non_admin_only_own_rows(web_app):
     code, parsed, raw = _http_get(
         host, port, "/api/audit/recent?limit=10",
         headers={"Authorization": f"Bearer {tokens['alice@example.com']}"})
-    assert code == 200, (
-        f"GET /api/audit/recent?limit=10 (non-admin) expected 200, "
+    assert code == 403, (
+        f"T023: non-admin /api/audit/recent expected 403, "
         f"got {code}: {raw[:300]!r}"
     )
     assert parsed is not None, f"body must be JSON: {raw[:300]!r}"
-    rows = parsed.get("rows")
-    assert isinstance(rows, list), f"'rows' must be a list: {parsed!r}"
-    assert len(rows) == 3, (
-        f"alice (non-admin) must see exactly her own 3 rows, "
-        f"got {len(rows)}: {rows!r}")
-    scheduled_by = [r.get("scheduled_by") for r in rows]
-    assert all(s == "alice@example.com" for s in scheduled_by), (
-        f"every row must be scheduled_by=alice, got {scheduled_by!r}")
-    # The web-trigger row is among hers (visible to its owner).
-    assert "web" in [r.get("trigger") for r in rows], (
-        f"alice's trigger='web' row must be visible to her: {rows!r}")
+    assert parsed.get("code") == "permission_denied", (
+        f"403 body must be permission_denied, got {parsed!r}"
+    )
 
 
 # --- 10. admin sees all rows -----------------------------------------------------
@@ -203,11 +195,11 @@ def test_audit_recent_admin_sees_all(web_app):
         f"{raw[:300]!r}"
     )
     assert parsed is not None, f"body must be JSON: {raw[:300]!r}"
-    rows = parsed.get("rows")
-    assert isinstance(rows, list), f"'rows' must be a list: {parsed!r}"
-    assert len(rows) == 4, (
-        f"admin must see all 4 rows, got {len(rows)}: {rows!r}")
-    scheduled_by = {r.get("scheduled_by") for r in rows}
+    runs = parsed.get("runs")
+    assert isinstance(runs, list), f"'runs' must be a list: {parsed!r}"
+    assert len(runs) == 4, (
+        f"admin must see all 4 rows, got {len(runs)}: {runs!r}")
+    scheduled_by = {r.get("scheduled_by") for r in runs}
     assert scheduled_by == {"alice@example.com", "bob@example.com",
                             "system"}, (
         f"admin must see every user's rows, got {scheduled_by!r}")
@@ -217,16 +209,17 @@ def test_audit_recent_admin_sees_all(web_app):
 
 
 def test_audit_recent_audit_shape(web_app):
-    """Rows in the 001/002/004 audit shape, most recent first, with the
-    ``limit`` default (10) and cap (100) honoured.
+    """Admin GET /api/audit/recent — rows in the 001/002/004 audit shape,
+    most recent first, with the ``limit`` default (10) and cap (100) honoured.
+
+    T023 (spec 025): /api/audit/recent is admin-gated.  The shape/ordering
+    assertions ride the admin caller; non-admin callers get 403.
 
     - Each row: ``run_id``, ``started_at``, ``completed_at``, ``status``,
       ``trigger``, ``scheduled_by``, per-source counts (``fs`` = 3).
     - Most recent first (seeded ts strictly descending).
     - Seed 15 rows, no ``?limit=`` → exactly the default-10 most recent.
     - ``?limit=3`` → exactly the 3 most recent.
-
-    RED: the route is unimplemented (T014) → the scaffold's clean JSON 404.
     """
     _app, db, host, port, tokens = web_app
     # 15 rows with strictly-ascending ISO-8601 timestamps (day 1–15).
@@ -239,23 +232,24 @@ def test_audit_recent_audit_shape(web_app):
     # (a) Default limit: 10 of the 15 rows, most recent first.
     code, parsed, raw = _http_get(
         host, port, "/api/audit/recent",
-        headers={"Authorization": f"Bearer {tokens['alice@example.com']}"})
+        headers={"Authorization": f"Bearer {tokens['admin@example.com']}"})
     assert code == 200, (
-        f"GET /api/audit/recent expected 200, got {code}: {raw[:300]!r}"
+        f"GET /api/audit/recent (admin) expected 200, got {code}: "
+        f"{raw[:300]!r}"
     )
-    rows = (parsed or {}).get("rows")
-    assert isinstance(rows, list), f"'rows' must be a list: {parsed!r}"
-    assert len(rows) == 10, (
-        f"default limit must be 10 rows (of 15 seeded), got {len(rows)}")
+    runs = (parsed or {}).get("runs")
+    assert isinstance(runs, list), f"'runs' must be a list: {parsed!r}"
+    assert len(runs) == 10, (
+        f"default limit must be 10 rows (of 15 seeded), got {len(runs)}")
     # Most recent first: ts day 15 down to day 6.
-    assert [r["run_id"] for r in rows[:0]] == []  # shape check only
+    assert [r["run_id"] for r in runs[:0]] == []  # shape check only
     expected_ts_desc = [f"2026-02-{d:02d}T00:00:00+00:00" for d in
                         [15, 14, 13, 12, 11, 10, 9, 8, 7, 6]]
-    assert [r["started_at"] for r in rows] == expected_ts_desc, (
-        f"rows must be most-recent-first with the default limit; got "
-        f"{[r.get('started_at') for r in rows]!r}")
+    assert [r["started_at"] for r in runs] == expected_ts_desc, (
+        f"runs must be most-recent-first with the default limit; got "
+        f"{[r.get('started_at') for r in runs]!r}")
     # (b) Per-row shape: the 001/002/004 audit record fields.
-    for row in rows:
+    for row in runs:
         assert set(row) >= {"run_id", "started_at", "completed_at", "status",
                             "trigger", "scheduled_by"}, (
             f"each row must carry the audit shape, got {set(row)}: {row!r}")
@@ -270,28 +264,28 @@ def test_audit_recent_audit_shape(web_app):
     # (c) Explicit limit: 3 most recent.
     code, parsed, raw = _http_get(
         host, port, "/api/audit/recent?limit=3",
-        headers={"Authorization": f"Bearer {tokens['alice@example.com']}"})
+        headers={"Authorization": f"Bearer {tokens['admin@example.com']}"})
     assert code == 200, f"got {code}: {raw[:300]!r}"
-    rows3 = (parsed or {}).get("rows")
-    assert isinstance(rows3, list) and len(rows3) == 3, (
+    runs3 = (parsed or {}).get("runs")
+    assert isinstance(runs3, list) and len(runs3) == 3, (
         f"limit=3 must yield exactly 3 rows, got "
-        f"{len(rows3) if isinstance(rows3, list) else rows3!r}")
-    assert [r["started_at"] for r in rows3] == [
+        f"{len(runs3) if isinstance(runs3, list) else runs3!r}")
+    assert [r["started_at"] for r in runs3] == [
         "2026-02-15T00:00:00+00:00",
         "2026-02-14T00:00:00+00:00",
         "2026-02-13T00:00:00+00:00"], (
         f"limit=3 must be the 3 most recent, got "
-        f"{[r.get('started_at') for r in rows3]!r}")
+        f"{[r.get('started_at') for r in runs3]!r}")
     # (d) Cap: ?limit=500 is clamped to 100 — with only 15 rows the
     # response is all 15 (the cap is the upper bound, not the target).
     code, parsed, raw = _http_get(
         host, port, "/api/audit/recent?limit=500",
-        headers={"Authorization": f"Bearer {tokens['alice@example.com']}"})
+        headers={"Authorization": f"Bearer {tokens['admin@example.com']}"})
     assert code == 200, f"got {code}: {raw[:300]!r}"
-    rows500 = (parsed or {}).get("rows")
-    assert isinstance(rows500, list) and len(rows500) == 15, (
+    runs500 = (parsed or {}).get("runs")
+    assert isinstance(runs500, list) and len(runs500) == 15, (
         f"?limit=500 must be capped at 100 (all 15 seeded rows returned), "
-        f"got {len(rows500) if isinstance(rows500, list) else rows500!r}")
+        f"got {len(runs500) if isinstance(runs500, list) else runs500!r}")
 
 
 # --- 12. web-triggered run visible immediately ------------------------------------
@@ -375,11 +369,11 @@ def test_audit_recent_web_trigger_visible(web_app, monkeypatch):
     assert code == 200, (
         f"GET /api/audit/recent expected 200, got {code}: {raw[:300]!r}"
     )
-    rows = (parsed or {}).get("rows")
-    assert isinstance(rows, list), f"'rows' must be a list: {parsed!r}"
-    assert any(r.get("run_id") == run_id for r in rows), (
+    runs = (parsed or {}).get("runs")
+    assert isinstance(runs, list), f"'runs' must be a list: {parsed!r}"
+    assert any(r.get("run_id") == run_id for r in runs), (
         f"the just-triggered run ({run_id}) must appear in "
-        f"/api/audit/recent immediately; rows: {rows!r}")
+        f"/api/audit/recent immediately; runs: {runs!r}")
 
 
 # --- 13. no/invalid token → 401 ---------------------------------------------------

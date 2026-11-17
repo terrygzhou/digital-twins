@@ -1,20 +1,29 @@
 """T003 (RED): mcp_authenticator — MCP credential gate (feature 004, R1).
 
 Mirrors 003's ``_auth_checker`` credential order (cli.py) but returns
-``(bool, email | None)`` instead of a bare ``bool`` / ``str`` so the MCP
-executor (T010) can resolve the caller's role via ``accounts.get_role``.
+``(bool, tenant_id | None, email_or_reason | None)`` so the MCP
+executor (T010) can resolve the caller's role via
+``accounts.get_role``.
 
 Credential order (identical to 003):
   1. ``DT_SERVICE_TOKEN`` env + ``hmac.compare_digest`` → service account
-     email (the ``mcp.service_account_email`` knob, default ``"system"``).
-  2. ``verify_personal_token(db, token)`` → the token's account email.
-  3. ``verify_session(db, token)`` → the session's account email.
+     email (the ``mcp.service_account_email`` knob, default ``"system"``),
+     scoped to the install tenant (id 1).
+  2. Per-tenant service token (T019) → the issuing tenant's id;
+     ``account_email`` stays ``None`` (a service token mints no
+     account).
+  3. ``verify_personal_token(db, token)`` → the token's account email,
+     scoped to the install tenant (id 1).
+  4. ``verify_session(db, token)`` → the session's account email,
+     scoped to the install tenant (id 1).
 
 Fail-closed semantics (mirroring 003's checker):
-- missing / no ``Bearer`` prefix / unknown credential → ``(False, None)``
-- a *known* credential whose account no longer exists → ``(False, reason)``
-  where ``reason`` is a non-empty string naming the failure (403-class
-  denial, not a 401-class unknown-credential denial).
+- missing / no ``Bearer`` prefix / unknown credential →
+  ``(False, None, None)``
+- a *known* credential whose account no longer exists →
+  ``(False, None, reason)`` where ``reason`` is a non-empty string
+  naming the failure (403-class denial, not a 401-class
+  unknown-credential denial).
 """
 
 import os
@@ -62,16 +71,19 @@ def test_returns_callable(db):
 
 
 def test_callable_returns_tuple(db):
-    """authenticate(headers) always returns a 2-tuple (bool, email|None)."""
+    """authenticate(headers) always returns a 3-tuple
+    (bool, tenant_id|None, email_or_reason|None)."""
     from digital_twins.mcp.auth import mcp_authenticator
     auth = mcp_authenticator(db)
-    # No Authorization header at all → missing credential → (False, None)
+    # No Authorization header at all → missing credential →
+    # (False, None, None)
     result = auth({})
     assert isinstance(result, tuple)
-    assert len(result) == 2
-    ok, email = result
+    assert len(result) == 3
+    ok, tenant_id, email_or_reason = result
     assert ok is False
-    assert email is None
+    assert tenant_id is None
+    assert email_or_reason is None
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +96,9 @@ def test_valid_personal_token(db):
     create_account(db, "alice@example.com", "pw-alice")
     _tid, plaintext = create_personal_token(db, "alice@example.com")
     auth = mcp_authenticator(db)
-    ok, email = auth(_bearer(plaintext))
+    ok, tenant_id, email = auth(_bearer(plaintext))
     assert ok is True
+    assert tenant_id == 1
     assert email == "alice@example.com"
 
 
@@ -99,8 +112,9 @@ def test_valid_session_token(db):
     create_account(db, "bob@example.com", "pw-bob")
     plaintext, _expires = create_session(db, "bob@example.com")
     auth = mcp_authenticator(db)
-    ok, email = auth(_bearer(plaintext))
+    ok, tenant_id, email = auth(_bearer(plaintext))
     assert ok is True
+    assert tenant_id == 1
     assert email == "bob@example.com"
 
 
@@ -113,8 +127,9 @@ def test_service_token_resolves_to_default_email(db, monkeypatch):
     from digital_twins.mcp.auth import mcp_authenticator
     monkeypatch.setenv("DT_SERVICE_TOKEN", "svc-secret-token")
     auth = mcp_authenticator(db)  # default service_account_email="system"
-    ok, email = auth(_bearer("svc-secret-token"))
+    ok, tenant_id, email = auth(_bearer("svc-secret-token"))
     assert ok is True
+    assert tenant_id == 1
     assert email == "system"
 
 
@@ -123,8 +138,9 @@ def test_service_token_custom_email(db, monkeypatch):
     from digital_twins.mcp.auth import mcp_authenticator
     monkeypatch.setenv("DT_SERVICE_TOKEN", "svc-secret-token")
     auth = mcp_authenticator(db, service_account_email="svc@example.com")
-    ok, email = auth(_bearer("svc-secret-token"))
+    ok, tenant_id, email = auth(_bearer("svc-secret-token"))
     assert ok is True
+    assert tenant_id == 1
     assert email == "svc@example.com"
 
 
@@ -135,8 +151,9 @@ def test_service_token_wrong_value_denied(db, monkeypatch):
     auth = mcp_authenticator(db)
     # "wrong-secret" != "the-real-secret" and matches no personal/session
     # token either → unknown credential → (False, None).
-    ok, email = auth(_bearer("wrong-secret"))
+    ok, tenant_id, email = auth(_bearer("wrong-secret"))
     assert ok is False
+    assert tenant_id is None
     assert email is None
 
 
@@ -148,26 +165,29 @@ def test_missing_authorization_header(db):
     """No Authorization header at all → (False, None)."""
     from digital_twins.mcp.auth import mcp_authenticator
     auth = mcp_authenticator(db)
-    ok, email = auth({})
+    ok, tenant_id, email = auth({})
     assert ok is False
+    assert tenant_id is None
     assert email is None
 
 
 def test_no_bearer_prefix(db):
-    """Authorization without a 'Bearer ' prefix → (False, None)."""
+    """Authorization without a 'Bearer ' prefix → (False, None, None)."""
     from digital_twins.mcp.auth import mcp_authenticator
     auth = mcp_authenticator(db)
-    ok, email = auth({"Authorization": "Basic dXNlcjpwYXNz"})
+    ok, tenant_id, email = auth({"Authorization": "Basic dXNlcjpwYXNz"})
     assert ok is False
+    assert tenant_id is None
     assert email is None
 
 
 def test_unknown_bearer(db):
-    """A Bearer that matches no credential → (False, None)."""
+    """A Bearer that matches no credential → (False, None, None)."""
     from digital_twins.mcp.auth import mcp_authenticator
     auth = mcp_authenticator(db)
-    ok, email = auth(_bearer("totally-unknown-credential"))
+    ok, tenant_id, email = auth(_bearer("totally-unknown-credential"))
     assert ok is False
+    assert tenant_id is None
     assert email is None
 
 
@@ -198,9 +218,10 @@ def test_personal_token_for_deleted_account_fails_closed(db):
     db.execute("DELETE FROM accounts WHERE email=?", ("ghost@example.com",))
     db.commit()
     auth = mcp_authenticator(db)
-    ok, email_or_reason = auth(_bearer(plaintext))
+    ok, tenant_id, email_or_reason = auth(_bearer(plaintext))
     # No grant under any circumstance (fail closed).
     assert ok is False
+    assert tenant_id is None
     # Cascade-deleted → the token row is gone → unknown credential → None
     # (401-class), mirroring 003's /status behavior on an unknown bearer.
     assert email_or_reason is None
@@ -218,14 +239,16 @@ def test_session_token_for_deleted_account_fails_closed(db):
     db.execute("DELETE FROM accounts WHERE email=?", ("phantom@example.com",))
     db.commit()
     auth = mcp_authenticator(db)
-    ok, email_or_reason = auth(_bearer(plaintext))
+    ok, tenant_id, email_or_reason = auth(_bearer(plaintext))
     assert ok is False
+    assert tenant_id is None
     assert email_or_reason is None
 
 
 def test_known_credential_dead_account_returns_reason_not_grant(db, monkeypatch):
     """The 403-class fail-closed branch: a *known* credential whose account
-    no longer resolves to a role → ``(False, <reason>)``, never a grant.
+    no longer resolves to a role → ``(False, None, <reason>)``, never a
+    grant.
 
     This exercises the ``get_role`` fail-closed branch in the authenticator
     (independent of the schema's ON DELETE CASCADE) by driving the
@@ -245,8 +268,9 @@ def test_known_credential_dead_account_returns_reason_not_grant(db, monkeypatch)
     monkeypatch.setattr(auth_mod, "verify_session", lambda db, token: None)
     monkeypatch.setattr(accounts, "get_role", lambda db, email: None)
     auth = mcp_authenticator(db)
-    ok, email_or_reason = auth(_bearer("whatever"))
+    ok, tenant_id, email_or_reason = auth(_bearer("whatever"))
     assert ok is False
+    assert tenant_id is None
     # A known-but-dead credential is denied with a reason (403-class),
     # not a bare unknown-credential None.
     assert isinstance(email_or_reason, str) and email_or_reason

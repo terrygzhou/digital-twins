@@ -240,14 +240,18 @@ def test_kb_search_service_token_owner_scoped(db, tmp_path, monkeypatch):
         key="meta.owner_tag", match=MatchValue(value=owner_tag))])
     assert call["with_payload"] is True
 
-    # (ii) the wire result carries the exact field set per row; the filter
+    # (ii) the wire result carries the exact field set per row (020 FR-6:
+    #     `images` is always present — empty array when no image metadata);
+    #     the filter returns only the caller's point (the other owner's is
+    #     dropped).
     #     returns only the caller's point (the other owner's is dropped).
     assert result["ok"] is True
     assert result["count"] == 1
     for row in result["results"]:
         assert set(row.keys()) == {"score", "source_url", "text", "source",
-                                   "chunk_index", "id", "full_content",
-                                   "content_snippet", "item_id"}
+                                    "chunk_index", "id", "full_content",
+                                    "content_snippet", "item_id", "images"}
+        assert row["images"] == []
 
     # (iii) a second owner's point never appears: the filter's match value
     #     is the service account's tag (bob's tag differs), so the fake

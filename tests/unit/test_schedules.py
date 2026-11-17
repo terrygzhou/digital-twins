@@ -68,7 +68,7 @@ def test_migration_v2_applies_cleanly(tmp_path):
     conn.execute("PRAGMA user_version=2")
     conn.commit()
     assert migrations.user_version(conn) == 2
-    assert migrations.SCHEMA_VERSION == 4
+    assert migrations.SCHEMA_VERSION == 6
 
     cols = _table_info(conn)
     assert cols, "schedules table must exist after v2 migration"
@@ -116,7 +116,7 @@ def test_migration_v2_preserves_v1_data(tmp_path):
     conn.execute("PRAGMA user_version=1")
     conn.commit()
 
-    models.upsert_highwater(conn, "fs", "a.txt", "abc123")
+    models.upsert_highwater(conn, "fs", "a.txt", "abc123", 1)
     models.start_audit_run(conn, "run-x", trigger="manual")
     models.finish_audit_run(conn, "run-x", "ok")
     conn.execute(

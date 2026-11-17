@@ -186,8 +186,12 @@ def test_sc001_fresh_client_gets_full_tool_list(db):
     }
     expected_stubs = {"kb_search", "kb_chat", "kb_ingest", "kb_health"}
     expected_ingest_folder = {"kb_ingest_folder"}
-    assert registry_names == expected_real | expected_stubs | expected_ingest_folder, (
-        f"registry must have exactly 11 tools (6 real + 4 stubs + 1 ingest_folder), "
+    expected_heal = {"kb_extraction_heal"}  # 019b/020: targeted heal tool
+    assert registry_names == (
+        expected_real | expected_stubs | expected_ingest_folder | expected_heal
+    ), (
+        f"registry must have exactly 12 tools "
+        f"(6 real + 4 stubs + 1 ingest_folder + 1 extraction_heal), "
         f"got {sorted(registry_names)}"
     )
 
@@ -211,8 +215,9 @@ def test_sc001_fresh_client_gets_full_tool_list(db):
     # Verify the token authenticates correctly through mcp_authenticator.
     from digital_twins.mcp.auth import mcp_authenticator
     auth = mcp_authenticator(db, service_account_email="system")
-    ok, email = auth({"Authorization": f"Bearer {token}"})
+    ok, tenant_id, email = auth({"Authorization": f"Bearer {token}"})
     assert ok is True
+    assert tenant_id == 1
     assert email == "admin@example.com"
 
 
@@ -376,8 +381,9 @@ def test_sc005_transport_parity(db, monkeypatch):
     # to verify the response is byte-identical to the stdio path.
     from digital_twins.mcp.auth import mcp_authenticator
     auth = mcp_authenticator(db, service_account_email="system")
-    ok, email = auth({"Authorization": f"Bearer {bob_token}"})
+    ok, tenant_id, email = auth({"Authorization": f"Bearer {bob_token}"})
     assert ok is True
+    assert tenant_id == 1
     caller_role = db.execute(
         "SELECT role FROM accounts WHERE email=?", (email,)
     ).fetchone()[0]
