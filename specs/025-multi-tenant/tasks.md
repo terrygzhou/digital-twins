@@ -29,8 +29,8 @@
 - [x] **T007**: Implement `digital_twins/tenant_service.py` — **row-level layer only** (SQLite `tenants` table; no Qdrant/Neo4j I/O): `resolve_stores(conn, tenant_id)` (one SELECT, no in-module cache — a cache would need suspend/delete invalidation within the process, deferred to a later pass; the spec's "one lookup cached per request" is satisfied by doing exactly one lookup per request), `provision_tenant(conn, slug, name=None, dimension=384)` (INSERT with slug validation **before** the INSERT so callers get `InvalidSlug`/`ReservedSlug`/`DuplicateSlug` instead of a raw `IntegrityError`; store names derived as `kb-<slug>` / `<slug>`), `suspend_tenant(conn, tenant_id)` (idempotent; install tenant id 1 not suspendable → `UnknownTenant`), `delete_tenant(conn, tenant_id)` (status → deleted + `deleted_at` stamp, row retained for audit, NFR-15; install tenant → `InstallTenantProtected`). **Store-side effects deferred to the provision CLI**: Qdrant `CREATE/DELETE COLLECTION`, Neo4j `CREATE/DROP DATABASE` (Enterprise) — Community 5.26 has no multi-DB, channel taxonomy is the graph boundary (decision log, 2026-11-15), so `provision_tenant` / `delete_tenant` here are row-only and the CLI must create/drop stores around them. **Done 2026-11-16**, unit suite 1132 passed.
   - As-built (commit `020216b`): `tenant_service.py` (313 lines) — `resolve_stores` / `provision_tenant` / `suspend_tenant` / `delete_tenant` with named exceptions (`UnknownTenant` 401, `SuspendedTenant` 403, `InvalidSlug`/`ReservedSlug`/`DuplicateSlug`, `InstallTenantProtected`).
   - Store-side effects deferred to the provision CLI (task-11): Qdrant `CREATE/DELETE COLLECTION`, Neo4j `CREATE/DROP DATABASE` (Enterprise). Community 5.26 has no multi-DB; channel taxonomy is the graph boundary.
-- [ ] **T008**: Verify `resolve_stores` returns correct `(collection, db_url)` for install tenant and a second tenant; verify `provision_tenant` creates collection at pinned dimension. GREEN.
-  - Store-side gate: Qdrant collection creation at pinned dimension is deferred to the provision CLI slice (still open). Row-level `resolve_stores` is green; the store-side `provision_tenant` path is not.
+- [x] **T008**: Verify `resolve_stores` returns correct `(collection, db_url)` for install tenant and a second tenant; verify `provision_tenant` creates collection at pinned dimension. GREEN.
+  - Store-side gate: `provision_tenant` now accepts an optional `qdrant_client` param; when passed, it calls `create_collection(f"kb-{slug}", vector_size=dimension)` before the row is committed (FR-3). Row-only path (no client) remains a no-op on the store side. 5 tests in `tests/unit/test_tenant_service_store_side.py` cover: install-tenant legacy pair, provisioned-tenant kb-pair, pinned-dim collection create, custom-dim collection create, row-only no-client path.
 
 ### Phase 3 — User Story 1: Tenant is the isolation unit (P1)
 
@@ -52,9 +52,9 @@
 
 ### Phase 6 — User Story 4: Tenant-scoped service tokens (P2)
 
-- [ ] **T018 (test-first)**: Write `tests/unit/test_tenant_service_tokens.py` — per-tenant service token authenticates only that tenant's runs; presenting tenant-A token to tenant-B surface → 401; revoking A's token does not affect B. Legacy shared `system` token maps to install tenant. RED: token-to-tenant resolution does not exist.
-- [ ] **T019**: Implement `tenant_service_tokens` CRUD in `tenant_service.py`; modify `mcp/auth.py` to resolve token → `(tenant_id, account_email)`; cross-tenant = 401, fail-closed.
-- [ ] **T020**: Verify SC-001 (token dimension): tenant-A service token authenticates only A; B's surface rejects A's token with 401. GREEN.
+- [x] **T018 (test-first)**: Write `tests/unit/test_tenant_service_tokens.py` — per-tenant service token authenticates only that tenant's runs; presenting tenant-A token to tenant-B surface → 401; revoking A's token does not affect B. Legacy shared `system` token maps to install tenant. RED: token-to-tenant resolution does not exist.
+- [x] **T019**: Implement `tenant_service_tokens` CRUD in `tenant_service.py`; modify `mcp/auth.py` to resolve token → `(tenant_id, account_email)`; cross-tenant = 401, fail-closed.
+- [x] **T020**: Verify SC-001 (token dimension): tenant-A service token authenticates only A; B's surface rejects A's token with 401. GREEN.
 
 ### Phase 7 — CLI + Web surfaces (P2)
 
