@@ -35,7 +35,7 @@
 ### Phase 3 — User Story 1: Tenant is the isolation unit (P1)
 
 - [ ] **T009 (test-first)**: Write `tests/integration/test_multi_tenant.py::test_cross_tenant_leak` — two tenants ingest same source with same items; tenant-A query path returns zero rows from tenant-B's collection even when owner filter omitted; tenant-A token against tenant-B surface → 401. RED: cross-tenant leak exists today (shared collection).
-- [ ] **T010**: Modify `digital_twins/mcp/auth.py` to return `(tenant_id, account_email)`; shared system token maps to install tenant. Modify `mcp/registry.py` / `dispatch.py` to thread `tenant_id` through every tool body that resolves a store. Modify `graph_query.py` and `neo4j_migration.py` to build drivers from resolved `KB_NEO4J__URL` with `?db=` (Enterprise) or channel-scope guard (Community).
+- [x] **T010**: Modify `digital_twins/mcp/auth.py` to return `(tenant_id, account_email)`; shared system token maps to install tenant. Modify `mcp/registry.py` / `dispatch.py` to thread `tenant_id` through every tool body that resolves a store. Modify `graph_query.py` and `neo4j_migration.py` to build drivers from resolved `KB_NEO4J__URL` with `?db=` (Enterprise) or channel-scope guard (Community).
 - [ ] **T011**: Verify SC-001: cross-tenant leak test passes for web, API, MCP, CLI surfaces. GREEN.
 
 ### Phase 4 — User Story 2: Tenant-scoped state tables (P1)

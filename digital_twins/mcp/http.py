@@ -148,25 +148,48 @@ def _build_handler_cls(db, service_account_email: str,
             # dispatch so the KB tool bodies' external I/O (Qdrant /
             # Neo4j / LLM) can overlap across worker threads.
             with db_lock if db_lock is not None else nullcontext():
-                # --- auth gate (mcp_authenticator) -----------------------
-                ok, email_or_reason = authenticator(self.headers)
+                # --- auth gate (mcp_authenticator, 025 T010) --------------
+                # The authenticator returns a 3-tuple
+                # (ok, tenant_id, account_email): the install tenant
+                # (1) for shared service / personal / session tokens,
+                # the issuing tenant for a per-tenant service token.
+                # ``account_email`` doubles as the 403 denial reason
+                # when the credential is known but dead.
+                ok, auth_tenant_id, account_email = authenticator(self.headers)
                 if not ok:
-                    # 401 for an unknown / missing credential
-                    # (email_or_reason is None); 403 for a known-but-dead
-                    # credential (a reason string is present).
-                    status, payload = self._auth_reject(email_or_reason)
+                    # 401 when the denial is unknown (account_email is
+                    # None); 403 when it is a known-but-dead credential
+                    # (a reason string is present).
+                    status, payload = self._auth_reject(account_email)
                     self._send(status, payload)
                     return
 
-                # --- role resolution (accounts.get_role) -----------------
-                caller_role = _accounts.get_role(db, email_or_reason)
-                if caller_role is None:
-                    # Race: account deleted between token verify and role
-                    # resolve.  Fail closed -> 403.
-                    self._send(403, {"ok": False,
-                                     "error": {"code": "forbidden",
-                                               "message": "account no longer exists"}})
-                    return
+                if account_email is None:
+                    # Per-tenant service token: no account was minted,
+                    # so the caller is the tenant itself.  The auth
+                    # layer already verified the tenant row exists and
+                    # is not suspended; derive the role from the tenant
+                    # identity.
+                    caller_tenant_id = auth_tenant_id
+                    caller_email = None
+                    if caller_tenant_id == 1:
+                        caller_role = "install-admin"
+                    else:
+                        caller_role = "tenant-admin"
+                else:
+                    # Shared service / personal / session token: the
+                    # caller is an account, scoped to the install
+                    # tenant (id 1) in v1.
+                    caller_email = account_email
+                    caller_tenant_id = auth_tenant_id or 1
+                    caller_role = _accounts.get_role(db, account_email)
+                    if caller_role is None:
+                        # Race: account deleted between token verify and
+                        # role resolve.  Fail closed -> 403.
+                        self._send(403, {"ok": False,
+                                         "error": {"code": "forbidden",
+                                                   "message": "account no longer exists"}})
+                        return
 
             # --- read the JSON body --------------------------------------
             try:
@@ -194,8 +217,9 @@ def _build_handler_cls(db, service_account_email: str,
             # live transport (:func:`main`) always loads it first.
             ctx = MCPContext(
                 db=db,
-                caller_email=email_or_reason,
+                caller_email=caller_email,
                 caller_role=caller_role,
+                caller_tenant_id=caller_tenant_id,
                 agent_kind="http",
                 config=config,
             )

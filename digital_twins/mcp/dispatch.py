@@ -36,6 +36,7 @@ from .registry import MCPContext
 
 TOOL_CAPABILITIES: dict[str, str] = {
     "kb_schedule_list": "query_status",
+    "kb_search": "query_status",
     "kb_schedule_create": "schedule_crud",
     "kb_schedule_update": "schedule_crud",
     "kb_schedule_delete": "schedule_crud",
@@ -691,8 +692,14 @@ def _resolve_qdrant_client(config) -> "QdrantClient":
             try:
                 from qdrant_client import QdrantClient
                 client = QdrantClient(url=url, api_key=key[1])
-            except Exception as exc:  # construction/transport failure
-                raise QdrantUnavailable(str(exc)) from exc
+            except Exception:  # construction/transport failure
+                # FR-004 secret hygiene: never echo the exception text into
+                # the QdrantUnavailable message — a failing constructor can
+                # carry the api_key in its error text (e.g. a transport
+                # layer that logs the credential it just rejected).
+                raise QdrantUnavailable(
+                    "Qdrant client construction failed "
+                    "(check qdrant.url and qdrant.api_key)")
             cache[key] = client
     return client
 
@@ -700,12 +707,29 @@ def _resolve_qdrant_client(config) -> "QdrantClient":
 def _embed_query(config, text: str):
     """Embed a single query string with the config-pinned model.
 
+    FR-003: when ``embedding.endpoint`` is set, use the endpoint-aware
+    embedder (``build_endpoint_embedder`` — remote OpenAI-compatible
+    endpoint, no local model load) instead of the local pooled
+    ``load_embedder``. This mirrors ``_resolve_embedder`` (line 318):
+    the endpoint path is additive and the default local path is
+    unchanged when no endpoint is configured.
+
     Pooled: the heavy ``load_embedder`` model loads **once per process**
     (a lazy module-level cache keyed on model + device), not once per
     request (006's ``_pooled_embedder`` pattern, adapted to a module cache).
     A load failure raises :class:`EmbeddingUnavailable`, which the body maps
     to ``embedding_unavailable`` naming ``embedding.model`` (007-R1e).
     """
+    # FR-003: endpoint-aware — if KB_EMBEDDING__ENDPOINT is set, use the
+    # remote endpoint embedder (no local model load / no sentence-transformers
+    # import). This is the same branch _resolve_embedder takes for the
+    # ingest pipeline; the MCP kb_search path was missing it.
+    if _cfg_get(config, "embedding.endpoint"):
+        from ..ingest.embedding import build_endpoint_embedder
+
+        embed = build_endpoint_embedder(config)
+        return embed([text])
+
     from ..ingest.embedding import DEFAULT_MODEL
 
     model = _cfg_get(config, "embedding.model") or DEFAULT_MODEL
@@ -787,16 +811,23 @@ def _kb_search_body(ctx: MCPContext, args: dict) -> dict:
 
     try:
         embedding = _embed_query(ctx.config, query)
-        # _embed_query returns the encode() result; the first (only) vector
-        # is the query vector.  Handle both a batch-with-``tolist`` and a
-        # plain list (test fakes may return either).
+        # _embed_query returns the encode() result.  Handle three shapes:
+        #   - numpy array (local load_embedder) → tolist() → [[floats]]
+        #   - list-of-lists (batch)            → take [0]
+        #   - flat list of floats (endpoint embedder) → use as-is
         if hasattr(embedding, "tolist"):
             vectors = embedding.tolist()
         else:
             vectors = list(embedding)
         if not vectors:
             raise QdrantUnavailable("no embedding produced for the query")
-        query_vector = vectors[0]
+        # If vectors[0] is already a float, we have a flat vector — use it
+        # directly instead of indexing into it (the endpoint embedder
+        # returns [floats], not [[floats]]).
+        if isinstance(vectors[0], (int, float)):
+            query_vector = vectors
+        else:
+            query_vector = vectors[0]
     except EmbeddingUnavailable:
         return {
             "ok": False,
@@ -858,6 +889,7 @@ def _kb_search_body(ctx: MCPContext, args: dict) -> dict:
             "chunk_index": (r.payload or {}).get("chunk_index"),
             "item_id": (r.payload or {}).get("item_id"),
             "id": r.id,
+            "images": (r.payload or {}).get("images", []),
         }
         for r in points
     ]

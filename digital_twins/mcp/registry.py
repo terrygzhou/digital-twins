@@ -32,9 +32,17 @@ class MCPContext:
     db:
         Open state connection (accounts, schedules, audit_runs tables).
     caller_email:
-        The authenticated caller's account email.
+        The authenticated caller's account email.  ``None`` for
+        service-token principals (a service token mints no account).
     caller_role:
-        The caller's role (``admin`` / ``scheduler`` / ``reader``).
+        The caller's role (``admin`` / ``scheduler`` / ``reader`` /
+        ``install-admin`` / ``tenant-admin``).
+    caller_tenant_id:
+        The tenant id the caller is scoped to (feature 025).  Set for
+        service-token principals (per-tenant token → issuing tenant;
+        install shared token → tenant 1).  ``None`` for personal-token
+        and session-token principals, which are scoped to the install
+        tenant (id 1) by default.
     agent_kind:
         The client's declared kind (e.g. ``"hermes"``,
         ``"claude-desktop"``) or ``"unknown"`` when absent.
@@ -47,9 +55,10 @@ class MCPContext:
         ``config_not_loaded`` when it is ``None`` (007-R6e).
     """
     db: Any
-    caller_email: str
+    caller_email: str | None
     caller_role: str
-    agent_kind: str
+    caller_tenant_id: int | None = None
+    agent_kind: str = ""
     config: Any = None
 
 
@@ -451,6 +460,12 @@ def build_tool_registry() -> list[dict]:
                 "Owner-scoped knowledge-base search on the `personal_kb` "
                 "Qdrant collection. Returns top-N results (default 5, max "
                 "100) with score, source_url, text, source, chunk_index. "
+                "Each hit also carries an `images[]` array (020, FR-6): "
+                "always present (empty array when no images); each entry "
+                "is {caption, mime, url, source, image_store, image_path} "
+                "where `url` is a base64 data-URI in payload-store mode "
+                "and `image_path` is a relative filesystem path in "
+                "filesystem-store mode. "
                 "Errors: `bad_request` (blank/missing query), "
                 "`qdrant_unavailable` (Qdrant not reachable), "
                 "`embedding_unavailable` (embedding model load failed).",
