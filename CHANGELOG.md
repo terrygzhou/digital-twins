@@ -3,25 +3,24 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
-## [Unreleased]
+## [1.0.0] - 2026-11-17
 
 ### Added
-- **Per-tenant service-token management (spec 025, T3):** new
-  `digital-twins tenant service-token create --slug <slug>` subcommand
-  mints a 32-byte service token (`secrets.token_hex(32)`) for the
-  tenant's service accounts. The plaintext is shown **exactly once**
-  on stdout and is not recoverable afterward; only a PBKDF2-SHA256
-  hash (100 000 iterations, 16-byte salt, `pbkdf2$<salt_hex>$<dk_hex>`
-  at rest) is persisted in the new `tenant_service_tokens` table
-  (`tenant_id`, `token_hash`, `created_at`, `revoked`). Creating a
-  service token for a **suspended** tenant is rejected fail-closed:
-  the CLI writes to stderr and exits with code 2 (`SystemExit(2)`)
-  before any hash material is generated. Paired with the 025 row-level
-  tenancy layer (`apply_v6`, `user_version` 5 → 6) the install-level
-  admin role (T3) and per-tenant lifecycle guards (install tenant
-  id=1 can neither be suspended nor deleted; suspended tenants
-  cannot obtain new service tokens) — both surfaces are `SystemExit(2)`
-  on rejected operations.
+- **Multi-tenant data isolation (spec 025):** per-tenant hard boundary — dedicated Qdrant collection `kb-<slug>` + dedicated Neo4j database `?db=<slug>` (FR-1); on Community 5.26 the graph boundary degrades to channel partitioning within the default `neo4j` DB (`?db=` pinning and `CREATE DATABASE` are Enterprise-only). Store resolution now flows through `tenant_service.resolve_stores` *before* any filter: unknown tenant → 401 (fail-closed, no install-wide fallback), suspended tenant → 403.
+- **State / audit / ACL isolation (US2):** `tenant_id` threaded through `highwater` cursors, `ingest_locks`, `audit_runs` / `audit_items` (all default to tenant 1), and the schedule-access predicate in `acl.py` — a tenant's runs and audit rows are scoped to its own `tenant_id`.
+- **Tenant lifecycle (US3/US4):** `suspend_tenant` (idempotent; install tenant id=1 is protected — cannot be suspended or deleted; suspended tenants cannot obtain new service tokens) and `delete_tenant` (row-only: `status → deleted` + `deleted_at`; the row is retained for audit, install tenant protected). Provisioning is store-side gated: `provision_tenant(slug, name, dimension=384)` validates the slug against `^[a-z0-9-]+$` (reserved `install`; `neo4j` disallowed), and when a `qdrant_client` is supplied creates `kb-<slug>` at the pinned dimension *before* the tenant row commits — the row-only path is a no-op on the store side.
+- **Per-tenant service tokens (C-1):** `tenant_service_tokens` table (`tenant_id`, `token_hash`, `created_at`, `revoked`); tokens minted via `secrets.token_hex(32)` (32 bytes), plaintext shown exactly once, at-rest form `pbkdf2$<salt_hex>$<dk_hex>` (PBKDF2-SHA256, 100 000 iters, 16-byte salt). Legacy `DT_SERVICE_TOKEN` maps to install tenant id 1; `list_service_tokens` is metadata-only (omits `token_hash`); `revoke_service_token` is a no-op on unknown/revoked. MCP auth (`mcp/auth.py`) resolves per-tenant tokens explicitly — cross-tenant 401, suspended 403.
+- **CLI:** `digital-twins tenant` command group — `list` / `create` / `suspend` / `delete` / `service-token create|list|revoke`; `create` and `delete` wire the store-side effects (collection create on create; delete is row-only by design). `run --once --as USER`: authenticates against the accounts store (pbkdf2) *before* any pipeline work, requires `--once` and `DT_USER_PASSWORD`, records `run_owner`/`scheduled_by = USER`; `run --once` without `--as` keeps the `system` owner.
+- **Web admin:** `/api/tenants` (GET/POST), `/api/tenants/suspend`, `/api/tenants/delete`, and tenant-scoped `/api/audit/recent?tenant=N` — all admin-gated; cross-tenant access returns 401, suspended tenant returns 403.
+- **Backfill (T2 copy-in-place):** `digital_twins/backfill.py` — `backfill_install_tenant` copies Qdrant points payload-only (no re-embedding, `item_key`-indexed; point IDs are byte-stable `uuid5` so HNSW is untouched) and `backfill_neo4j_cross_db` (Enterprise-only, node-id-preserving; Community edition is a no-op since the graph already lives in the default DB under channel partitioning).
+- **FR-7 edition-conditional guard:** driver-surface + query-time guard in `neo4j_migration.py` and `ingest/graph_query.py` — a `tenant_install=True` caller whose resolved `KB_NEO4J__URL` lacks `?db=` fails fast (`ConfigError`), edition-conditional (no-op on Community). The scheduler's `_neo4j_driver_factory` is the canonical factory (raises `ConfigError` when `tenant_install=True` and the URL lacks `?db=`); read-only health probes stay out of scope; the full driver-construction audit is recorded in `digital_twins/FR7_DRIVER_AUDIT.md`.
+- **Migration (apply_v6, user_version 5 → 6; additive-only, NFR-15):** new `tenants` table (`id`, `slug` UNIQUE, `name`, `status` CHECK active/suspended/deleted, `qdrant_collection`, `neo4j_database`, `created_at`, `deleted_at`) and `tenant_service_tokens`; `tenant_id` NOT NULL DEFAULT 1 on `accounts` / `audit_*`; `highwater` / `ingest_locks` PK extended to `(tenant_id, source[, item_key])` via in-place table swap in one transaction; install tenant seeded with id=1, slug=`install`, store pair `("","")`.
+
+### Migration notes
+- `apply_v6` auto-applies on first run after upgrade (Constitution VI / NFR-15 / SC-006): accounts, high-water marks, and audit rows survive the version bump; config files are untouched.
+- Existing single-tenant deployments are **unaffected until a second tenant is provisioned**: the install tenant (id=1) keeps the legacy shared-store bridge (`("","")` collection/DB pair), so ingest and queries keep hitting the same shared collection and default graph DB exactly as before.
+- Per-tenant service tokens are install-admin only; a suspended tenant cannot obtain new tokens, and the install tenant (id=1) can neither be suspended nor deleted.
+- **Breaking:** this is a MAJOR release — the store-resolution contract changes from install-global to per-tenant (`kb-<slug>` / `?db=<slug>`). Downstream consumers must re-point at the tenant's resolved collection + `?db=` pin; the legacy shared `personal_kb` write path retires only after the T2 backfill count invariants pass (SC-003) and the rollback window closes.
 
 ## [0.16.0] - 2026-10-24
 
