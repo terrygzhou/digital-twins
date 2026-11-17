@@ -47,7 +47,14 @@ def ts():
 
 
 class FakeQdrantClient:
-    """In-memory stand-in for QdrantClient; records create_collection calls."""
+    """In-memory stand-in for QdrantClient; records create_collection calls.
+
+    Mirrors the real qdrant-client 1.x API: ``create_collection`` takes a
+    ``vectors_config`` keyword (a VectorParams-like object with ``size`` and
+    ``distance``), not a bare ``vector_size``.  The fake extracts the size
+    from ``vectors_config.size`` (falling back to 384 when omitted) so the
+    production call site and the fake share the same contract.
+    """
 
     def __init__(self):
         self.collections: dict[str, dict] = {}
@@ -56,9 +63,17 @@ class FakeQdrantClient:
     def collection_exists(self, name: str) -> bool:
         return name in self.collections
 
-    def create_collection(self, name: str, *, vector_size: int = 384, **_kw):
-        self.collections[name] = {"vector_size": vector_size}
-        self.create_calls.append((name, vector_size))
+    def create_collection(self, name: str, *, vectors_config=None,
+                         vector_size: int = 384, **_kw):
+        """Accept both kwarg shapes.  The production call site passes
+        ``vectors_config`` (a real VectorParams with ``.size``); the
+        legacy tests may still pass ``vector_size`` directly."""
+        if vectors_config is not None:
+            size = getattr(vectors_config, "size", vector_size)
+        else:
+            size = vector_size
+        self.collections[name] = {"vector_size": size}
+        self.create_calls.append((name, size))
 
     def get_collection(self, name: str):
         info = self.collections.get(name)

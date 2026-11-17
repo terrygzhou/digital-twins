@@ -16,7 +16,11 @@ from digital_twins.ingest.embedding import (
 
 def test_pinned_model_dimension():
     assert model_dimension("BAAI/bge-small-en-v1.5") == 384
-    assert PINNED_MODELS == {"BAAI/bge-small-en-v1.5": 384}
+    assert PINNED_MODELS == {
+        "BAAI/bge-small-en-v1.5": 384,
+        "all-minilm:33m": 384,
+        "bge-m3:latest": 1024,
+    }
 
 
 def test_unpinned_model_rejected():

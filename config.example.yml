@@ -39,6 +39,11 @@ extraction:
   prompt_version: ""     # env: KB_EXTRACTION__PROMPT_VERSION (empty = use built-in)
   domain_schema: false   # env: KB_EXTRACTION__DOMAIN_SCHEMA (true = domain extraction profile, Tier B)
   concurrency: 1         # env: KB_EXTRACTION__CONCURRENCY (max in-flight LLM extraction calls per source batch; 1 = serial)
+  ontology: ""             # env: KB_EXTRACTION__ONTOLOGY (path to user ontology YAML; empty = 020 floor)
+  extract_images: false   # env: KB_EXTRACTION__EXTRACT_IMAGES (020 image-ingest; default off)
+  image_caption: false    # env: KB_EXTRACTION__IMAGE_CAPTION (020 vision-LLM captioning; default off)
+  image_store: payload    # env: KB_EXTRACTION__IMAGE_STORE (payload | filesystem)
+  image_max_bytes: 10000000  # env: KB_EXTRACTION__IMAGE_MAX_BYTES (per-image cap; default 10 MB)
 
 # --- Pipeline (ingest commit granularity) ---
 # Each sub-batch commits its own Qdrant upsert + graph upsert + highwater
@@ -47,6 +52,17 @@ extraction:
 # behavior (no sub-batching).
 pipeline:
   sub_batch_size: 1000   # env: KB_PIPELINE__SUB_BATCH_SIZE
+
+# --- Insights (materialized graph insights, 021) ---
+# When enabled, the scheduler materializes :Community / :Surprising / :Gap
+# labels from the Neo4j REL edges on the chosen frequency. The MCP
+# kb_graph_insights refresh:true path and the Web /api/graph-insights
+# endpoint work independently of this knob.
+insights:
+  enabled: false           # env: KB_INSIGHTS__ENABLED
+  frequency: daily        # env: KB_INSIGHTS__FREQUENCY (daily | weekly | manual)
+  surprise_threshold: 0.7 # env: KB_INSIGHTS__SURPRISE_THRESHOLD
+  gap_degree: 2           # env: KB_INSIGHTS__GAP_DEGREE
 
 # --- Embedding ---
 embedding:

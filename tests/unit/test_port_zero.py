@@ -239,14 +239,25 @@ def test_serve_cli_default_port_builds_status_server(env_dirs, monkeypatch):
     CLI DOES construct a StatusServer that would bind a socket — proving the
     port-0 path is specifically the one that avoids the bind.
 
-    Asserts only on the object the CLI hands to run_serve (a real
-    StatusServer instance) — no socket is actually bound here, keeping the
-    test hermetic (the real "port > 0 serves /status" behavior is covered by
-    test_status.py and test_serve_cli.py::test_serve_default_port_from_config).
+    StatusServer is monkeypatched to a no-bind subclass so the test stays
+    hermetic even when port 8765 is held by a live service on this host.
+    The real "port > 0 serves /status" behavior is covered by
+    test_status.py and test_serve_cli.py::test_serve_default_port_from_config.
     """
+    import digital_twins.scheduler.status as _status_mod
+    from digital_twins.scheduler.status import StatusServer
+
     _seed_db(env_dirs[1])
     stub = _RunServeStub()
     monkeypatch.setattr(loop, "run_serve", stub)
+
+    class _NoBindStatusServer(StatusServer):
+        def __init__(self, addr, db, config, **kw):
+            self._addr = addr
+            self._db = db
+            self._config = config
+            # skip super().__init__ — no socket is bound
+    monkeypatch.setattr(_status_mod, "StatusServer", _NoBindStatusServer)
 
     result = CliRunner().invoke(cli, ["serve"])  # default port 8765
     assert result.exit_code == 0, result.output
@@ -254,5 +265,4 @@ def test_serve_cli_default_port_builds_status_server(env_dirs, monkeypatch):
     assert stub.called is True
     assert stub.status_port == 8765
     # T017 has landed: port > 0 -> a real StatusServer is constructed.
-    from digital_twins.scheduler.status import StatusServer
     assert isinstance(stub.status_server, StatusServer)

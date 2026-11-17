@@ -14,6 +14,9 @@ CAPABILITY = Capability(runtime=None, credential=None, prefix="fs:")
 #: ingested only when it sits below ``extra.max_bytes`` (default 10 MB).
 #: This keeps binary blobs (videos, archives, executables, CAD) out of the
 #: text pipeline while retaining the documents that carry real content.
+#: 020: image extensions are always kept so that the image extraction
+#: pipeline can find them (the 10 MB cap would otherwise drop standalone
+#: raster files above that size).
 _DEFAULT_SUPPORTED_EXTS = frozenset(
     {
         # office / documents
@@ -26,8 +29,20 @@ _DEFAULT_SUPPORTED_EXTS = frozenset(
         ".json", ".jsonl", ".xml",
         # web
         ".html", ".htm",
+        # 020: standalone raster images (FR-1)
+        ".png", ".jpg", ".jpeg", ".webp", ".gif",
     }
 )
+
+
+#: MIME types for the 020 standalone raster image extensions.
+_MIME_MAP: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
 
 
 def _as_bool(value, default: bool) -> bool:
@@ -105,12 +120,28 @@ class FsSource(Source):
                 continue
             if not self._keep(path.suffix.lower(), st.st_size):
                 continue
-            yield IngestItem(
-                key=str(path.relative_to(self.dir)),
-                content=path.read_text(encoding="utf-8", errors="replace"),
-                ts=ts,
-                metadata={"path": str(path)},
-            )
+            ext = path.suffix.lower()
+            # 020: raster images carry binary content — read as bytes and
+            # tag the item so the pipeline routes it to image extraction
+            # instead of the text chunking path.
+            if ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                yield IngestItem(
+                    key=str(path.relative_to(self.dir)),
+                    content=path.read_bytes(),
+                    ts=ts,
+                    metadata={
+                        "path": str(path),
+                        "is_image": True,
+                        "mime": _MIME_MAP.get(ext, "application/octet-stream"),
+                    },
+                )
+            else:
+                yield IngestItem(
+                    key=str(path.relative_to(self.dir)),
+                    content=path.read_text(encoding="utf-8", errors="replace"),
+                    ts=ts,
+                    metadata={"path": str(path)},
+                )
 
 
 def factory(entry: dict) -> FsSource:

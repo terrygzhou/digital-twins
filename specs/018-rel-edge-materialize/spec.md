@@ -1,5 +1,10 @@
 # Feature 018: REL edge materialization (entity ↔ entity)
 
+> **License note** (NFR-13 / constitution I): this spec is an
+> inspiration-level design reference only. No code, prompts, or test
+> fixtures are ported from `nashsu/llm_wiki` (GPL-3.0) into this MIT
+> package.
+
 ## Background
 
 `s4-entity-extraction` added LLM extraction of `Entity` + `MENTIONED`

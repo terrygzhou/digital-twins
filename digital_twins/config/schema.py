@@ -33,8 +33,14 @@ DEFAULTS: dict = {
     "extraction.prompt_version": "",
     "extraction.domain_schema": False,
     "extraction.concurrency": 1,
+    "extraction.ontology": None,
     # pipeline (019 — ingest commit granularity)
     "pipeline.sub_batch_size": 1000,
+    # insights (021 — materialized graph insights)
+    "insights.enabled": False,
+    "insights.frequency": "daily",
+    "insights.surprise_threshold": "0.7",
+    "insights.gap_degree": 2,
     # embedding — model version pinned by the package
     "embedding.model": "BAAI/bge-small-en-v1.5",
     "embedding.device": "auto",
@@ -63,6 +69,7 @@ _INT_KNOBS: frozenset = frozenset({
     "mcp.port", "web.port",
     "scheduler.run_hour", "scheduler.run_minute", "scheduler.run_minute_jitter_s",
     "extraction.concurrency", "pipeline.sub_batch_size",
+    "insights.gap_degree",
 })
 
 EMBEDDING_DEVICES: tuple = ("auto", "cpu", "cuda")
@@ -268,7 +275,7 @@ def validate(cfg: dict) -> dict:
         raise SchemaError("config root must be a mapping")
     known_sections = {
         "state_dir", "config_dir", "qdrant", "neo4j", "llm",
-        "extraction", "pipeline",
+        "extraction", "pipeline", "insights",
         "embedding", "chunking", "scheduler", "sources",
         "mcp", "web",
     }
@@ -325,7 +332,8 @@ def validate(cfg: dict) -> dict:
             out[key] = section
     # every section with a default is always present, even when omitted
     for section_key in ("qdrant", "neo4j", "llm", "extraction", "pipeline",
-                        "embedding", "chunking", "scheduler", "mcp", "web"):
+                        "embedding", "chunking", "scheduler", "insights",
+                      "mcp", "web"):
         out.setdefault(section_key, {})
         for sub, default in DEFAULTS.items():
             if sub.startswith(section_key + "."):

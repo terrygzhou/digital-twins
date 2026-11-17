@@ -31,6 +31,18 @@ in the *resolution layer* below the tool bodies:
 | kb_tenant_suspend / kb_tenant_delete | Lifecycle (install admin) |
 | kb_tenant_service_token | Issue/revoke per-tenant service token (install admin) |
 
+## As-built deviations
+
+The following MCP tools are NOT yet registered as MCP tools (CLI/Web only,
+deviation from the original contract above):
+
+- `kb_tenant_list`, `kb_tenant_create`, `kb_tenant_suspend`,
+  `kb_tenant_delete`, `kb_tenant_service_token` — lifecycle management
+  is exposed via the `digital-twins tenant` CLI group and the
+  `/api/tenants` web endpoints, not as MCP tools. The auth-layer
+  tenant resolution (contract item 1) and state-table tenant filter
+  (contract item 3) are implemented as specified.
+
 ## Error contract
 
 - Cross-tenant token use: 401 (auth layer) - the token is valid but

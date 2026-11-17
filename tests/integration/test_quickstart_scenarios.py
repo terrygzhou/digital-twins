@@ -759,7 +759,7 @@ class TestScenario7_UpgradePreservation:
         }
 
         v = migrations.migrate(conn)
-        assert v == 3
+        assert v == 6
 
         after = {
             "accounts": conn.execute(
@@ -779,7 +779,7 @@ class TestScenario7_UpgradePreservation:
         conn = connect(tmp_path)
         v1 = migrations.migrate(conn)
         v2 = migrations.migrate(conn)
-        assert v1 == v2 == 3
+        assert v1 == v2 == 6
         conn.close()
 
     def test_existing_upgrade_tests_pass(self, tmp_path, monkeypatch):
@@ -790,8 +790,8 @@ class TestScenario7_UpgradePreservation:
         v1 = migrations.migrate(conn)
         v2 = migrations.migrate(conn)
         v3 = migrations.migrate(conn)
-        assert v1 == v2 == v3 == 3
-        assert migrations.user_version(conn) == 3
+        assert v1 == v2 == v3 == 6
+        assert migrations.user_version(conn) == 6
         conn.close()
 
 

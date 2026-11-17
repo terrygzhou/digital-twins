@@ -170,16 +170,32 @@ def test_serve_default_port_from_config(env_dirs, monkeypatch):
     """No --port flag: status_port falls back to scheduler.status_port knob.
 
     The built-in default is 8765 (config/schema.py DEFAULTS).
+
+    StatusServer is monkeypatched to a no-bind subclass so the test stays
+    hermetic even when port 8765 is held by a live service on this host.
     """
+    import digital_twins.scheduler.status as _status_mod
+    from digital_twins.scheduler.status import StatusServer
+
     config_dir, state_dir = env_dirs
     stub = _stub_run_serve(monkeypatch)
     _seed_db(state_dir)
+
+    # Replace StatusServer with a no-bind subclass so construction never
+    # calls ThreadingHTTPServer.__init__ (which would bind 127.0.0.1:8765
+    # and collide with a live service in this environment).
+    class _NoBindStatusServer(StatusServer):
+        def __init__(self, addr, db, config, **kw):
+            self._addr = addr
+            self._db = db
+            self._config = config
+            # skip super().__init__ — no socket is bound
+    monkeypatch.setattr(_status_mod, "StatusServer", _NoBindStatusServer)
 
     result = CliRunner().invoke(cli, ["serve"])
     assert result.exit_code == 0, result.output
     assert stub.status_port == 8765
     # T017 has landed: the status server is constructed (not None).
-    from digital_twins.scheduler.status import StatusServer
     assert stub.status_server is not None
     assert isinstance(stub.status_server, StatusServer)
 

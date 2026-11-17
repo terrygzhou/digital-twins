@@ -212,6 +212,24 @@ points are orphans under the new content-independent point-ID scheme.
 |---|---|---|---|---|
 | pipeline.sub_batch_size | int | 1000 | KB_PIPELINE__SUB_BATCH_SIZE | Items per pipeline sub-batch. Each sub-batch commits its own Qdrant upsert + graph upsert + highwater checkpoint, so a crash loses at most one sub-batch and the next run resumes from the last committed sub-batch. `0` = legacy single-batch behavior (no sub-batching). |
 
+## Insights
+
+Materialized graph insights (021-graph-insights): when enabled, the scheduler
+recomputes and MERGEs `:Community` / `:Surprising` / `:Gap` labels from the
+Neo4j REL edges. The MCP `kb_graph_insights` tool (`refresh: true`) and the
+Web `/api/graph-insights` endpoint work on demand independently of this knob.
+
+| knob | type | default | env var | notes |
+|---|---|---|---|---|
+| extraction.extract_images | bool | false | KB_EXTRACTION__EXTRACT_IMAGES | 020: extract embedded PDF images and standalone raster files. Default off — byte-for-byte unchanged pipeline when false. |
+| extraction.image_caption | bool | false | KB_EXTRACTION__IMAGE_CAPTION | 020: send extracted images to the LLM endpoint for captioning (image_url part). Default off; when on and llm.endpoint is unset, caption degrades to null + warning. |
+| extraction.image_store | str | payload | KB_EXTRACTION__IMAGE_STORE | 020: where image bytes live — `payload` (in Qdrant point metadata) or `filesystem` (storage/images/). Default payload. |
+| extraction.image_max_bytes | int | 10000000 | KB_EXTRACTION__IMAGE_MAX_BYTES | 020: per-image byte cap; oversized images are dropped with a per-item image_too_large error (run continues). Default 10 MB. |
+| insights.enabled | bool | false | KB_INSIGHTS__ENABLED | Enables the materialized graph-insight schedule. Default off; on-demand refresh and the Web read path are unaffected. |
+| insights.frequency | str | daily | KB_INSIGHTS__FREQUENCY | Schedule frequency for the materialized pass: `daily`, `weekly`, or `manual` (no automatic schedule). |
+| insights.surprise_threshold | str | 0.7 | KB_INSIGHTS__SURPRISE_THRESHOLD | REL edges whose deterministic surprise score reaches this value get the `:Surprising` label. |
+| insights.gap_degree | int | 2 | KB_INSIGHTS__GAP_DEGREE | Entities whose REL degree falls below this value get the `:Gap` label. |
+
 ## Scheduler
 
 | knob | type | default | env var | notes |
@@ -242,6 +260,7 @@ Default: disabled (no LLM calls, no entity writes).
 | extraction.prompt_version | str |  | KB_EXTRACTION__PROMPT_VERSION | Prompt version override; empty uses the built-in prompt. |
 | extraction.domain_schema | bool | false | KB_EXTRACTION__DOMAIN_SCHEMA | Select the domain extraction profile (Tier B, feature 020): the domain prompt, `DOMAIN_ENTITY_TYPES` and the `DOMAIN_PREDICATES` allowlist apply, and extractions are stamped `DOMAIN_PROMPT_VERSION`. Generic profile (default) is unchanged. |
 | extraction.concurrency | int | 1 | KB_EXTRACTION__CONCURRENCY | Max in-flight LLM extraction calls per source batch (ThreadPool fan-out around the per-item `supersede → extract → materialize` block). `1` = serial (legacy behavior); the pipeline is sub-batched independently via `pipeline.sub_batch_size`. |
+| extraction.ontology | str | ~ | KB_EXTRACTION__ONTOLOGY | Path to the user ontology YAML file (021). When unset or empty, the built-in 020 floor catalog applies (byte-for-byte pre-change behavior). The file must contain `catalog_version`; missing or invalid files fail fast at run start. |
 
 ## Sources
 
@@ -273,6 +292,9 @@ run and `timeout_s` bounds a single source's run.
 | sources.fs.enabled | bool | false | KB_SOURCES__FS__ENABLED | Enable the filesystem demo source (no credentials needed). |
 | sources.fs.max_items | int | 200 | KB_SOURCES__FS__MAX_ITEMS | Per-run item cap for the filesystem source. |
 | sources.fs.timeout_s | int | 1500 | KB_SOURCES__FS__TIMEOUT_S | Per-run timeout (seconds) for the filesystem source. |
+| sources.fs.extra.dir | str |  | KB_SOURCES__FS__EXTRA__DIR | Root directory the fs source walks (prerequisite for enabling the fs source). |
+| sources.fs.extra.filter_enabled | bool | true | KB_SOURCES__FS__EXTRA__FILTER_ENABLED | Ingestion-scope filter: keep document/text types at any size; keep other files only below max_bytes. |
+| sources.fs.extra.max_bytes | int | 10000000 | KB_SOURCES__FS__EXTRA__MAX_BYTES | Per-file byte cap for the fs source ingestion filter (default 10 MB). |
 | sources.yahoo.credential | str | ~ | YMAIL_APP_PASSWORD | Env var holding the Yahoo app-password credential (required when enabled). |
 | sources.yahoo.email | str | ~ | YMAIL_EMAIL | Env var holding the Yahoo account address. |
 | sources.gmail.credential | str | ~ | GMAIL_APP_PASSWORD | Env var holding the Gmail app-password credential (required when enabled). |
@@ -282,7 +304,7 @@ run and `timeout_s` bounds a single source's run.
 | sources.mytool.credential | str | ~ | MYTOOL_TOKEN | Env var name the custom source requires for its credential. |
 | sources.mytool.prefix | str | mytool: | ~ | ID prefix stamped on items this source ingests. |
 
-> **`sources.fs.extra.dir` footgun.** The fs source reads its directory from `sources.fs.extra.dir` (env `KB_SOURCES__FS__EXTRA__DIR`), **not** `sources.fs.directory` — a `kb.local.yml` that uses `directory:` will silently fail the prerequisite check with "path does not exist". This is a free-form `extra` dict value, not a registered knob (hence not in the table above).
+> **`sources.fs.extra.dir` footgun.** The fs source reads its directory from `sources.fs.extra.dir` (env `KB_SOURCES__FS__EXTRA__DIR`), **not** `sources.fs.directory` — a `kb.local.yml` that uses `directory:` will silently fail the prerequisite check with "path does not exist". The `extra` keys are registered knobs (see the table above).
 
 ### Adding a source (custom)
 

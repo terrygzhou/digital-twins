@@ -214,3 +214,11 @@ def test_delete_install_tenant_forbidden(db, tenant_service):
     the pre-backfill data path."""
     with pytest.raises(tenant_service.InstallTenantProtected):
         tenant_service.delete_tenant(db, 1)
+
+
+def test_suspend_install_tenant_forbidden(db, tenant_service):
+    """The install tenant (id 1) cannot be suspended either — same
+    protection as delete (T016): suspending it would 403 every
+    legacy consumer until the backfill lands."""
+    with pytest.raises(tenant_service.InstallTenantProtected):
+        tenant_service.suspend_tenant(db, 1)

@@ -487,7 +487,12 @@ def test_extract_domain_mode_prompt_version_stamp(monkeypatch):
 
     monkeypatch.setattr(ent, "_llm_request", fake_llm)
     result = extract("text", cfg={"domain_schema": True})
-    assert result["prompt_version"] == ent.DOMAIN_PROMPT_VERSION
+    # 021: domain-mode prompt_version is the effective catalog's version
+    # (b.020-floor for a floor-only catalog), not the 020 hardcoded stamp.
+    from digital_twins.ingest.catalog import effective_prompt_version
+    from digital_twins.ingest.entities import load_catalog
+    catalog = load_catalog({"domain_schema": True})
+    assert result["prompt_version"] == effective_prompt_version(catalog)
     assert result["prompt_version"] != ent.PROMPT_VERSION
 
 
@@ -504,10 +509,13 @@ def test_extract_pinned_prompt_version_wins_in_domain_mode(monkeypatch):
     result = extract("text", cfg={"domain_schema": True,
                                   "prompt_version": "2026-08-23.1"})
     assert result["prompt_version"] == "2026-08-23.1"
-    assert result["prompt_version"] != ent.DOMAIN_PROMPT_VERSION
-    # Unpinned domain mode still stamps the domain default.
+    # Unpinned domain mode stamps the effective catalog's prompt version
+    # (b.020-floor for a floor-only catalog, 021).
+    from digital_twins.ingest.catalog import effective_prompt_version
+    from digital_twins.ingest.entities import load_catalog
+    catalog = load_catalog({"domain_schema": True})
     result = extract("text", cfg={"domain_schema": True})
-    assert result["prompt_version"] == ent.DOMAIN_PROMPT_VERSION
+    assert result["prompt_version"] == effective_prompt_version(catalog)
 
 
 def test_extract_generic_mode_keeps_freeform_predicate(monkeypatch):

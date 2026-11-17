@@ -228,6 +228,11 @@ def test_cross_tenant_leak(tmp_path):
         f"cross-tenant denial principal should be None (401-class), "
         f"got {principal!r}")
 
+    # Cross-tenant denial on the 3-tuple authenticator: slot 2
+    # (tenant_id) is None, slot 3 (account_email) is None.
+    # (This mirrors the assert above; kept here for the 3-tuple
+    #  contract check.)
+
     # Tenant A's own token against tenant A's surface: accepted.
     authenticate_a = _tenant_service_authenticator(db, surface_tenant=tenant_a)
     ok_a, principal_a = authenticate_a({"Authorization": f"Bearer {token_a}"})
@@ -250,26 +255,38 @@ def _tenant_service_authenticator(db, *, surface_tenant: int):
     resolved tenant is the one this surface belongs to.  A foreign
     tenant's token → 401-class denial (SC-001 fail-closed, no
     install-wide fallback).
+
+    ``mcp_authenticator`` returns the 3-tuple
+    ``(ok, tenant_id, account_email)`` (T010): ``tenant_id`` is slot 2,
+    ``account_email`` is slot 3.  A per-tenant service token resolves
+    to ``(True, <int>, None)``; a personal/session token resolves to
+    ``(True, 1, <email>)`` (the personal-token path is scoped to the
+    install tenant by default, so ``tenant_id`` is 1 and
+    ``account_email`` is the str).  The surface-level check only
+    applies to service-token principals (``account_email is None``);
+    personal-token principals pass through unchanged.
     """
     from digital_twins.mcp.auth import mcp_authenticator
 
     shared = mcp_authenticator(db, service_account_email="system")
 
     def authenticate(headers) -> tuple[bool, int | None]:
-        ok, principal = shared(headers)
+        ok, tenant_id, account_email = shared(headers)
         if not ok:
-            return (False, principal)
-        # Cross-tenant surface check (T010 contract): the token's
-        # issuing tenant must match this surface's tenant.  A
-        # personal/session token resolves to an account email (str) —
-        # that is not a tenant-id principal, so it passes through
-        # unchanged (the personal-token path is not tenant-scoped in
-        # v1; only per-tenant service tokens carry a tenant id).
-        if isinstance(principal, int):
-            if principal != surface_tenant:
-                # Cross-tenant: 401-class denial (SC-001).
-                return (False, None)
-        return (True, principal)
+            return (False, None)
+        # Cross-tenant surface check (T010 contract): for service-token
+        # principals (account_email is None), the token's issuing
+        # tenant must match this surface's tenant.  A personal/session
+        # token (account_email is str) is not tenant-scoped in v1 —
+        # it passes through unchanged.
+        if account_email is None:
+            if isinstance(tenant_id, int):
+                if tenant_id != surface_tenant:
+                    # Cross-tenant: 401-class denial (SC-001).
+                    return (False, None)
+            return (True, tenant_id)
+        # Personal/session token: pass through with the tenant_id.
+        return (True, tenant_id)
 
     return authenticate
 

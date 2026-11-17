@@ -34,6 +34,13 @@ import urllib.request
 from typing import Any
 from datetime import UTC, datetime
 
+from digital_twins.ingest.catalog import (
+    Catalog,
+    load_catalog,
+    effective_prompt_version,
+    render_domain_prompt,
+)
+
 __all__ = [
     "PROMPT_VERSION",
     "ENTITY_TYPES",
@@ -77,6 +84,9 @@ DOMAIN_PREDICATES = (
 #: Domain prompt version — stamped on domain-profile extractions (bump =
 #: re-extract). Distinct from PROMPT_VERSION so the two profiles stamp
 #: different edges.
+#: 021: the *effective* version is now derived from the effective catalog
+#: (catalog:effective-prompt-version) — ``DOMAIN_PROMPT_VERSION`` is the
+#: floor version (``b.020-floor``) for catalogs that equal the 020 floor.
 DOMAIN_PROMPT_VERSION = "2026-08-23.2"
 
 EXTRACTION_PROMPT = f"""\
@@ -146,13 +156,23 @@ def _safe_int(value: Any, default: int) -> int:
 def prompt_version(cfg: dict | None = None) -> str:
     """Effective prompt version: pinned config > built-in.
 
-    In domain mode the built-in default is :data:`DOMAIN_PROMPT_VERSION`
-    (a pinned override still wins).
+    In domain mode the built-in default is the *effective* catalog's
+    prompt version (021: :func:`catalog.effective_prompt_version` —
+    ``b.020-floor`` for a floor-only catalog, ``b.021-<version>`` when
+    the user catalog differs). A pinned override still wins.
     """
     cfg = cfg or {}
     pinned = str(cfg.get("prompt_version", "")).strip()
-    return pinned or (
-        DOMAIN_PROMPT_VERSION if cfg.get("domain_schema") else PROMPT_VERSION)
+    if pinned:
+        return pinned
+    if cfg.get("domain_schema"):
+        try:
+            return effective_prompt_version(load_catalog(cfg))
+        except Exception:
+            # Catalog not yet loadable (e.g. pre-run-start probe);
+            # fall back to the floor version (020 behavior).
+            return DOMAIN_PROMPT_VERSION
+    return PROMPT_VERSION
 
 
 def _profile(cfg: dict | None) -> str:
@@ -236,20 +256,28 @@ def _llm_request(messages: list[dict], cfg: dict | None = None) -> str:
 def extract(text: str, *, title: str = "", cfg: dict | None = None) -> dict:
     """Extract entities + relations from one item's text (versioned prompt).
 
-    Returns ``{"entities": [...], "relations": [...], "prompt_version": str}``
-    with types constrained to :data:`ENTITY_TYPES` (or to
-    :data:`DOMAIN_ENTITY_TYPES` in domain mode). Raises
+    Returns ``{"entities": [...], "relations": [...], "prompt_version": str, "catalog_version": str}``
+    with types constrained to :data:`ENTITY_TYPES` (or to the
+    effective catalog's type set in domain mode, 021). Raises
     :class:`ExtractionError` on LLM/parse failure — callers isolate per item.
 
-    Domain mode (``cfg={"domain_schema": True}``): uses
-    :data:`DOMAIN_EXTRACTION_PROMPT`, constrains entity types to
-    :data:`DOMAIN_ENTITY_TYPES`, applies the :data:`DOMAIN_PREDICATES`
-    allowlist to relations, and stamps :data:`DOMAIN_PROMPT_VERSION`.
+    Domain mode (``cfg={"domain_schema": True}``): uses the effective
+    catalog's rendered prompt (021, :func:`catalog.render_domain_prompt`),
+    constrains entity types to the catalog's type set (the 020 floor
+    types when no user catalog is configured), applies the catalog's
+    predicate allowlist to relations, and stamps the effective prompt
+    version (``b.020-floor`` for a floor-only catalog, ``b.021-<version>``
+    otherwise).
     """
     cfg = cfg or {}
     domain_mode = _profile(cfg) == "domain"
-    allowed_types = DOMAIN_ENTITY_TYPES if domain_mode else ENTITY_TYPES
-    prompt = DOMAIN_EXTRACTION_PROMPT if domain_mode else EXTRACTION_PROMPT
+    catalog = load_catalog(cfg) if domain_mode else None
+    if domain_mode:
+        allowed_types = tuple(t.id for t in catalog.entity_types)
+        prompt = render_domain_prompt(catalog)
+    else:
+        allowed_types = ENTITY_TYPES
+        prompt = EXTRACTION_PROMPT
     max_chars = _safe_int(cfg.get("max_text_chars"), 12000)
     body = text[:max_chars]
     user = (f"Title: {title}\n\n" if title else "") + body
@@ -307,7 +335,7 @@ def extract(text: str, *, title: str = "", cfg: dict | None = None) -> dict:
         obj = str(rel.get("object") or "").strip()
         if not subj or not pred or not obj:
             continue
-        if domain_mode and pred not in DOMAIN_PREDICATES:
+        if domain_mode and pred not in catalog.predicates:
             continue
         if not any(n == subj.lower() for n, _ in ent_names) or not any(
             n == obj.lower() for n, _ in ent_names
@@ -318,6 +346,7 @@ def extract(text: str, *, title: str = "", cfg: dict | None = None) -> dict:
         "entities": deduped[:25],
         "relations": relations[:100],
         "prompt_version": prompt_version(cfg),
+        "catalog_version": catalog.catalog_version if catalog else "b.020-floor",
     }
 
 
@@ -402,6 +431,7 @@ def materialize(
     now = _now()
     entities = extraction.get("entities") or []
     pv = extraction.get("prompt_version") or PROMPT_VERSION
+    cv = extraction.get("catalog_version") or ""
     entities_written = 0
     mentioned_written = 0
 
@@ -440,12 +470,13 @@ def materialize(
             "MATCH (e:Entity {name: $name, type: $type}) "
             "MERGE (si)-[m:MENTIONED]->(e) "
             "ON CREATE SET m.captured_at = $captured_at, m.run_id = $run_id, "
-            "m.prompt_version = $pv, m.valid_from = $now "
+            "m.prompt_version = $pv, m.catalog_version = $cv, "
+            "m.valid_from = $now "
             "ON MATCH SET m.valid_to = NULL, m.last_seen = $now, "
             "m.run_id = $run_id",
             item_id=item_id, name=name, type=etype,
             captured_at=captured_at, run_id=run_id,
-            pv=pv, now=now,
+            pv=pv, cv=cv, now=now,
         )
 
     # Step 4: per-relation REL MERGE (018-rel-edge-materialize)
@@ -460,7 +491,8 @@ def materialize(
             "MATCH (e1:Entity {name: $subject, type: $subject_type}) "
             "MATCH (e2:Entity {name: $object, type: $object_type}) "
             "MERGE (e1)-[r:REL {predicate: $predicate, "
-            "source_item: $item_id, prompt_version: $pv}]->(e2) "
+            "source_item: $item_id, prompt_version: $pv, "
+            "catalog_version: $cv}]->(e2) "
             "ON CREATE SET r.valid_from = $now, "
             "r.captured_at = $captured_at, r.run_id = $run_id "
             "ON MATCH SET r.valid_to = NULL, r.last_seen = $now, "
@@ -468,7 +500,7 @@ def materialize(
             subject=subj, subject_type=_entity_type(entities, subj),
             object=obj, object_type=_entity_type(entities, obj),
             predicate=pred, item_id=item_id,
-            pv=pv, now=now,
+            pv=pv, cv=cv, now=now,
             captured_at=captured_at, run_id=run_id,
         )
 

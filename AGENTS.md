@@ -6,7 +6,7 @@
 
 ## Workflow
 - Work flows through the installed Spec-Kit workflow: `specify → clarify → plan → tasks → implement` (prompts in `.pi/prompts/speckit.*`, scripts in `.specify/`). No ad-hoc coding before the artifacts exist.
-- `.specify/memory/constitution.md` is filled and ratified (v1.0.0, six principles incl. Test-First) — the constitution gate applies. All features 001–015 are complete; v0.11.0 is the current release line (published on PyPI as the `digital-twins-kb` distribution; the bare `digital-twins` name is PyPI-blocked as too similar to the already-registered `digital-twins-kb`). `specs/*/tasks.md` checkboxes must be kept in sync with commits (SDD ledgers in `.superpowers/sdd/` — `tasks-md/` for 001, per-feature dirs for 002–013 with `progress.md` — `012-kb-count-hotfix` and `013-neo4j-query-tests` are ledger-first hotfix slices with spec-lite artifacts, `deferred-minors/` for the 001 sub-plan — are the detailed records).
+- `.specify/memory/constitution.md` is filled and ratified (v1.0.0, six principles incl. Test-First) — the constitution gate applies. All features 001–024 (001–015 spec-based, 016–020 spec-lite, 021–024 ledger slices) are complete; 025 (multi-tenant) is the active feature in SDD implementation. Latest published release line is 0.16.0 (feature 020 multimodal image ingestion); the 025 work will ship under 0.17.0 / MAJOR bump (A5: 025 is a MAJOR release — store-resolution contract changes). 025 SDD ledger is `.superpowers/sdd/025-multi-tenant/progress.md`. `specs/*/tasks.md` checkboxes must be kept in sync with commits (SDD ledgers in `.superpowers/sdd/` — `tasks-md/` for 001, per-feature dirs for 002–013 with `progress.md` — `012-kb-count-hotfix` and `013-neo4j-query-tests` are ledger-first hotfix slices with spec-lite artifacts, `deferred-minors/` for the 001 sub-plan — are the detailed records).
 
 ## Baseline pipeline (context, not a dependency)
 - The job being promoted lives outside this repo: `~/.hermes/skills/hermes/personal-kb/scripts/` + Hermes cron `e4735cf2a2f2` (`0 3 * * *`). Read it for context when implementing.
@@ -15,7 +15,7 @@
 ## Host pins that must NOT leak into the package
 - `python3.12` pin, `CUDA_VISIBLE_DEVICES=""`, absolute `~/.` source paths: all host-specific. BR-11.2 / NFR-13 — no host path, username, or install location in shipped code, config defaults, or docs. Everything resolves through the config layer at runtime.
 
-## Package & build/test (0.11.0)
+## Package & build/test (0.16.0)
 - Python package `digital_twins/`: `config/` (schema, loader, knobs, deprecation, local_io), `sources/` (base + fs/hermes/pi/dsh/paperclip/imap_mail/custom/session), `ingest/` (ids, chunking, embedding, pipeline), `state/` (db, models, migrations), `scheduler/` (presets, schedules, loop, status), `mcp/` (auth, registry, acl, dispatch, stdio, http), `web/` (server), `accounts.py`, `auth.py`, `user_config.py`, `health.py`, `cli.py`, `__main__.py`.
 - Install/build: `pip install .` (hatchling); console script `digital-twins`; also `python -m digital_twins` (and `python -m digital_twins.mcp` for the MCP server).
 - Test: `pytest` (unit in `tests/unit/`, integration in `tests/integration/`; 991 collected at 0.9.0, grown since — the two installer doc-contract test files add ~9 more as of this writing). Standing guards: `tests/integration/test_portability.py` (T006) and `tests/unit/test_knob_docs.py` (T027) must stay green.
@@ -28,6 +28,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the latest spec plan at
-specs/011-config-credentials/plan.md (009–011 are the latest spec-bearing
-features; 012/013 are ledger-only hotfix slices — see the SDD note above).
+specs/025-multi-tenant/plan.md (025-multi-tenant is the active spec-bearing
+feature; 022–024 are ledger-only hotfix slices, 012/013 are ledger-first
+hotfix slices with spec-lite artifacts — see the SDD note above).
 <!-- SPECKIT END -->

@@ -3,6 +3,31 @@
 All notable changes to `digital-twins` are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/); versioning: SemVer.
 
+## [Unreleased]
+
+### Added
+- **Per-tenant service-token management (spec 025, T3):** new
+  `digital-twins tenant service-token create --slug <slug>` subcommand
+  mints a 32-byte service token (`secrets.token_hex(32)`) for the
+  tenant's service accounts. The plaintext is shown **exactly once**
+  on stdout and is not recoverable afterward; only a PBKDF2-SHA256
+  hash (100 000 iterations, 16-byte salt, `pbkdf2$<salt_hex>$<dk_hex>`
+  at rest) is persisted in the new `tenant_service_tokens` table
+  (`tenant_id`, `token_hash`, `created_at`, `revoked`). Creating a
+  service token for a **suspended** tenant is rejected fail-closed:
+  the CLI writes to stderr and exits with code 2 (`SystemExit(2)`)
+  before any hash material is generated. Paired with the 025 row-level
+  tenancy layer (`apply_v6`, `user_version` 5 → 6) the install-level
+  admin role (T3) and per-tenant lifecycle guards (install tenant
+  id=1 can neither be suspended nor deleted; suspended tenants
+  cannot obtain new service tokens) — both surfaces are `SystemExit(2)`
+  on rejected operations.
+
+## [0.16.0] - 2026-10-24
+
+### Added
+- **Multimodal image ingestion (feature 020):** the pipeline now extracts images from ingested documents — standalone raster files (`.png` / `.jpg` / `.jpeg` / `.webp` / `.gif`) and embedded images inside `.pdf` files (via pypdf XObject extraction) — and attaches them to the *same* deterministic Qdrant point as the document's text chunks (one point, not four; NFR-1/NFR-14). Four new knobs: `extraction.extract_images` (master switch, default `false` — behaviour byte-for-byte unchanged when off), `extraction.image_caption` (bool, default `false` — gates per-image LLM captioning; failures degrade to a `null` caption + warning, the run continues; FR-3/FR-8), `extraction.image_store` (enum `payload` | `filesystem`, default `payload` — `payload` embeds a base64 data-URI in the point payload; `filesystem` writes the bytes under `storage/images/<channel>/` and carries a *relative* `image_path` — never an absolute host path, NFR-13), and `extraction.image_max_bytes` (int, default 10 000 000 — a single over-cap image is dropped with a per-item `image_too_large` error, sibling images proceed; FR-7). `kb_search`'s hit contract gains an always-present `images[]` array (empty array when a hit carries no image; entry shape `{caption, mime, url, source, image_store, image_path}`), and the MCP tool description now documents it. Per-item isolation follows the 017 pattern: an image-extraction failure on one item never aborts the run.
+
 ## [0.15.0] - 2026-10-22
 
 ### Added

@@ -27,6 +27,14 @@ digital-twins tenant delete --slug <slug> --confirm <slug>
 digital-twins tenant service-token create --slug <slug>
     Issues a per-tenant service token; returns the plaintext token
     exactly once (stored hashed, C-1 pattern).
+
+digital-twins tenant service-token list [--slug <slug>]
+    Lists per-tenant service-token metadata (id, tenant slug, created_at,
+    revoked flag). The pbkdf2 hash is deliberately omitted (C-1).
+
+digital-twins tenant service-token revoke --slug <slug> --token <token>
+    Revokes a per-tenant service token by re-deriving its pbkdf2 hash.
+    Unknown or already-revoked tokens are a silent no-op.
 ```
 
 ## Existing subcommand changes

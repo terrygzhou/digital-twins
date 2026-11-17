@@ -22,6 +22,7 @@ GROUP_MCP = "MCP"
 GROUP_WEB = "Web"
 GROUP_EXTRACTION = "Extraction"
 GROUP_PIPELINE = "Pipeline"
+GROUP_INSIGHTS = "Insights"
 
 # --- registry ------------------------------------------------------------------
 #
@@ -222,6 +223,90 @@ KNOBS: dict[str, dict] = {
                "(ThreadPool fan-out around the per-item extract step). "
                "1 = serial (legacy behavior).",
     },
+    "extraction.ontology": {
+        "type": "str",
+        "default": None,
+        "env": "KB_EXTRACTION__ONTOLOGY",
+        "group": GROUP_EXTRACTION,
+        "doc": "Path to a user ontology YAML file (021). "
+               "Unset or empty = built-in 020 floor catalog applies.",
+    },
+    "extraction.extract_images": {
+        "type": "bool",
+        "default": False,
+        "env": "KB_EXTRACTION__EXTRACT_IMAGES",
+        "group": GROUP_EXTRACTION,
+        "doc": "020: extract embedded PDF images and standalone raster "
+               "files (020 image-ingest).  Default off — byte-for-byte "
+               "unchanged pipeline when false.",
+    },
+    "extraction.image_caption": {
+        "type": "bool",
+        "default": False,
+        "env": "KB_EXTRACTION__IMAGE_CAPTION",
+        "group": GROUP_EXTRACTION,
+        "doc": "020: send extracted images to the LLM endpoint for "
+               "captioning (image_url part).  Default off; when on and "
+               "llm.endpoint is unset, caption degrades to null + "
+               "warning (FR-8).",
+    },
+    "extraction.image_store": {
+        "type": "str",
+        "default": "payload",
+        "env": "KB_EXTRACTION__IMAGE_STORE",
+        "group": GROUP_EXTRACTION,
+        "doc": "020: where image bytes live — 'payload' (in Qdrant "
+               "point metadata) or 'filesystem' (storage/images/). "
+               "Default payload.",
+    },
+    "extraction.image_max_bytes": {
+        "type": "int",
+        "default": 10_000_000,
+        "env": "KB_EXTRACTION__IMAGE_MAX_BYTES",
+        "group": GROUP_EXTRACTION,
+        "doc": "020: per-image byte cap; oversized images are dropped "
+               "with a per-item image_too_large error (run continues). "
+               "Default 10 MB.",
+    },
+
+    # --- Insights (materialized graph insights, 021) ---
+    "insights.enabled": {
+        "type": "bool",
+        "default": False,
+        "env": "KB_INSIGHTS__ENABLED",
+        "group": GROUP_INSIGHTS,
+        "doc": "Enables the materialized graph-insight schedule "
+               "(:Community / :Surprising / :Gap labels). Default off; "
+               "the MCP refresh: true and the Web endpoint work "
+               "independently of this knob.",
+    },
+    "insights.frequency": {
+        "type": "str",
+        "default": "daily",
+        "env": "KB_INSIGHTS__FREQUENCY",
+        "group": GROUP_INSIGHTS,
+        "doc": "Schedule frequency for the materialized insight pass: "
+               "'daily', 'weekly', or 'manual' (manual = no automatic "
+               "schedule; on-demand via kb_graph_insights refresh or the "
+               "Web endpoint only).",
+    },
+    "insights.surprise_threshold": {
+        "type": "str",
+        "default": "0.7",
+        "env": "KB_INSIGHTS__SURPRISE_THRESHOLD",
+        "group": GROUP_INSIGHTS,
+        "doc": "REL edges whose surprise score reaches this value get "
+               "the :Surprising label. Deterministic formula, not model-"
+               "based.",
+    },
+    "insights.gap_degree": {
+        "type": "int",
+        "default": 2,
+        "env": "KB_INSIGHTS__GAP_DEGREE",
+        "group": GROUP_INSIGHTS,
+        "doc": "Entities whose REL degree falls below this value get "
+               "the :Gap label.",
+    },
 
     # --- Pipeline (ingest commit granularity) ---
     "pipeline.sub_batch_size": {
@@ -313,5 +398,25 @@ KNOBS["sources.mytool.prefix"] = {
     "type": "str",
     "default": "mytool:",
     "env": None,
+    "group": GROUP_SOURCES,
+}
+
+# --- fs source extra keys (per-source config under sources.fs.extra) ---
+KNOBS["sources.fs.extra.dir"] = {
+    "type": "str",
+    "default": "",
+    "env": "KB_SOURCES__FS__EXTRA__DIR",
+    "group": GROUP_SOURCES,
+}
+KNOBS["sources.fs.extra.filter_enabled"] = {
+    "type": "bool",
+    "default": True,
+    "env": "KB_SOURCES__FS__EXTRA__FILTER_ENABLED",
+    "group": GROUP_SOURCES,
+}
+KNOBS["sources.fs.extra.max_bytes"] = {
+    "type": "int",
+    "default": 10_000_000,
+    "env": "KB_SOURCES__FS__EXTRA__MAX_BYTES",
     "group": GROUP_SOURCES,
 }

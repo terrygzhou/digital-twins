@@ -85,3 +85,5 @@ storage/
 
 # --- E2E verification scratch (verification-2026-07-23 fs-ingest; host state + fixtures) ---
 .dt-verify/
+.llm_wiki-research
+.llmwiki-research
